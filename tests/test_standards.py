@@ -236,5 +236,30 @@ class WorkflowTests(unittest.TestCase):
                         workflows(self.root, ".github")
                 (self.directory / name).unlink()
 
+    def test_literal_hook_lookalike_cannot_authorize_another_step(self):
+        for case in ("prepare hook", "unconditioned quality hook", "valid quality hook"):
+            with self.subTest(case=case):
+                data = governance()
+                for job in data["jobs"].values():
+                    job["steps"] = [step for step in job["steps"] if step.get("uses") != "./product/.github/actions/setup-ci"]
+                hook = {
+                    "name": "Prepare ejm-cli remote test prerequisites",
+                    "if": "${{ needs.admission.outputs.profile == 'ejm-cli' }}",
+                    "uses": "./product/.github/actions/setup-ci",
+                }
+                data["jobs"]["quality"]["name"] = '-\n' + yaml(hook, 2) + '\n-\n'
+                if case == "prepare hook":
+                    data["jobs"]["prepare"]["steps"].append({"uses": hook["uses"]})
+                elif case == "unconditioned quality hook":
+                    data["jobs"]["quality"]["steps"].append({"uses": hook["uses"]})
+                else:
+                    data["jobs"]["quality"]["steps"].insert(-1, hook)
+                self.add_reusable("governance.yml", data)
+                if case == "valid quality hook":
+                    workflows(self.root, ".github")
+                else:
+                    with self.assertRaises(ValueError):
+                        workflows(self.root, ".github")
+
 
 if __name__ == "__main__": unittest.main()

@@ -224,17 +224,18 @@ def _reusable_workflow(text, name):
         "if": "${{ needs.admission.outputs.profile == 'ejm-cli' }}"
         "uses": "./product/.github/actions/setup-ci"
 '''
-    quality = re.search(r'(?ms)^  "quality":\n(.*?)(?=^  "[^\"]+":|\Z)', text)
-    cli_setup_allowed = name == "governance.yml" and quality is not None and re.search(re.escape(cli_setup) + r'(?=      -\n|\Z)', quality[1]) is not None
-    cli_setup_seen = False
+    structural = []
+    local_uses = []
     block = None
-    for line in text.splitlines():
+    for number, line in enumerate(text.splitlines()):
+        structural.append("")
         if not line.strip():
             continue
         indent = len(line) - len(line.lstrip(" "))
         if block is not None and indent > block:
             continue
         block = None
+        structural[-1] = line
         stripped = line.lstrip(" ")
         if stripped.startswith("#") or stripped == "-":
             continue
@@ -256,10 +257,24 @@ def _reusable_workflow(text, name):
         if isinstance(scalar, (dict, list)) and scalar:
             raise ValueError("Reusable workflow has an unexpected flow mapping or list: " + name)
         if key == "uses":
-            if scalar == "./product/.github/actions/setup-ci" and cli_setup_allowed and not cli_setup_seen:
-                cli_setup_seen = True
+            if scalar == "./product/.github/actions/setup-ci":
+                local_uses.append(number)
             elif not isinstance(scalar, str) or not re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", scalar):
                 raise ValueError("Reusable workflow action must use an immutable SHA or the scoped CLI setup hook: " + name)
+
+    if local_uses:
+        # Literal block contents are data. Bind the exception to the actual
+        # quality.steps entry and its uses line, never to a raw-text lookalike.
+        visible = "\n".join(structural) + "\n"
+        quality = re.search(r'(?ms)^  "quality":\n(.*?)(?=^  "[^\"]+":|\Z)', visible)
+        steps = re.search(r'(?ms)^    "steps":\n(.*?)(?=^    "[^\"]+":|\Z)', quality[1]) if quality else None
+        hook = re.search(re.escape(cli_setup) + r'(?=      -\n|\Z)', steps[1]) if steps else None
+        allowed = None
+        if name == "governance.yml" and hook:
+            start = quality.start(1) + steps.start(1) + hook.start()
+            allowed = visible[:start].count("\n") + len(cli_setup.splitlines()) - 1
+        if local_uses != [allowed]:
+            raise ValueError("Reusable workflow action must use an immutable SHA or the scoped CLI setup hook: " + name)
 
 
 def workflows(root, profile):
