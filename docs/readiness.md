@@ -1,7 +1,7 @@
 # Public readiness rollout
 
 Evidence recorded on 2026-10-19 UTC. All five repositories remain private.
-Source fixes and final workflow hardening require protected adoption PRs.
+Product source fixes require protected adoption PRs.
 This record does not declare the products ready for public release.
 
 ## Active repository settings
@@ -35,6 +35,29 @@ workflow revision. New PRs and pushes have no automatic quality or AI trigger.
 The final retry guard becomes active for each consumer after its pin update
 merges. A fresh admitted PR must verify that revised workflow after rollout.
 
+### Shared workflow recovery
+
+[PR #4](https://github.com/ejmlabs/.github/pull/4) merged as
+`a692cb5e6e141103f7c312dc9c42a201184fadf6` on 2026-10-19 UTC. The shared
+repository's main caller now pins repaired revision
+`8e888752e00a29363fb8ae125658159b5c2dee58`.
+
+Fresh human readiness, Quality, and Repository standards passed for the exact
+reviewed head. A separate human approval command produced a native bot approval,
+which verified explicit maintainer self review. Both admitted runs used the
+older main caller and stopped at the duplicate Codex argument before model use.
+
+The owner approved a one-time exception for that exact recovery PR. Only the
+AI review requirement became advisory during its protected merge. All other
+checks and administrator enforcement stayed active. Immediately after merging,
+the full protection response matched its original snapshot, including required
+AI review.
+
+A fresh human-admitted PR must verify the repaired reviewer and model access.
+The four product main callers still use the older revision until their separate
+adoption PRs merge. This exception did not change their settings or waive their
+remaining quality gates.
+
 Human commands bind to the full current PR head:
 
 ```text
@@ -56,7 +79,7 @@ Repository standards, and the registry adapter. Both AI passes stopped before
 model execution because our extra arguments repeated the pinned action's
 `--skip-git-repo-check` flag. The required AI review status correctly failed.
 The repair removes that duplicate and adds a regression check. A fresh admitted
-run after the trusted-main pin update must establish account and model access.
+run using the installed repaired caller must establish account and model access.
 See the [first admitted run](https://github.com/ejmlabs/.github/actions/runs/39188464933).
 
 OPENAI_API_KEY exists separately in all five repositories. It was collected
@@ -67,7 +90,7 @@ Total provider spending limits and GitHub budgets still need owner verification.
 
 | Area | Evidence | Remaining verification |
 | --- | --- | --- |
-| Shared standards | All 59 Python policy tests, generator check, actionlint, uniform standards validation, and secret scan passed. The first admitted run passed non-AI checks and correctly blocked merge on AI startup failure | Repaired trusted-main pin, successful live AI review, human approval recording, and final pinned workflow acceptance |
+| Shared standards | All 59 Python policy tests, generator check, actionlint, uniform standards validation, and secret scan passed. Live admission, non-AI checks, native bot self approval, exact merged source, repaired caller installation, and full protection restoration were verified | Successful live AI review and final pinned workflow acceptance |
 | Studio | Isolated design kit consistency check, all three site tests, site build, shared standards/version checks, and strict OpenSpec validation passed | Admitted GitHub run |
 | CLI | Focused parser and package lifecycle regressions, strict Clippy, architecture/skill checks, shared standards/version checks, and strict OpenSpec validation passed | Complete assembled `./scripts/check` and admitted GitHub run |
 | Harness | Focused registry identity and protected-path regressions, policy self-tests, static policy checks, shared standards/version checks, and strict OpenSpec validation passed | Complete workspace, registry, and Windows gates in the assembled adoption snapshot |
@@ -85,8 +108,9 @@ adoption patches and requires its own checks.
 
 ## Acceptance order and remaining gates
 
-1. Review the shared retry hardening and product adoption PRs. Each exact head
-   needs a human readiness command and a separate approval decision.
+1. Verify the repaired shared reviewer through a fresh admitted PR. Review the
+   four product adoption PRs. Each exact head needs a human readiness command
+   and a separate approval decision.
 2. Confirm live delivery, native bot self approval, stale commit rejection,
    revocation, missing-secret failure, failed-check blocking, and refused
    duplicate release tags before claiming live enforcement. Local tests alone
