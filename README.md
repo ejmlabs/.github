@@ -10,10 +10,15 @@ This is the standards implementation. Activation and live run evidence are track
 
 ## Requirements
 
-Python 3.11 or newer for policy tests and generation. GitHub Team supports protection of the current private repositories. Hosted checks use pinned Node 24, Rust 1.99.1, and tool versions. Consumers need OPENAI_API_KEY for AI review. IDE hosted Quality remains blocked until the harness is public under the owner's access policy. CLI dependency access and setup follow their separate reviewed rollout, including [PR #11](https://github.com/ejmlabs/.github/pull/11), whose shared changes remain pending.
+Python 3.11 or newer for policy tests and generation. GitHub Team supports protection of the current private repositories. Hosted checks use pinned Node 24, Rust 1.99.1, and tool versions. Consumers need OPENAI_API_KEY for AI review. IDE hosted Quality remains blocked until the harness is public under the owner's access policy.
 
-CLI setup-hook validation is prepared for a separate execution change. See
-[the staged adoption process](docs/operations.md#cli-setup-hook-adoption).
+CLI private harness review and checkout are authorized. The owner attested that EJM_HARNESS_TOKEN is an expiring fine-grained token with Contents read for ejmlabs/ejm-harness only, and hosted CLI source preparation succeeded. That attestation is not independent metadata verification. Reviewed harness API adoption, the immutable source pin and the complete consumer gate remain separate requirements. See [Credentials](docs/operations.md#credentials).
+
+The prepared CLI quality hook calls the product setup action for relay build
+and browser-test prerequisites. Keep it in draft until the trusted CLI baseline
+contains the reviewed setup action, retaining its current working harness pin.
+Adopt the new harness APIs after the setup hook can run. See
+[CLI setup and adoption](docs/operations.md#cli-quality-prerequisites).
 
 ## Quick start
 

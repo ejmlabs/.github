@@ -26,24 +26,89 @@ Harness quality installs both root and registry locked npm dependencies with lif
 
 These bounds limit each admitted run. Set a dedicated OpenAI project spending limit and GitHub Actions budget/alerts to bound total spending across admitted PRs. An organization member can still request workflows they are allowed to dispatch; restrict repository roles and revoke access when needed. GitHub administrators retain control over repository settings. No repository policy can stop an organization owner from changing the policy itself.
 
-## CLI setup hook adoption
+## CLI quality prerequisites
 
-The standards checker permits one exact local action step:
-`./product/.github/actions/setup-ci`, inside the `quality` job, conditioned on
-the `ejm-cli` profile. Other local paths, jobs, profiles, duplicate steps and
-extra step fields fail validation. External actions still require immutable
-SHA pins. This revision changes validation only; it does not execute the hook.
+The generated quality job calls `./product/.github/actions/setup-ci` only for
+the `ejm-cli` profile, after installing the shared Rust tools and before running
+`./scripts/check`. The action comes from the exact admitted product source
+artifact. It runs in the credential-free quality job, with the existing matrix,
+two-build-job limit and 45 minute deadline. Privileged preparation, AI review,
+publication and draft release jobs do not execute this action. External actions
+still require full commit SHA pins and the existing allowed-action policy.
+
+The CLI action supplies its pinned Node and npm, the matching wasm-bindgen CLI
+and Rust WebAssembly target, Chrome, and Linux libdbus development files. Keep
+package and system installation in setup; the product gate must not install
+system tools or invoke sudo. The standards checker permits only the exact CLI
+quality hook, including its profile condition. A missing action fails quality.
 Comments and literal block contents remain data. The allowance binds to the
 complete `quality.steps` entry, starting at a real sequence boundary, and its
 actual `uses` line. A hook lookalike in a comment, job name or script cannot
 authorize a local action or hide extra step fields.
 
-Adopt this support before enabling CLI setup. First review and retain this
-implementation under `workflow-pins/FULL_SHA`, then move the shared repository's
-caller pins to that exact revision. A separate admitted change can enable the
-hook under the new trusted validator. The older validator rejects local action
-steps, so combining adoption and execution in one change would fail Repository
-standards. Keep all human admission, approval and required checks intact.
+Use the maintained Cargo installer already provided by the pinned Rust
+toolchain for wasm-bindgen, without adding an action source:
+
+```sh
+cargo +1.99.1 install wasm-bindgen-cli --version 0.2.129 --locked --bin wasm-bindgen --jobs 2
+```
+
+The [wasm-bindgen guide](https://wasm-bindgen.github.io/wasm-bindgen/reference/cli.html)
+supports Cargo installation. Release 0.2.129 declares Rust 1.86 and its published
+crate includes a lockfile. Cargo's
+[`--version` and `--locked` options](https://doc.rust-lang.org/cargo/commands/cargo-install.html)
+select the exact CLI release and its packaged dependency versions. Install only
+the binary the gate uses. This adds source compilation; no hosted duration has
+been measured for this setup. Keep the current deadline until an admitted run
+provides evidence for a change.
+
+This candidate is based on protected main
+`d8b31f1debf095b104f6de76193bf531ec4ddd2c`. Its callers retain reviewed implementation
+`965cd684713ae91a7804745eddd452cc392af11d`, including the CLI validator, SemVer
+release fixes, shared missing-model-key fixture routes and narrowed reviewer
+credentials. This hook change preserves those callers and controls. It adds
+only the conditioned local action step to quality; it changes no validator,
+allowed action source, permission or admission rule. The protected parent also
+contains the dated missing-key and active-revocation acceptance record, which
+this change preserves.
+
+Keep this hook change in draft until the product prerequisites are trusted:
+
+1. Land the reviewed local setup action in the trusted CLI baseline while
+   retaining its current reviewed working harness pin. The action must work
+   before relay sources exist:
+   guard only its browser npm/Playwright step on the presence of
+   `relay/package.json`. A missing manifest skips that step; a present manifest
+   without its lockfile must fail. Keep the other pinned setup steps unchanged.
+2. Verify the CLI private checkout credential has only the scope and expiry
+   described under [Credentials](#credentials). Successful source preparation
+   proves access to the selected source, not least-privilege scope or adoption
+   of the new harness APIs.
+3. Review the hook change against the current protected baseline and rerun its
+   policy and generation checks. Request fresh human readiness and approval for
+   the exact new head after it leaves draft. An earlier approval does not apply
+   to a rebuilt candidate. Preserve the repaired model startup, human commands,
+   required checks and administrator enforcement.
+4. After review and passing checks, merge the hook through protected review and
+   retain its exact reviewed implementation under `workflow-pins/FULL_SHA`.
+   Move the CLI caller's `uses` pin and `standards-ref` together to that reviewed
+   revision through its own admitted change, still retaining the working harness
+   pin. Keep the shared caller's retained SemVer fixes. Do not weaken protected
+   checks or reuse an earlier exception.
+5. Record admitted Linux and macOS quality results before claiming this hook
+   works in hosted CI. The existing successful CLI source preparation does not
+   execute this proposed hook. Local tests do not prove an active or passing
+   consumer.
+6. Separately adopt the reviewed new harness APIs and their immutable
+   `.github/harness-revision` pin after the CLI caller can run the setup hook.
+   The new harness authentication manifest selects a non-vendored Linux D-Bus
+   keyring backend, which needs the development files installed by the action.
+   Requiring that API pin before hook adoption would block its own prerequisites.
+   Review the pin change and pass the full consumer quality gate separately.
+
+The source-only draft release needs no product setup hook. Its generated
+workflow and behavior remain unchanged. Private checkout access, source/API
+adoption and the full product quality run remain separate requirements.
 
 ## Missing model key acceptance staging
 
@@ -98,13 +163,11 @@ Store OPENAI_API_KEY as a selected organization secret or separately in the five
 
 IDE hosted Quality remains blocked until the harness is public under the
 owner's existing access policy. Its reviewed `.github/harness-revision` and
-admitted checks still need acceptance after that access is available. CLI
-dependency access and setup follow their separate reviewed rollout, including
-shared [PR #11](https://github.com/ejmlabs/.github/pull/11), whose shared changes
-remain pending. Verify current CLI credential configuration and hosted Quality
-from their own live evidence.
+admitted checks still need acceptance after that access is available.
 
-If private cross-repository access is authorized later, use a fine-grained GitHub token with **Contents: read** for **ejmlabs/ejm-harness only**, give it an expiry, and save it as EJM_HARNESS_TOKEN in ejm-cli and ejm-ide. The trusted preparation job archives the pinned harness revision; the untrusted build receives only source data. Once the dependency is public, remove this secret. Never copy a broad personal token into Actions.
+CLI private harness API review and checkout are authorized. The owner attested that the existing EJM_HARNESS_TOKEN is an expiring fine-grained GitHub token with **Contents: read** for **ejmlabs/ejm-harness only**. This is owner evidence, not independent API verification of the stored credential. Secret-name timestamps and a successful source checkout cannot prove the token's scope or expiry. Hosted CLI source preparation succeeded; reviewed API adoption, the immutable `.github/harness-revision` pin and the full consumer quality gate remain separate requirements.
+
+Keep the CLI token limited to that repository, permission and expiry, and recheck its owner-provided scope and expiry before rotation or adoption. Do not print or copy its value while checking access. The trusted preparation job archives the pinned harness revision; the untrusted build receives only source data. Once the dependency is public, remove this secret. Never copy a broad personal token into Actions or configure IDE access without its owner's authorization.
 
 ## Draft source releases
 

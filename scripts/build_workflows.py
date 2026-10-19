@@ -111,6 +111,7 @@ PY
   cargo install cargo-machete --version 0.9.2 --locked
 fi
 """),
+                  {"name": "Prepare ejm-cli remote test prerequisites", "if": "${{ needs.admission.outputs.profile == 'ejm-cli' }}", "uses": "./product/.github/actions/setup-ci"},
                   run("Run the project's required gate without secrets or write tokens", """cd product
 case "$PROFILE" in
   ejm-cli) ./scripts/check ;;
