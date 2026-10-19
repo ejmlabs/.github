@@ -51,7 +51,12 @@ The configured reviewer uses two independent serial `gpt-6.1-sol` passes with
 medium reasoning. Builds receive no model key or write token. Static review
 uses trusted configuration in an isolated read-only environment. Missing
 credentials, incomplete output, or blocking findings prevent a passing gate.
-No paid review has established account or model availability yet.
+The first human-admitted shared PR run passed admission, preparation, Quality,
+Repository standards, and the registry adapter. Both AI passes stopped before
+model execution because our extra arguments repeated the pinned action's
+`--skip-git-repo-check` flag. The required AI review status correctly failed.
+The repair removes that duplicate and adds a regression check. A fresh admitted
+run after the trusted-main pin update must establish account and model access.
 
 OPENAI_API_KEY exists separately in all five repositories. It was collected
 through a hidden local prompt. No private harness access token was provisioned.
@@ -61,7 +66,7 @@ Total provider spending limits and GitHub budgets still need owner verification.
 
 | Area | Evidence | Remaining verification |
 | --- | --- | --- |
-| Shared standards | All 58 Python policy tests, generator check, actionlint, uniform standards validation, and secret scan passed | GitHub event delivery, live human decisions, and final pinned workflow acceptance |
+| Shared standards | All 59 Python policy tests, generator check, actionlint, uniform standards validation, and secret scan passed. The first admitted run passed non-AI checks and correctly blocked merge on AI startup failure | Repaired trusted-main pin, successful live AI review, human approval recording, and final pinned workflow acceptance |
 | Studio | Isolated design kit consistency check, all three site tests, site build, shared standards/version checks, and strict OpenSpec validation passed | Admitted GitHub run |
 | CLI | Focused parser and package lifecycle regressions, strict Clippy, architecture/skill checks, shared standards/version checks, and strict OpenSpec validation passed | Complete assembled `./scripts/check` and admitted GitHub run |
 | Harness | Focused registry identity and protected-path regressions, policy self-tests, static policy checks, shared standards/version checks, and strict OpenSpec validation passed | Complete workspace, registry, and Windows gates in the assembled adoption snapshot |

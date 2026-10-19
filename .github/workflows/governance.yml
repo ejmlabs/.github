@@ -360,7 +360,6 @@
           "codex-home": "${{ runner.temp }}/review-home"
           "permission-profile": ":read-only"
           "safety-strategy": "drop-sudo"
-          "codex-args": "[\"--skip-git-repo-check\"]"
           "output-file": "${{ github.workspace }}/review-result.json"
           "output-schema": |
             {

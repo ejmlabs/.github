@@ -169,7 +169,7 @@ PY
                   {"name": "Independent Codex review", "uses": CODEX, "timeout-minutes": 9, "with": {
                       "openai-api-key": "${{ secrets.OPENAI_API_KEY }}", "model": "gpt-6.1-sol", "effort": "medium", "codex-version": "0.163.0",
                       "working-directory": "reviewer", "codex-home": "${{ runner.temp }}/review-home", "permission-profile": ":read-only", "safety-strategy": "drop-sudo",
-                      "codex-args": '["--skip-git-repo-check"]', "output-file": "${{ github.workspace }}/review-result.json", "output-schema": schema, "prompt": prompt}},
+                      "output-file": "${{ github.workspace }}/review-result.json", "output-schema": schema, "prompt": prompt}},
                   run("Validate the exact head, pass, and bounded review output", python(source("review_result.py"), 'review-result.json "$PR_HEAD" "$REVIEW_PASS"'), env={"PR_HEAD": "${{ needs.admission.outputs.head }}", "REVIEW_PASS": "${{ matrix.pass }}"}),
                   {"uses": UPLOAD, "if": "${{ always() }}", "with": {"name": "review-${{ matrix.pass }}", "path": "review-result.json", "if-no-files-found": "ignore", "retention-days": 7}}, VERIFY],
     }

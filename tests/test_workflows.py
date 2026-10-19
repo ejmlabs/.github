@@ -142,6 +142,14 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertEqual(ai["needs"], ["admission", "prepare"])
         self.assertIn("ai", self.governance["jobs"]["finish"]["needs"])
 
+    def test_ai_does_not_repeat_the_action_managed_git_check_flag(self):
+        # The pinned action always supplies this single-use codex exec flag.
+        # Repeating it in codex-args aborts both reviews before a model call.
+        for step in self.governance["jobs"]["ai"]["steps"]:
+            if step.get("uses", "").startswith("openai/codex-action@"):
+                extra_args = json.loads(step["with"].get("codex-args", "[]"))
+                self.assertFalse(any(arg.split("=", 1)[0] == "--skip-git-repo-check" for arg in extra_args))
+
     def test_embedded_expressions_survive_as_literal_python_data(self):
         literal = "${{ inputs.commit }} / ${{ secrets.OPENAI_API_KEY }}"
         source = "import sys\nprint(" + repr(literal) + ")\nprint(sys.argv[1])\n"
