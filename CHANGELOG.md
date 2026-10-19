@@ -16,6 +16,9 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Fixed
 
+- Adopt the reviewed byte-preserving archive validator in this repository's
+  canonical PR and source-release callers. Older pins can reject original
+  notices with CRLF line endings even when their source archives are exact.
 - Prepare CLI harness-pin updates against the proposed immutable dependency only after verifying that it belongs to the fixed harness repository's protected main history. Bind the selected source and archive to review context. Consumers must adopt the reviewed workflow revision before this behavior is active.
 - Require an explicit boolean completion result before accepting either AI review pass. Reject incomplete reviews even when they report no findings.
 - Clear inherited GitHub token variables on the Codex action step while preserving trusted admission rechecks.
