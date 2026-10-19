@@ -117,6 +117,79 @@ class SourceArchiveTests(GitRepositoryTests):
             with self.assertRaises(ValueError):
                 prepare.source_archive(self.root, sha, prefix, format_)
 
+    def test_ui_handoff_uses_only_the_trusted_pin_and_preserves_exact_source(self):
+        work = self.root / "handoff"
+        work.mkdir()
+        for name in ("product", "ejm-ui"):
+            subprocess.run(["git", "clone", "--quiet", "--no-hardlinks", str(self.root), str(work / name)], check=True, capture_output=True)
+        for name, revision in (("base", self.sha), ("product", "b" * 40)):
+            directory = work / name / ".github"
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "ui-source.json").write_text(json.dumps({"repository": "ejmlabs/ejm-ui", "revision": revision}))
+        product = work / "product"
+        subprocess.run(["git", "-C", str(product), "add", ".github/ui-source.json"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(product), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "proposed future pin"], check=True, capture_output=True)
+        head = subprocess.run(["git", "-C", str(product), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+        env = {"PR_HEAD": head, "PR_BASE": self.sha, "PR_NUMBER": "1", "GITHUB_REPOSITORY": "ejmlabs/ejmlabs", "GH_TOKEN": "fixture"}
+        with chdir(work), patch.dict(os.environ, env), patch.object(sys, "argv", ["prepare.py"]), patch.object(prepare, "review_diff", return_value=b"bounded fixture diff"):
+            prepare.main()
+        with tarfile.open(work / "prepared/ui.tar") as archive:
+            self.assertEqual(archive.extractfile("ejm-ui/substituted.txt").read(), b"$Format:%H$\n")
+            self.assertEqual(archive.extractfile("ejm-ui/.github/workflows/pr.yml").read(), self.workflow)
+            self.assertTrue(archive.getmember("ejm-ui/script.sh").mode & 0o111)
+        with tarfile.open(work / "prepared/product.tar") as archive:
+            self.assertEqual(json.load(archive.extractfile("product/.github/ui-source.json"))["revision"], "b" * 40)
+        context = json.loads((work / "prepared/context.json").read_text())
+        self.assertEqual(context["ui_source"], {"repository": "ejmlabs/ejm-ui", "revision": self.sha})
+
+
+class UIOwnerPinTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        (self.root / ".github").mkdir()
+        self.file = self.root / ".github/ui-source.json"
+
+    def test_absent_owner_is_optional_and_only_an_exact_owner_commit_is_accepted(self):
+        self.assertEqual(prepare.ui_revision(self.root), "")
+        self.file.write_text(json.dumps({"repository": "ejmlabs/ejm-ui", "revision": "a" * 40}))
+        self.assertEqual(prepare.ui_revision(self.root), "a" * 40)
+        for candidate in (
+            {"repository": "other/repo", "revision": "a" * 40},
+            {"repository": "https://github.com/ejmlabs/ejm-ui", "revision": "a" * 40},
+            {"repository": "ejmlabs/ejm-ui", "revision": "main"},
+            {"repository": "ejmlabs/ejm-ui", "revision": True},
+            {"repository": "ejmlabs/ejm-ui", "revision": "A" * 40},
+            {"repository": "ejmlabs/ejm-ui", "revision": "a" * 40, "token": "forbidden"},
+            [],
+        ):
+            with self.subTest(candidate=candidate):
+                self.file.write_text(json.dumps(candidate))
+                with self.assertRaises(ValueError): prepare.ui_revision(self.root)
+
+    def test_unsafe_or_oversized_metadata_fails_before_source_checkout(self):
+        self.file.write_text(" " * 1025)
+        with self.assertRaises(ValueError): prepare.ui_revision(self.root)
+        self.file.unlink()
+        self.file.symlink_to(self.root / "missing")
+        with self.assertRaises(ValueError): prepare.ui_revision(self.root)
+        self.file.unlink()
+        (self.root / ".github").rmdir()
+        (self.root / "elsewhere").mkdir()
+        (self.root / ".github").symlink_to(self.root / "elsewhere", target_is_directory=True)
+        with self.assertRaises(ValueError): prepare.ui_revision(self.root)
+
+    def test_checkout_output_ignores_a_different_pr_pin(self):
+        for name, revision in (("base", "a" * 40), ("product", "b" * 40)):
+            directory = self.root / name / ".github"
+            directory.mkdir(parents=True)
+            (directory / "ui-source.json").write_text(json.dumps({"repository": "ejmlabs/ejm-ui", "revision": revision}))
+        output = self.root / "outputs"
+        env = {**os.environ, "GITHUB_OUTPUT": str(output)}
+        subprocess.run([sys.executable, prepare.__file__, "ui-pin"], cwd=self.root, env=env, check=True, capture_output=True)
+        self.assertEqual(output.read_text(), "revision=" + "a" * 40 + "\n")
+
 
 class HarnessPinTests(GitRepositoryTests):
     PIN = "b" * 40
@@ -332,6 +405,28 @@ class HarnessArchiveTests(GitRepositoryTests):
             self.assertNotIn("ejm-harness/.github/harness-revision", archive.getnames())
         with tarfile.open(self.workspace / "prepared/product.tar") as archive:
             self.assertEqual(archive.extractfile("product/.github/harness-revision").read(), (self.revision + "\n").encode())
+
+    def test_ui_base_pin_and_admitted_harness_selection_share_one_handoff(self):
+        subprocess.run(["git", "clone", "--quiet", str(self.root), str(self.workspace / "ejm-ui")], check=True, capture_output=True)
+        (self.root / ".github/ui-source.json").write_text(json.dumps({"repository": "ejmlabs/ejm-ui", "revision": "b" * 40}))
+        self.head = self.commit()
+        self.selection["pin_revision"] = self.head
+        self.file.write_text(json.dumps(self.selection))
+        base = self.workspace / "base/.github"
+        base.mkdir(parents=True)
+        (base / "ui-source.json").write_text(json.dumps({"repository": "ejmlabs/ejm-ui", "revision": self.revision}))
+        env = {"PR_HEAD": self.head, "PR_BASE": self.revision, "GITHUB_REPOSITORY": "ejmlabs/ejm-cli", "PR_NUMBER": "7", "GH_TOKEN": "fixture"}
+        with chdir(self.workspace), patch.dict(os.environ, env), patch.object(prepare.sys, "argv", ["prepare.py"]), patch.object(prepare, "review_diff", return_value=b"fixture diff"):
+            prepare.main()
+        context = json.loads((self.workspace / "prepared/context.json").read_text())
+        self.assertEqual(context["harness"]["pin_revision"], self.head)
+        self.assertEqual(context["harness"]["revision"], self.revision)
+        self.assertEqual(context["ui_source"], {"repository": "ejmlabs/ejm-ui", "revision": self.revision})
+        for name, prefix in (("harness", "ejm-harness"), ("ui", "ejm-ui")):
+            with tarfile.open(self.workspace / ("prepared/" + name + ".tar")) as archive:
+                self.assertEqual(archive.extractfile(prefix + "/source.txt").read(), b"reviewed harness source\n")
+        with tarfile.open(self.workspace / "prepared/product.tar") as archive:
+            self.assertEqual(json.load(archive.extractfile("product/.github/ui-source.json"))["revision"], "b" * 40)
 
     def test_changed_checkout_head_or_tree_is_rejected_before_export(self):
         for head, tree in ((self.head, self.tree), (self.revision, "e" * 40)):

@@ -111,7 +111,9 @@ class WorkflowSecurityTests(unittest.TestCase):
             "path": "harness", "persist-credentials": False,
             "token": "${{ secrets.EJM_HARNESS_TOKEN || github.token }}",
         })
-        archive = prepare["steps"][index + 2]
+        archive_index, archive = next((i, step) for i, step in enumerate(prepare["steps"])
+                                      if step.get("name") == "Archive source and bounded diff")
+        self.assertLess(index + 1, archive_index)
         self.assertEqual(archive["run"], workflows.python(workflows.source("prepare.py")))
         self.assertNotIn("HARNESS_READ_TOKEN", archive.get("env", {}))
         self.assertNotIn("HARNESS_READ_TOKEN", prepare["env"])
@@ -147,7 +149,7 @@ class WorkflowSecurityTests(unittest.TestCase):
                         source = embedded_source(script)
                         if source is not None:
                             self.assertIn(source, trusted_sources)
-                            self.assertRegex(script.splitlines()[0], r'^python3 - (?:admit|verify|finish|select-harness|review-result\.json "\$PR_HEAD" "\$REVIEW_PASS")? <<\x27TRUSTED_PYTHON\x27$')
+                            self.assertRegex(script.splitlines()[0], r'^python3 - (?:admit|verify|finish|select-harness|ui-pin|review-result\.json "\$PR_HEAD" "\$REVIEW_PASS")? <<\x27TRUSTED_PYTHON\x27$')
                             encoded = base64.b64encode(source.encode()).decode()
                             self.assertEqual(script.splitlines()[1:], [
                                 "import base64",
@@ -210,6 +212,18 @@ class WorkflowSecurityTests(unittest.TestCase):
         for step in checks:
             self.assertNotIn("GH_TOKEN", step.get("env", {}))
             self.assertNotIn("GITHUB_TOKEN", step.get("env", {}))
+
+    def test_ui_source_is_a_fixed_owner_checkout_before_the_credential_free_handoff(self):
+        steps = self.governance["jobs"]["prepare"]["steps"]
+        read = next(step for step in steps if step.get("id") == "ui")
+        self.assertEqual(embedded_source(read["run"]), workflows.source("prepare.py"))
+        self.assertIn(" ui-pin ", read["run"].splitlines()[0])
+        owner = next(step for step in steps if step.get("with", {}).get("repository") == "ejmlabs/ejm-ui")
+        self.assertEqual(owner["if"], "${{ steps.ui.outputs.revision != '' }}")
+        self.assertEqual(owner["with"], {"repository": "ejmlabs/ejm-ui", "ref": "${{ steps.ui.outputs.revision }}", "path": "ejm-ui", "persist-credentials": False, "fetch-depth": 1, "submodules": False})
+        self.assertLess(steps.index(read), steps.index(owner))
+        archive = next(step for step in steps if step.get("name") == "Archive source and bounded diff")
+        self.assertLess(steps.index(owner), steps.index(archive))
 
     def test_ai_does_not_repeat_the_action_managed_git_check_flag(self):
         # The pinned action always supplies this single-use codex exec flag.

@@ -228,6 +228,42 @@ Contents read for the one dependency repository. Successful checkout and
 secret timestamps do not prove scope or expiry. Never give that token to PR
 code or infer authorization for another private dependency.
 
+## Public UI source assembly
+
+The implementation supports an optional `.github/ui-source.json` in consumers:
+
+```json
+{
+  "repository": "ejmlabs/ejm-ui",
+  "revision": "FULL_40_CHARACTER_LOWERCASE_COMMIT_SHA"
+}
+```
+
+The repository name is fixed. Branches, tags, extra fields, symlink metadata and
+files above 1,024 bytes fail. The selected revision must name a commit. Publish
+and audit the UI owner source before consumer adoption; this route adds no
+private source secret or fallback token.
+
+Trusted preparation reads the dependency from protected main, validates the
+proposed metadata without using it to select a checkout, then archives the
+exact committed UI tree with the existing source file and byte bounds. Archive
+attributes cannot omit or rewrite files. Product and dependency archives share
+one immutable artifact identity. The reviewer receives their static source;
+credential-free Quality and registry jobs receive the same data. Those build
+jobs install the UI lockfile with lifecycle scripts disabled when needed. No
+product script executes in source preparation or result publication.
+
+Adopt this workflow through a reviewed caller pin first. Add or rotate the UI
+manifest while the product still works with the trusted old dependency. Its
+adoption PR is checked with the old protected-main pin, so that run does not
+establish execution of the new UI revision. Verify a fresh admitted PR against
+the installed pin before adopting new UI APIs or removing the live kit. Pin
+changes and owner package checks do not establish site publication.
+
+Consumers without a manifest keep their existing dependency setup. UI
+governance, public source approval, package publication and site deployment
+remain separate tasks; this shared implementation enables none by itself.
+
 ## Draft source releases
 
 The shared workflow creates source drafts from an exact checked protected
