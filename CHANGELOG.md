@@ -12,6 +12,7 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 ### Fixed
 
 - Bind the CLI setup allowance to its actual quality step; literal YAML text and comment dashes cannot authorize another local action or hide extra step fields.
+- Adopt the retained CLI setup validator in the central PR and draft-release callers without enabling the setup hook.
 
 ## [0.1.0] - 2026-10-18
 
