@@ -8,6 +8,7 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 - Shared repository standards, explicit human admission, protected merge gates, two-pass Codex review, and a draft source release pipeline.
 - A CLI-only prerequisite hook in the credential-free quality job, with standards checks that reject other local action paths and execution scopes.
+- Fixed Linux harness keyring build prerequisites before its credential-free quality gate; other profiles and platforms skip this package setup.
 - Staged standards support for one exact shared-only missing-model-key acceptance caller. Installation and live verification require separate protected changes.
 
 ### Fixed

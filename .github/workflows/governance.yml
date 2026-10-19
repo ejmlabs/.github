@@ -179,6 +179,13 @@
         "with":
           "version": "0.9.26"
       -
+        "name": "Install Linux harness keyring build prerequisites"
+        "shell": "bash"
+        "run": |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends pkg-config libdbus-1-dev
+        "if": "${{ needs.admission.outputs.profile == 'ejm-harness' && runner.os == 'Linux' }}"
+      -
         "name": "Install pinned Rust tools"
         "shell": "bash"
         "run": |

@@ -20,6 +20,11 @@ contains the reviewed setup action, retaining its current working harness pin.
 Adopt the new harness APIs after the setup hook can run. See
 [CLI setup and adoption](docs/operations.md#cli-quality-prerequisites).
 
+The harness Linux quality job also needs `pkg-config` and `libdbus-1-dev` for
+its native keyring backend. The shared workflow installs these fixed Ubuntu
+packages before the product gate. Harness callers must adopt the reviewed
+workflow pin before publishing that backend.
+
 ## Quick start
 
 ```sh

@@ -66,9 +66,9 @@ This candidate is based on protected main
 `d8b31f1debf095b104f6de76193bf531ec4ddd2c`. Its callers retain reviewed implementation
 `965cd684713ae91a7804745eddd452cc392af11d`, including the CLI validator, SemVer
 release fixes, shared missing-model-key fixture routes and narrowed reviewer
-credentials. This hook change preserves those callers and controls. It adds
-only the conditioned local action step to quality; it changes no validator,
-allowed action source, permission or admission rule. The protected parent also
+credentials. This change preserves those callers and controls. It adds the
+conditioned CLI action and fixed Linux harness package setup to quality; it
+changes no validator, allowed action source, permission or admission rule. The protected parent also
 contains the dated missing-key and active-revocation acceptance record, which
 this change preserves.
 
@@ -109,6 +109,25 @@ Keep this hook change in draft until the product prerequisites are trusted:
 The source-only draft release needs no product setup hook. Its generated
 workflow and behavior remain unchanged. Private checkout access, source/API
 adoption and the full product quality run remain separate requirements.
+
+## Harness Linux keyring prerequisites
+
+The harness quality job installs `pkg-config` and `libdbus-1-dev` through the
+runner's Ubuntu package manager, with recommended packages disabled. This fixed
+step runs only when the admitted profile is `ejm-harness` and the runner is
+Linux, before Rust tools and the required product gate. It starts no key service
+and supplies no credentials. Other platforms and privileged jobs skip it. The
+CLI keeps its reviewed product setup action. No local-action allowance changes.
+
+Hosted harness API PR #2 at `4aeff321c3ab1148bfc92776471552308d3e62da`
+confirmed the missing-header failure on Ubuntu 24.04 in job `118036420366` of
+run `39245467732`; its macOS quality job passed. This local workflow change
+does not establish a passing Linux harness run. First review, merge and retain
+the shared revision, then adopt both harness caller pins and `standards-ref`
+through a bounded protected change on the working harness baseline. Rebuild and
+readmit the API layer on that adopted parent. The old trusted caller cannot run
+setup that exists only in the API PR's head. Keep the 45-minute gate and all
+normal reviews and approvals. No system installer belongs in `scripts/check`.
 
 ## Missing model key acceptance staging
 
