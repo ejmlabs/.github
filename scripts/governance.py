@@ -80,6 +80,11 @@ def outputs(**items):
             out.write(f"{key}={value}\n")
 
 
+def first_attempt():
+    if os.environ.get("GITHUB_RUN_ATTEMPT", "1") != "1":
+        raise ValueError("Workflow reruns cannot replay admission; use a fresh human command after revocation")
+
+
 def live_decision(api, number, sha, comment_id, kind):
     comment = api.request(f"/issues/comments/{int(comment_id)}")
     if comment["issue_url"] != f"https://api.github.com/repos/{api.repo}/issues/{int(number)}":
@@ -92,6 +97,7 @@ def live_decision(api, number, sha, comment_id, kind):
 
 
 def live_ready(api, number, sha, comment_id):
+    first_attempt()
     pr = api.request(f"/pulls/{number}")
     if not current_pr(pr, sha):
         raise ValueError("PR head changed, PR is a draft, or PR no longer targets main")
@@ -131,8 +137,7 @@ def invalidate(api, number, sha, reason):
 
 def admit(api, event):
     outputs(run="false")
-    if os.environ.get("GITHUB_RUN_ATTEMPT", "1") != "1":
-        raise ValueError("Workflow reruns cannot replay admission; use a fresh human command after revocation")
+    first_attempt()
     issue = event.get("issue", {})
     comment = event.get("comment", {})
     if not issue.get("pull_request"):
@@ -199,6 +204,7 @@ def admit(api, event):
 
 
 def finish(api):
+    first_attempt()
     number, sha, admission = os.environ["PR_NUMBER"], os.environ["PR_HEAD"], os.environ["ADMISSION_ID"]
     try:
         live_ready(api, number, sha, admission)

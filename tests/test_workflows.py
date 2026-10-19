@@ -54,6 +54,11 @@ class WorkflowSecurityTests(unittest.TestCase):
                 self.assertNotIn("secrets.", json.dumps(job))
                 self.assertNotIn("GH_TOKEN", job.get("env", {}))
 
+    def test_every_job_rejects_replays_before_allocating_a_runner(self):
+        for name, job in self.governance["jobs"].items():
+            with self.subTest(job=name):
+                self.assertRegex(job.get("if", ""), r"^\$\{\{ github\.run_attempt == 1(?: && | \}\}$)")
+
     def test_privileged_jobs_run_only_trusted_scripts_and_actions(self):
         trusted_sources = {workflows.source(name) for name in ("governance.py", "prepare.py", "review_result.py")}
         trusted_sources.add("\n".join([
@@ -136,6 +141,14 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertEqual(inputs["codex-home"], "${{ runner.temp }}/review-home")
         self.assertEqual(ai["needs"], ["admission", "prepare"])
         self.assertIn("ai", self.governance["jobs"]["finish"]["needs"])
+
+    def test_ai_does_not_repeat_the_action_managed_git_check_flag(self):
+        # The pinned action always supplies this single-use codex exec flag.
+        # Repeating it in codex-args aborts both reviews before a model call.
+        for step in self.governance["jobs"]["ai"]["steps"]:
+            if step.get("uses", "").startswith("openai/codex-action@"):
+                extra_args = json.loads(step["with"].get("codex-args", "[]"))
+                self.assertFalse(any(arg.split("=", 1)[0] == "--skip-git-repo-check" for arg in extra_args))
 
     def test_embedded_expressions_survive_as_literal_python_data(self):
         literal = "${{ inputs.commit }} / ${{ secrets.OPENAI_API_KEY }}"

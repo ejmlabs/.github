@@ -10,7 +10,7 @@ This is the standards implementation. Activation and live run evidence are track
 
 ## Requirements
 
-Python 3.11 or newer for policy tests and generation. GitHub Team supports protection of the current private repositories. Hosted checks use pinned Node 24, Rust 1.99.1, and tool versions. Consumers need OPENAI_API_KEY for AI review, and EJM_HARNESS_TOKEN with read-only access to the harness while that dependency is private.
+Python 3.11 or newer for policy tests and generation. GitHub Team supports protection of the current private repositories. Hosted checks use pinned Node 24, Rust 1.99.1, and tool versions. Consumers need OPENAI_API_KEY for AI review. CLI and IDE quality checks remain blocked until the harness is public, as the owner chose not to provision a private cross-repository token.
 
 ## Quick start
 
@@ -30,6 +30,7 @@ Edit scripts in `scripts/`, prompts in `review/`, and then regenerate with `pyth
 ## Documentation
 
 - [Operations and bootstrap](docs/operations.md)
+- [Rollout evidence and remaining acceptance](docs/readiness.md)
 - [Contribution rules](CONTRIBUTING.md)
 - [Release process](RELEASING.md)
 - [Security policy](SECURITY.md)
