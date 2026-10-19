@@ -212,6 +212,13 @@ without credentials and stop at the first failure. Keep the entry when replacing
 retained assets. Adopt shared revisions through reviewed caller pin updates.
 A shared policy test does not prove a hosted Studio run or site deployment.
 
+For entry changes, supply the relevant consumer call path as
+[bounded Studio source context](../review/consumer-sources/ejmlabs/README.md).
+Its manifest pins the public owner commit and each copied blob. Keep these
+read-only sources separate from canonical workflow review data, retain their
+rights notice, and never execute them in shared checks. Static copies do not
+replace the consumer's admitted Quality run.
+
 ## CLI quality prerequisites
 
 Only the CLI profile runs `./product/.github/actions/setup-ci` from the exact
