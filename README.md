@@ -8,17 +8,23 @@ Shared repository policy and reusable GitHub workflows for ejm-cli, ejm-harness,
 
 This is the standards implementation. Activation and live run evidence are tracked in each adoption PR and [the operations guide](docs/operations.md). Installing these files does not publish a product or prove that every security surface has been tested.
 
-Studio and harness adopted the completion repair at
-`aa4144fa978d711a5e009b384718b4cf27cf87bf` after complete reviews of both pinned
-implementations. Their review runs used the older validator. Hosted enforcement
-of the new completion field remains unverified.
+Shared [PR #14](https://github.com/ejmlabs/.github/pull/14) merged normally as
+`d00d8bbc7231485eb918008c562d835f394e82ea`, adopting combined revision
+`c4f2873ef0eef5bc3c7d75cf71fa3489a911d134`. Both complete Sol 6.1 medium
+reviews and all five required checks passed; main protection stayed enforced.
+Studio and harness use completion repair
+`aa4144fa978d711a5e009b384718b4cf27cf87bf`. Studio PR #4 verified both actual
+reviews with `complete: true` under that installed guard. Hosted execution of
+the combined revision remains separate from its adoption review, which ran the
+older caller. CLI still needs its completion-guard update; IDE repairs remain
+unadmitted drafts. See [the evidence and limits](docs/readiness.md).
 
-Shared PR #14 now proposes combined revision
-`c4f2873ef0eef5bc3c7d75cf71fa3489a911d134`, which also preserves the CLI and
-Linux harness prerequisites. Earlier incomplete reviews and a canceled run do
-not establish acceptance of this revision. See
-[the completion guard and rollout limits](docs/readiness.md#review-completeness-guard).
-A successful job does not establish a complete review.
+No source repository has been made public by this rollout. Audit current
+history and private data, then publish this shared repository before harness:
+public callers cannot use private reusable workflows. Public security settings,
+external-contributor controls, and owner spending limits still need verification.
+First releases, native binaries, signing, and package publishing have separate
+gates; they are not prerequisites for publishing the audited source.
 
 ## Requirements
 

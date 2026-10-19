@@ -20,7 +20,7 @@ After removing or demoting a maintainer, revoke their open PR decisions before c
 
 Only trusted main receives issue-comment events. Bot and unrelated comments are filtered before a runner starts. The script rechecks the current human's maintain/admin role, exact current head, non-draft main target, and the original command. Serialize admission per PR, reject repeated events and Actions reruns, and consume each comment once. A commit can be readmitted only after explicit revocation and a new human command.
 
-Admission limits: 200 changed files, 12,000 added/deleted lines, 1 MB diff. Quality has a 45 minute limit, the separate registry gate 25 minutes, preparation 5 minutes, and each AI pass 9 minutes inside a 12 minute job. AI passes run independently and serially. There are no automatic model retries. Model output is capped at 64 KB and 50 findings. A failed job blocks merge. After the completion guard below is adopted, an incomplete result also fails validation. Critical, high, and medium findings block; low findings are advisory. Review artifacts are retained 7 days; source handoff artifacts 3 days.
+Admission limits: 200 changed files, 12,000 added/deleted lines, 1 MB diff. Quality has a 45 minute limit, the separate registry gate 25 minutes, preparation 5 minutes, and each AI pass 9 minutes inside a 12 minute job. AI passes run independently and serially. There are no automatic model retries. Model output is capped at 64 KB and 50 findings. A failed job blocks merge. Callers with the completion guard below also reject incomplete results; older pins do not gain that validation. Critical, high, and medium findings block; low findings are advisory. Review artifacts are retained 7 days; source handoff artifacts 3 days.
 
 Each review result must include `complete` as a JSON boolean. Only `true` can
 pass validation. A missing field, a nonboolean value, or `false` fails the pass,
@@ -119,9 +119,9 @@ been measured for this setup. Keep the current deadline until an admitted run
 provides evidence for a change.
 
 The prerequisite implementation merged into protected main
-`8c304c8cdfc8b6fe50f3e442507215e615944f2b`, whose trusted caller still pins
-`965cd684713ae91a7804745eddd452cc392af11d`. This completion repair builds on
-that main and preserves the CLI validator, conditioned CLI action, Linux
+`8c304c8cdfc8b6fe50f3e442507215e615944f2b`. That historical main pinned
+`965cd684713ae91a7804745eddd452cc392af11d`. The completion repair builds on
+that baseline and preserves the CLI validator, conditioned CLI action, Linux
 harness package setup, SemVer release fixes, shared missing-model-key fixture
 routes and narrowed reviewer credentials. It also preserves the dated
 missing-key and active-revocation acceptance record. The completion guard
@@ -131,17 +131,24 @@ human admission rule changes.
 Combined implementation `c4f2873ef0eef5bc3c7d75cf71fa3489a911d134` retains both
 the completion repair and these prerequisite execution steps. Its protected
 `workflow-pins/FULL_SHA` reference blocks updates and deletion, with no bypass
-actors. This shared adoption proposes that exact revision for the normal and
-missing-key PR routes, draft release caller, and `standards-ref`. Its static
-source pair contains old `965cd684713ae91a7804745eddd452cc392af11d` and new
-`c4f2873ef0eef5bc3c7d75cf71fa3489a911d134`. Shared main continues to use the old
-caller until the protected adoption merges.
+actors. Shared PR #14 merged normally as
+`d00d8bbc7231485eb918008c562d835f394e82ea`, installing that exact revision for
+the normal and missing-key PR routes, draft release caller, and `standards-ref`.
+Its static source pair contains old
+`965cd684713ae91a7804745eddd452cc392af11d` and new
+`c4f2873ef0eef5bc3c7d75cf71fa3489a911d134`. The adoption run passed both complete
+reviews and all five required checks through the old trusted caller. It does
+not establish hosted execution of the newly installed combined revision.
 
 Studio and harness adopted the earlier completion-only revision
 `aa4144fa978d711a5e009b384718b4cf27cf87bf`. Neither that revision nor the old
-shared trusted caller contains the prerequisite execution steps. Consumer
-adoption of the combined revision requires separate reviewed pin changes; this
-shared source change does not establish hosted consumer execution. See
+shared trusted caller contains the prerequisite execution steps. Studio PR #4
+then passed both actual reviews with `complete: true` through the installed
+guard and merged normally as `c91bd8640895d186355bae72d8d7bb8ae487fed2`.
+Harness has not exercised that installed guard, and CLI still pins a revision
+without it. Consumer adoption of the combined revision requires separate
+reviewed pin changes; Studio's run does not establish execution of that
+combined revision. See
 [the integration record](readiness.md#review-completeness-guard).
 
 Before adopting the combined implementation in the CLI, establish these
@@ -278,7 +285,30 @@ Tag creation and draft creation or asset upload are separate writes. A failed or
 
 ## Public visibility checklist
 
-Before a visibility change, inspect all refs and release assets for private data and secrets; review licenses, copied brand material, and vulnerability findings. Enable GitHub secret scanning, push protection, private vulnerability reporting, dependency alerts/updates, dependency review and CodeQL where available without extra charges. Require approval for **all external contributors** in the public Actions settings, and keep write tokens/secrets disabled for fork workflows. Private fork approval and public private-reporting APIs are unavailable while these repositories are private. Do not enroll private repos in a billed security product by assumption.
+Before a visibility change, inspect all refs, discussions, Actions logs and
+retained artifacts, and release assets for private data and secrets. Review
+licenses, copied brand material, and vulnerability findings. Disable Actions
+before changing visibility. Once public, set and read back
+`approval_policy=all_external_contributors`, keep fork secrets and write tokens
+disabled, and verify the selected pinned sources, read-only default token, and
+main protection before re-enabling Actions. GitHub cannot set the public fork
+approval policy while a repository is private. Keeping Actions disabled across
+this interval prevents an external PR from running its own newly added
+workflow before the policy is active. The trusted issue-comment caller does
+not control other workflow files added by a PR.
+
+Enable and verify available free public secret scanning, push protection,
+private vulnerability reporting, and dependency alerts and updates. Add
+dependency review and code scanning through the human-admitted pipeline when
+needed. Do not enable CodeQL default setup or other automatic PR checks without
+a reviewed plan that preserves human admission and spending controls. Do not
+enroll private repositories in a billed security product by assumption.
+
+Publish this shared repository before harness. Public consumers cannot call
+reusable workflows in a private shared
+repository. Source publication is separate from first releases, native signing,
+and package publishing. See the [publication order and remaining
+gates](readiness.md#acceptance-order-and-remaining-gates).
 
 Require two-factor authentication for organization members through the organization owner after checking member readiness and recovery access. This is an organization access change, separate from repository configuration. Review access, installed apps, scoped secrets, workflow pin updates, and supported release lines regularly.
 
