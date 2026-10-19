@@ -101,8 +101,10 @@ sudo apt-get install --yes --no-install-recommends pkg-config libdbus-1-dev
                   run("Install pinned Rust tools", """if [[ "$PROFILE" == ejm-* ]]; then
   rustup toolchain install 1.99.1 --profile minimal --component clippy,rustfmt
   rustup default 1.99.1
-  cargo install cargo-deny --version 0.20.2 --locked
-  cargo install cargo-machete --version 0.9.2 --locked
+  if [[ "$PROFILE" != ejm-ui ]]; then
+    cargo install cargo-deny --version 0.20.2 --locked
+    cargo install cargo-machete --version 0.9.2 --locked
+  fi
 fi
 """),
                   {"name": "Prepare ejm-cli remote test prerequisites", "if": "${{ needs.admission.outputs.profile == 'ejm-cli' }}", "uses": "./product/.github/actions/setup-ci"},
@@ -114,6 +116,17 @@ case "$PROFILE" in
   ejm-cli) ./scripts/check ;;
   ejm-harness) npm ci --ignore-scripts; npm --prefix registry ci --ignore-scripts; ./scripts/check ;;
   ejm-ide) npm ci --ignore-scripts; npm run verify; npm run site:check; npm run site:build ;;
+  ejm-ui)
+    export npm_config_ignore_scripts=true
+    npm ci --ignore-scripts
+    npm rebuild node-pty --ignore-scripts=false
+    npm run check
+    npm run build
+    node scripts/size.mjs
+    npm run size -w @ejm/demos
+    npm run check:rust
+    node scripts/pack-proof.mjs
+    ;;
   ejmlabs) node design-kit/scripts/check-kit.mjs; npm --prefix site test; npm --prefix site run build ;;
   .github) python3 -m unittest discover -s tests -v; python3 scripts/build_workflows.py --check ;;
   *) exit 1 ;;

@@ -8,6 +8,7 @@ import subprocess
 
 
 NAMES = (".github", "ejmlabs", "ejm-cli", "ejm-harness", "ejm-ide")
+SUPPORTED_NAMES = (*NAMES, "ejm-ui")
 CONTEXTS = ("Human readiness", "Maintainer approval", "Quality", "Repository standards", "AI review")
 
 
@@ -121,7 +122,7 @@ if __name__ == "__main__":
     parser.add_argument("--protect-main", action="store_true", help="Only after trusted callers are installed on main")
     parser.add_argument("--hold-actions", action="store_true", help="Disable automatic workflows during bootstrap")
     parser.add_argument("--standards-revision", help="Tested shared workflow SHA, required to enable Actions")
-    parser.add_argument("--repository", choices=NAMES, action="append")
+    parser.add_argument("--repository", choices=SUPPORTED_NAMES, action="append")
     args = parser.parse_args()
     names = args.repository or NAMES
     # Audit the entire requested scope before any mutation.

@@ -73,6 +73,77 @@ Set a dedicated OpenAI project spending limit and GitHub Actions budget and
 alerts. Per-run limits do not cap aggregate spending. Restrict repository
 roles and permitted dispatches; organization owners retain control of policy.
 
+## UI owner profile
+
+`ejm-ui` owns the public `@ejm/*` UI contracts, tokens, themes, and shared site
+tools. The explicit profile uses `README.md#development` as its contributor
+guide. It uses the same five required statuses, human maintainer decisions,
+exact-commit approval and revocation rules, two serial `gpt-6.1-sol` medium
+reviews, spending bounds, replay rejection, and source-release checks as the
+other profiles. It needs no private harness source or cross-repository token.
+
+This is source support. It does not add workflows, protection, secrets, or
+community files to UI, and it does not activate checks there. The default
+settings rollout remains `.github`, `ejmlabs`, `ejm-cli`, `ejm-harness`, and
+`ejm-ide`. UI settings require an explicit `--repository ejm-ui` selection after
+reviewed callers are installed on its protected main. Do not run the settings
+tool as part of source preparation. Each repository needs its own authorized
+adoption and verified settings readback.
+
+UI Quality uses one Ubuntu 24.04 job with the existing 45-minute limit, two
+Cargo build jobs, and no repository or model credentials. It installs Node 24
+and Rust 1.99.1 with Clippy and rustfmt. It skips the Cargo audit binaries used
+by the other Rust profiles because the current UI scripts do not call them.
+Its required commands run in order and stop at the first failure:
+
+```sh
+export npm_config_ignore_scripts=true
+npm ci --ignore-scripts
+npm rebuild node-pty --ignore-scripts=false
+npm run check
+npm run build
+node scripts/size.mjs
+npm run size -w @ejm/demos
+npm run check:rust
+node scripts/pack-proof.mjs
+```
+
+The explicit `node-pty` rebuild is the single dependency lifecycle exception.
+The locked native terminal package needs compilation on Linux, and the current
+UI test suite imports it. The rebuild runs only inside admitted credential-free
+Quality. All other installs, including the packed-consumer proof's nested npm
+install, inherit disabled lifecycle scripts. The proof uses the npm registry
+and checks six packed public interfaces in a temporary consumer. These commands
+have not yet run through an admitted UI workflow; local shell contract tests
+do not prove hosted execution or its duration.
+
+The gate covers the owner's existing source, theme, component, TypeScript,
+test, build, bundle-size, terminal, and packed-consumer checks. It does not run
+model calls, product captures, product honesty checks that require sibling
+repositories, or browser rendering acceptance. Those need separately reviewed
+immutable product inputs and their own evidence. The separate registry job
+continues to run only for `ejm-harness`.
+
+UI has one canonical SemVer in `VERSION` and a matching dated `CHANGELOG.md`
+entry. Root npm metadata, all eight owned npm packages (`core`, `demos`, `ink`,
+`shots`, `site`, `ssg`, `tokens`, and `ui`), their root npm lock entries, and
+`crates/ejm-tui` with its Cargo lock entry must match it. Applications, examples,
+and nested test fixtures are consumers and do not set the owner's release
+version. Adding an owned package requires a reviewed inventory update.
+
+The root and owned npm packages keep `private: true` and
+`SEE LICENSE IN LICENSE`. Each package names its exact repository directory
+and carries a complete scoped `LICENSE` and `THIRD_PARTY_NOTICES.md`. The
+software and documentation retain MIT terms. Brand assets retain their owners'
+reserved rights. The terminal crate keeps MIT metadata and `publish = false`.
+Token font notices must preserve the original Manrope and IBM Plex Mono OFL
+bytes; the validator checks reviewed hashes. React copies must keep the same
+complete text after line-ending and trailing-space normalization. A notice
+update requires review of that allowlist. Source-release archives must include
+these package notices, font notices, and version manifests with their committed
+bytes, including original line endings. The workflow produces source drafts;
+it does not publish npm packages, a crate, a binary, or a deployment.
+
 ## Static workflow review data
 
 Before changing a caller pin, include the exact old and new implementations
