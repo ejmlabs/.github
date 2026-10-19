@@ -195,6 +195,23 @@ Builds must not import or execute review data. Keep model network and repository
 credentials disabled. Keep a pin change unmerged until the required source is
 available and both reviews complete.
 
+## Studio quality entry
+
+Studio must provide `scripts/check.mjs` before adopting a shared revision with
+this recipe:
+
+```sh
+node scripts/check.mjs
+npm --prefix site test
+npm --prefix site run build
+```
+
+The entry belongs to Studio and calls its current internal checks. Shared policy
+does not select the asset layout. These commands run in the admitted Quality job
+without credentials and stop at the first failure. Keep the entry when replacing
+retained assets. Adopt shared revisions through reviewed caller pin updates.
+A shared policy test does not prove a hosted Studio run or site deployment.
+
 ## CLI quality prerequisites
 
 Only the CLI profile runs `./product/.github/actions/setup-ci` from the exact

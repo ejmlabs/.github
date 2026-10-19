@@ -118,36 +118,45 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertNotIn("HARNESS_READ_TOKEN", archive.get("env", {}))
         self.assertNotIn("HARNESS_READ_TOKEN", prepare["env"])
 
-    def test_ui_owner_gate_runs_all_required_checks_and_stops_after_a_failure(self):
+    def test_owner_gates_run_required_checks_and_stop_after_a_failure(self):
         job = self.governance["jobs"]["quality"]
         script = next(step["run"] for step in job["steps"] if "./scripts/check" in step.get("run", ""))
-        expected = [
-            ["npm", "ci", "--ignore-scripts"],
-            ["npm", "rebuild", "node-pty", "--ignore-scripts=false"],
-            ["npm", "run", "check"],
-            ["npm", "run", "build"],
-            ["node", "scripts/size.mjs"],
-            ["npm", "run", "size", "-w", "@ejm/demos"],
-            ["npm", "run", "check:rust"],
-            ["node", "scripts/pack-proof.mjs"],
-        ]
-        for failure in (None, *range(len(expected))):
-            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
-                root = Path(directory)
-                (root / "product").mkdir()
-                (root / "bin").mkdir()
-                log = root / "commands.jsonl"
-                for executable in ("npm", "node"):
-                    stub = root / "bin" / executable
-                    stub.write_text("#!/usr/bin/env python3\nimport json, os, sys\nfrom pathlib import Path\nlog = Path(os.environ['COMMAND_LOG'])\ncount = len(log.read_text().splitlines()) if log.exists() else 0\nwith log.open('a') as output:\n    output.write(json.dumps({'command': [Path(sys.argv[0]).name, *sys.argv[1:]], 'ignore_scripts': os.environ.get('npm_config_ignore_scripts')}) + '\\n')\nsys.exit(19 if str(count) == os.environ.get('FAIL_AT') else 0)\n")
-                    stub.chmod(0o755)
-                env = {**os.environ, "PROFILE": "ejm-ui", "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"],
-                       "COMMAND_LOG": str(log), "FAIL_AT": "none" if failure is None else str(failure)}
-                result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", script], cwd=root, env=env, capture_output=True, text=True)
-                self.assertEqual(result.returncode, 0 if failure is None else 19, result.stderr)
-                calls = [json.loads(line) for line in log.read_text().splitlines()]
-                self.assertEqual([call["command"] for call in calls], expected if failure is None else expected[:failure + 1])
-                self.assertTrue(all(call["ignore_scripts"] == "true" for call in calls))
+        gates = {
+            "ejm-ui": [
+                ["npm", "ci", "--ignore-scripts"],
+                ["npm", "rebuild", "node-pty", "--ignore-scripts=false"],
+                ["npm", "run", "check"],
+                ["npm", "run", "build"],
+                ["node", "scripts/size.mjs"],
+                ["npm", "run", "size", "-w", "@ejm/demos"],
+                ["npm", "run", "check:rust"],
+                ["node", "scripts/pack-proof.mjs"],
+            ],
+            "ejmlabs": [
+                ["node", "scripts/check.mjs"],
+                ["npm", "--prefix", "site", "test"],
+                ["npm", "--prefix", "site", "run", "build"],
+            ],
+        }
+        for profile, expected in gates.items():
+            for failure in (None, *range(len(expected))):
+                with self.subTest(profile=profile, failure=failure), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    (root / "product").mkdir()
+                    (root / "bin").mkdir()
+                    log = root / "commands.jsonl"
+                    for executable in ("npm", "node"):
+                        stub = root / "bin" / executable
+                        stub.write_text("#!/usr/bin/env python3\nimport json, os, sys\nfrom pathlib import Path\nlog = Path(os.environ['COMMAND_LOG'])\ncount = len(log.read_text().splitlines()) if log.exists() else 0\nwith log.open('a') as output:\n    output.write(json.dumps({'command': [Path(sys.argv[0]).name, *sys.argv[1:]], 'ignore_scripts': os.environ.get('npm_config_ignore_scripts')}) + '\\n')\nsys.exit(19 if str(count) == os.environ.get('FAIL_AT') else 0)\n")
+                        stub.chmod(0o755)
+                    env = {**os.environ, "PROFILE": profile, "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"],
+                           "COMMAND_LOG": str(log), "FAIL_AT": "none" if failure is None else str(failure)}
+                    result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", script], cwd=root, env=env, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0 if failure is None else 19, result.stderr)
+                    calls = [json.loads(line) for line in log.read_text().splitlines()]
+                    self.assertEqual([call["command"] for call in calls], expected if failure is None else expected[:failure + 1])
+                    if profile == "ejm-ui":
+                        self.assertTrue(all(call["ignore_scripts"] == "true" for call in calls))
 
     def test_ui_installs_its_rust_toolchain_without_unused_audit_binaries(self):
         script = next(step["run"] for step in self.governance["jobs"]["quality"]["steps"]
