@@ -217,6 +217,16 @@ def _reusable_workflow(text, name):
     # and scalar values as JSON and emits block strings for embedded scripts.
     # Reject other YAML syntax instead of guessing its meaning. Block contents
     # are data here; fake uses/on text inside a script is not workflow structure.
+    # The admitted CLI owns one setup action in its credential-free quality job.
+    # Match its complete canonical step and job, not a general local-action path.
+    cli_setup = '''      -
+        "name": "Prepare ejm-cli remote test prerequisites"
+        "if": "${{ needs.admission.outputs.profile == 'ejm-cli' }}"
+        "uses": "./product/.github/actions/setup-ci"
+'''
+    quality = re.search(r'(?ms)^  "quality":\n(.*?)(?=^  "[^\"]+":|\Z)', text)
+    cli_setup_allowed = name == "governance.yml" and quality is not None and re.search(re.escape(cli_setup) + r'(?=      -\n|\Z)', quality[1]) is not None
+    cli_setup_seen = False
     block = None
     for line in text.splitlines():
         if not line.strip():
@@ -245,8 +255,11 @@ def _reusable_workflow(text, name):
         scalar = json.loads(value)
         if isinstance(scalar, (dict, list)) and scalar:
             raise ValueError("Reusable workflow has an unexpected flow mapping or list: " + name)
-        if key == "uses" and (not isinstance(scalar, str) or not re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", scalar)):
-            raise ValueError("Reusable workflow action must use an immutable SHA: " + name)
+        if key == "uses":
+            if scalar == "./product/.github/actions/setup-ci" and cli_setup_allowed and not cli_setup_seen:
+                cli_setup_seen = True
+            elif not isinstance(scalar, str) or not re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", scalar):
+                raise ValueError("Reusable workflow action must use an immutable SHA or the scoped CLI setup hook: " + name)
 
 
 def workflows(root, profile):

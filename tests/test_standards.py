@@ -199,5 +199,42 @@ class WorkflowTests(unittest.TestCase):
         self.add_reusable("governance.yml", data)
         workflows(self.root, ".github")
 
+    def test_local_cli_setup_hook_accepts_only_the_scoped_quality_step(self):
+        cases = ("valid", "different path", "missing profile", "different profile", "extra environment", "privileged job", "other unprivileged job", "duplicate step", "release")
+        for case in cases:
+            with self.subTest(case=case):
+                data = governance()
+                steps = data["jobs"]["quality"]["steps"]
+                hook = {
+                    "name": "Prepare ejm-cli remote test prerequisites",
+                    "if": "${{ needs.admission.outputs.profile == 'ejm-cli' }}",
+                    "uses": "./product/.github/actions/setup-ci",
+                }
+                steps.insert(-1, hook)
+                if case == "different path":
+                    hook["uses"] = "./product/.github/actions/other"
+                elif case == "missing profile":
+                    del hook["if"]
+                elif case == "different profile":
+                    hook["if"] = "${{ needs.admission.outputs.profile == 'ejm-harness' }}"
+                elif case == "extra environment":
+                    hook["env"] = {"EXTRA": "value"}
+                elif case in ("privileged job", "other unprivileged job"):
+                    steps.remove(hook)
+                    data["jobs"]["prepare" if case == "privileged job" else "registry"]["steps"].append(hook)
+                elif case == "duplicate step":
+                    steps.append(hook.copy())
+                elif case == "release":
+                    data = release_workflow()
+                    data["jobs"]["draft"]["steps"].append(hook)
+                name = "draft-release.yml" if case == "release" else "governance.yml"
+                self.add_reusable(name, data)
+                if case == "valid":
+                    workflows(self.root, ".github")
+                else:
+                    with self.assertRaises(ValueError):
+                        workflows(self.root, ".github")
+                (self.directory / name).unlink()
+
 
 if __name__ == "__main__": unittest.main()

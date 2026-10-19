@@ -20,6 +20,21 @@ Harness quality installs both root and registry locked npm dependencies with lif
 
 These bounds limit each admitted run. Set a dedicated OpenAI project spending limit and GitHub Actions budget/alerts to bound total spending across admitted PRs. An organization member can still request workflows they are allowed to dispatch; restrict repository roles and revoke access when needed. GitHub administrators retain control over repository settings. No repository policy can stop an organization owner from changing the policy itself.
 
+## CLI setup hook adoption
+
+The standards checker permits one exact local action step:
+`./product/.github/actions/setup-ci`, inside the `quality` job, conditioned on
+the `ejm-cli` profile. Other local paths, jobs, profiles, duplicate steps and
+extra step fields fail validation. External actions still require immutable
+SHA pins. This revision changes validation only; it does not execute the hook.
+
+Adopt this support before enabling CLI setup. First review and retain this
+implementation under `workflow-pins/FULL_SHA`, then move the shared repository's
+caller pins to that exact revision. A separate admitted change can enable the
+hook under the new trusted validator. The older validator rejects local action
+steps, so combining adoption and execution in one change would fail Repository
+standards. Keep all human admission, approval and required checks intact.
+
 ## Credentials
 
 Store OPENAI_API_KEY as a selected organization secret or separately in the five repository secrets. Use a dedicated OpenAI project. Missing credentials fail closed. Rotate a leaked key at the provider, remove the secret, audit runs, and readmit only after the incident is contained.
