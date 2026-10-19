@@ -5,7 +5,7 @@ on:
 permissions: {}
 jobs:
   governance:
-    if: ${{ github.event.issue.pull_request }}
+    if: ${{ github.event.issue.pull_request && github.repository == 'ejmlabs/.github' && !contains(github.event.issue.labels.*.name, 'acceptance:missing-model-key') }}
     permissions:
       contents: read
       pull-requests: write
@@ -15,3 +15,11 @@ jobs:
     secrets:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       EJM_HARNESS_TOKEN: ${{ secrets.EJM_HARNESS_TOKEN }}
+  missing_model_key:
+    if: ${{ github.event.issue.pull_request && github.repository == 'ejmlabs/.github' && contains(github.event.issue.labels.*.name, 'acceptance:missing-model-key') }}
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+      actions: write
+    uses: ejmlabs/.github/.github/workflows/governance.yml@965cd684713ae91a7804745eddd452cc392af11d

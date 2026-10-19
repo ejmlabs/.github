@@ -47,9 +47,10 @@ standards. Keep all human admission, approval and required checks intact.
 
 ## Missing model key acceptance staging
 
-This stage adds validator support for one exact missing-key caller and adopts
-it through the normal shared caller shape. It does not install the fixture
-caller. Product callers keep their existing form and reject the fixture form.
+The shared caller uses the exact missing-key form accepted by retained
+validator revision `965cd684713ae91a7804745eddd452cc392af11d`. Product callers
+keep their existing form and reject the fixture form. This caller supports
+negative acceptance tests; it does not establish their live results.
 
 `missing_model_key_workflows(FULL_SHA)` generates the shared-only fixture.
 Its two issue-comment routes both require repository `ejmlabs/.github` and
@@ -65,6 +66,10 @@ keeping their shape. Once that adoption merges, a separate reviewed PR can
 install the exact fixture caller using the same SHA in both routes and the
 release caller. Each setup PR needs fresh human decisions, all required checks,
 and both actual AI passes. Keep secret values and repository access unchanged.
+
+Apply the fixture label only to a dedicated, unmerged acceptance PR. Give
+that exact head fresh human readiness and approval. Remove the label when
+closing the fixture. Ordinary PRs keep the normal route and both real reviews.
 
 Only a later admitted fixture run can establish missing-secret forwarding.
 Both AI jobs must stop at the existing missing-key guard before Codex executes.
