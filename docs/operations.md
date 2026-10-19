@@ -27,9 +27,10 @@ The standards checker permits one exact local action step:
 the `ejm-cli` profile. Other local paths, jobs, profiles, duplicate steps and
 extra step fields fail validation. External actions still require immutable
 SHA pins. This revision changes validation only; it does not execute the hook.
-Literal block contents remain data. The allowance binds to the complete
-`quality.steps` entry and its actual `uses` line, so a hook lookalike in a job
-name or script cannot authorize a local action elsewhere.
+Comments and literal block contents remain data. The allowance binds to the
+complete `quality.steps` entry, starting at a real sequence boundary, and its
+actual `uses` line. A hook lookalike in a comment, job name or script cannot
+authorize a local action or hide extra step fields.
 
 Adopt this support before enabling CLI setup. First review and retain this
 implementation under `workflow-pins/FULL_SHA`, then move the shared repository's

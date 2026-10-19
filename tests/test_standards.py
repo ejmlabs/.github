@@ -261,5 +261,34 @@ class WorkflowTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         workflows(self.root, ".github")
 
+    def test_comment_dash_cannot_hide_extra_cli_setup_fields(self):
+        hook = {
+            "name": "Prepare ejm-cli remote test prerequisites",
+            "if": "${{ needs.admission.outputs.profile == 'ejm-cli' }}",
+            "uses": "./product/.github/actions/setup-ci",
+        }
+        name = '        "name": "Prepare ejm-cli remote test prerequisites"\n'
+        for extra in ({"env": {"EXTRA": "value"}}, {"continue-on-error": True}, {}):
+            with self.subTest(extra=extra):
+                data = governance()
+                for job in data["jobs"].values():
+                    job["steps"] = [step for step in job["steps"] if step.get("uses") != hook["uses"]]
+                data["jobs"]["quality"]["steps"].insert(-1, {**extra, **hook})
+                text = self.add_reusable("governance.yml", data)
+                if extra:
+                    # This is still one real YAML step with an extra field. The
+                    # comment must not become a second, canonical step boundary.
+                    text = text.replace(name, "        #      -\n" + name)
+                else:
+                    # Comments before a real sequence boundary retain source
+                    # line mapping and must not reject the permitted hook.
+                    text = text.replace("      -\n" + name, "      # setup prerequisites\n      -\n" + name)
+                (self.directory / "governance.yml").write_text(text)
+                if extra:
+                    with self.assertRaises(ValueError):
+                        workflows(self.root, ".github")
+                else:
+                    workflows(self.root, ".github")
+
 
 if __name__ == "__main__": unittest.main()
