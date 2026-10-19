@@ -16,6 +16,8 @@ Only trusted main receives issue-comment events. Bot and unrelated comments are 
 
 Admission limits: 200 changed files, 12,000 added/deleted lines, 1 MB diff. Quality has a 45 minute limit, the separate registry gate 25 minutes, preparation 5 minutes, and each AI pass 9 minutes inside a 12 minute job. AI passes run independently and serially. There are no automatic model retries. Model output is capped at 64 KB and 50 findings. A failed or incomplete pass blocks merge. Critical, high, and medium findings block; low findings are advisory. Review artifacts are retained 7 days; source handoff artifacts 3 days.
 
+Harness quality installs both root and registry locked npm dependencies with lifecycle scripts disabled before running `./scripts/check`. Root ESLint includes registry sources. The separate registry job also runs its native, WebAssembly, schema, auth, and build checks.
+
 These bounds limit each admitted run. Set a dedicated OpenAI project spending limit and GitHub Actions budget/alerts to bound total spending across admitted PRs. An organization member can still request workflows they are allowed to dispatch; restrict repository roles and revoke access when needed. GitHub administrators retain control over repository settings. No repository policy can stop an organization owner from changing the policy itself.
 
 ## Credentials
