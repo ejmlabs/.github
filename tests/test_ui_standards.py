@@ -119,6 +119,15 @@ class UIStandardsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "differs from the token owner"):
             standards.licenses(self.root, "ejm-ui")
 
+    def test_original_public_font_notices_pass_the_unpatched_hash_allowlist(self):
+        self.hashes.stop()
+        fixtures = Path(__file__).parent / "fixtures" / "font-notices"
+        for name in ("Manrope", "IBMPlexMono"):
+            original = (fixtures / (name + "-OFL.txt")).read_bytes().decode("utf-8")
+            self.write("packages/tokens/assets/fonts/" + name + "-OFL.txt", original)
+            self.write("packages/ui/src/fonts/" + name + "-OFL.txt", original)
+        standards.licenses(self.root, "ejm-ui")
+
     def test_ui_repository_is_explicit_and_other_owners_remain_rejected(self):
         with patch.dict(os.environ, {"GITHUB_REPOSITORY": "ejmlabs/ejm-ui", "GH_TOKEN": "fixture"}, clear=True):
             self.assertEqual(GitHub().repo, "ejmlabs/ejm-ui")
