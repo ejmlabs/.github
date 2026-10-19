@@ -145,10 +145,10 @@ Studio and harness adopted the earlier completion-only revision
 shared trusted caller contains the prerequisite execution steps. Studio PR #4
 then passed both actual reviews with `complete: true` through the installed
 guard and merged normally as `c91bd8640895d186355bae72d8d7bb8ae487fed2`.
-Harness has not exercised that installed guard, and CLI still pins a revision
-without it. Consumer adoption of the combined revision requires separate
-reviewed pin changes; Studio's run does not establish execution of that
-combined revision. See
+CLI PR #4 and harness PR #13 subsequently adopted the combined revision through
+protected checks. Their accepted caller changes do not establish acceptance of
+the unmerged harness APIs or the new CLI pin/lock pair. Studio's earlier run
+does not establish execution of the combined revision. See
 [the integration record](readiness.md#review-completeness-guard).
 
 Before adopting the combined implementation in the CLI, establish these
@@ -186,9 +186,54 @@ prerequisites:
    Requiring that API pin before hook adoption would block its own prerequisites.
    Review the pin change and pass the full consumer quality gate separately.
 
-The source-only draft release needs no product setup hook. Its generated
-workflow and behavior remain unchanged. Private checkout access, source/API
+The source-only draft release needs no product setup hook. Its execution
+behavior remains unchanged; its generated payload also includes the updated
+shared preparation library. Private checkout access, source/API
 adoption and the full product quality run remain separate requirements.
+
+## CLI harness pin updates
+
+The CLI's path dependencies and `Cargo.lock` must describe the same harness
+source. The currently installed workflow reads the pin from trusted CLI base
+`main`. A proposed pin and its resolved lock can therefore be incompatible with
+the dependency used to test that PR. A pin-only pass does not prove the proposed
+pair works.
+
+This source proposes a narrow replacement for the CLI profile. Trusted
+preparation reads `.github/harness-revision` from the exact admitted CLI Git
+commit. The pin must be an ordinary Git blob containing a full lowercase
+40-character commit SHA with at most one final newline. Git object lookup
+cannot follow a submitted symlink or symlinked parent directory.
+
+Preparation queries only `ejmlabs/ejm-harness` through the official GitHub API.
+It requires `main` to be protected and records its exact commit. The selected
+pin must equal that commit or be its ancestor. Missing, inaccessible,
+unprotected, malformed or divergent source fails preparation. API reads are
+bounded, and a change to harness `main` cannot substitute a different checked
+out revision.
+
+After checkout, preparation checks the actual harness commit against the
+selected pin. The existing source handoff records the dependency revision,
+tree, protected-main authority and archive SHA-256 in `context.json`. Quality
+uses that archive with the submitted CLI source and lockfile. Both AI passes
+receive the same authority context as static data. Their model steps receive
+no checkout credential. IDE keeps its existing trusted-base pin selection.
+
+This code is not active merely because the shared source changes. Run the
+shared tests, generated-workflow check and actionlint; obtain both complete
+hosted reviews and all protected checks, then retain the exact reviewed
+implementation under `workflow-pins/FULL_SHA`. Adopt that revision in a
+separate protected CLI caller change while retaining the working harness pin
+and lock. Export and verify the canonical old/new workflow source pair for
+that caller change. Only then submit the new harness pin and matching lock
+together, based on reviewed harness main, and verify the full hosted consumer
+gate. Each exact head still requires human readiness and separate approval.
+
+The branch protection and comparison APIs require only Contents read access.
+See GitHub's [branch API](https://docs.github.com/en/rest/branches/branches#get-a-branch)
+and [commit comparison API](https://docs.github.com/en/rest/commits/commits#compare-two-commits).
+Source ancestry verifies where the dependency was published; local and hosted
+product checks remain required evidence for its behavior.
 
 ## Harness Linux keyring prerequisites
 

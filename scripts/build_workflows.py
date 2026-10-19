@@ -82,19 +82,8 @@ def governance():
         "runs-on": "ubuntu-24.04", "timeout-minutes": 5, "permissions": {"contents": "read", "pull-requests": "read", "statuses": "read"}, "env": ENV,
         "outputs": {"artifact": "${{ steps.sources.outputs.artifact-id }}"},
         "steps": [VERIFY, checkout("product", "${{ needs.admission.outputs.head }}"), checkout("base", "${{ needs.admission.outputs.base }}"),
-                  run("Read harness dependency from trusted main", """python3 - <<'PY'
-import os, re
-from pathlib import Path
-profile = os.environ['PROFILE']
-value = ''
-if profile in ('ejm-cli', 'ejm-ide'):
-    file = Path('base/.github/harness-revision')
-    if file.is_symlink(): raise ValueError('Unsafe harness pin')
-    value = file.read_text().strip()
-    if not re.fullmatch('[0-9a-f]{40}', value): raise ValueError('Unpinned harness dependency')
-with open(os.environ['GITHUB_OUTPUT'], 'a') as out: out.write('revision=' + value + '\\n')
-PY
-""", id="harness", env={"PROFILE": "${{ needs.admission.outputs.profile }}"}),
+                  run("Select the admitted harness dependency against trusted source authority", python(source("prepare.py"), "select-harness"),
+                      id="harness", env={"PROFILE": "${{ needs.admission.outputs.profile }}", "HARNESS_READ_TOKEN": "${{ secrets.EJM_HARNESS_TOKEN || github.token }}"}),
                   {"uses": CHECKOUT, "if": "${{ steps.harness.outputs.revision != '' }}", "with": {"repository": "ejmlabs/ejm-harness", "ref": "${{ steps.harness.outputs.revision }}", "path": "harness", "persist-credentials": False, "token": "${{ secrets.EJM_HARNESS_TOKEN || github.token }}"}},
                   run("Archive source and bounded diff", python(source("prepare.py"))), VERIFY,
                   {"uses": UPLOAD, "id": "sources", "with": {"name": "admitted-sources", "path": "prepared/", "retention-days": 3, "if-no-files-found": "error"}}],

@@ -85,6 +85,37 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertEqual(len(gates), 1)
         self.assertLess(index, gates[0])
 
+    def test_harness_checkout_uses_only_the_trusted_selector_and_fixed_repository(self):
+        prepare = self.governance["jobs"]["prepare"]
+        self.assertEqual(prepare["permissions"], {"contents": "read", "pull-requests": "read", "statuses": "read"})
+        selectors = [(index, step) for index, step in enumerate(prepare["steps"]) if step.get("id") == "harness"]
+        self.assertEqual(len(selectors), 1)
+        index, selector = selectors[0]
+        self.assertEqual(selector["run"], workflows.python(workflows.source("prepare.py"), "select-harness"))
+        self.assertEqual(selector["run"].splitlines()[0], "python3 - select-harness <<'TRUSTED_PYTHON'")
+        self.assertEqual(selector["env"], {
+            "PROFILE": "${{ needs.admission.outputs.profile }}",
+            "HARNESS_READ_TOKEN": "${{ secrets.EJM_HARNESS_TOKEN || github.token }}",
+        })
+        for path, ref in (("product", "head"), ("base", "base")):
+            checkouts = [i for i, step in enumerate(prepare["steps"])
+                         if step.get("with", {}).get("path") == path]
+            self.assertEqual(len(checkouts), 1)
+            self.assertLess(checkouts[0], index)
+            self.assertEqual(prepare["steps"][checkouts[0]]["with"]["ref"], "${{ needs.admission.outputs." + ref + " }}")
+        checkout = prepare["steps"][index + 1]
+        self.assertTrue(checkout["uses"].startswith("actions/checkout@"))
+        self.assertEqual(checkout["if"], "${{ steps.harness.outputs.revision != '' }}")
+        self.assertEqual(checkout["with"], {
+            "repository": "ejmlabs/ejm-harness", "ref": "${{ steps.harness.outputs.revision }}",
+            "path": "harness", "persist-credentials": False,
+            "token": "${{ secrets.EJM_HARNESS_TOKEN || github.token }}",
+        })
+        archive = prepare["steps"][index + 2]
+        self.assertEqual(archive["run"], workflows.python(workflows.source("prepare.py")))
+        self.assertNotIn("HARNESS_READ_TOKEN", archive.get("env", {}))
+        self.assertNotIn("HARNESS_READ_TOKEN", prepare["env"])
+
     def test_privileged_jobs_run_only_trusted_scripts_and_actions(self):
         trusted_sources = {workflows.source(name) for name in ("governance.py", "prepare.py", "review_result.py")}
         trusted_sources.add("\n".join([
@@ -116,7 +147,7 @@ class WorkflowSecurityTests(unittest.TestCase):
                         source = embedded_source(script)
                         if source is not None:
                             self.assertIn(source, trusted_sources)
-                            self.assertRegex(script.splitlines()[0], r'^python3 - (?:admit|verify|finish|review-result\.json "\$PR_HEAD" "\$REVIEW_PASS")? <<\x27TRUSTED_PYTHON\x27$')
+                            self.assertRegex(script.splitlines()[0], r'^python3 - (?:admit|verify|finish|select-harness|review-result\.json "\$PR_HEAD" "\$REVIEW_PASS")? <<\x27TRUSTED_PYTHON\x27$')
                             encoded = base64.b64encode(source.encode()).decode()
                             self.assertEqual(script.splitlines()[1:], [
                                 "import base64",
@@ -219,6 +250,20 @@ class WorkflowSecurityTests(unittest.TestCase):
                     ["release", "create", tag, "--repo", "ejmlabs/ejmlabs", "--verify-tag", "--draft", "--title", tag,
                      "--notes-file", "release-notes.md", *flags, "release-assets/provenance.json", "release-assets/source.zip"],
                 ])
+
+    def test_release_keeps_the_standard_library_embedding_and_static_source_boundary(self):
+        draft = self.release["jobs"]["draft"]
+        self.assertEqual(draft["permissions"], {"contents": "write", "pull-requests": "read", "statuses": "read"})
+        self.assertEqual(draft["env"], {
+            "GH_TOKEN": "${{ github.token }}", "RELEASE_COMMIT": "${{ inputs.commit }}",
+            "RELEASE_VERSION": "${{ inputs.version }}", "STANDARDS_REF": "${{ inputs.standards-ref }}",
+        })
+        self.assertEqual(len(draft["steps"]), 3)
+        self.assertEqual(draft["steps"][0], workflows.checkout("product", "${{ inputs.commit }}"))
+        library = "\n".join([workflows.source("governance.py", True), workflows.source("standards.py", True),
+                              workflows.source("prepare.py", True), workflows.source("release.py")])
+        self.assertEqual(draft["steps"][1]["run"], workflows.python(library))
+        self.assertNotIn("select-harness", draft["steps"][1]["run"].splitlines()[0])
 
     def test_embedded_expressions_survive_as_literal_python_data(self):
         literal = "${{ inputs.commit }} / ${{ secrets.OPENAI_API_KEY }}"

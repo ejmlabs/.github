@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Package admitted sources as data without running any project code."""
+import hashlib
 import json
 import os
 import re
 import subprocess
+import sys
 import urllib.request
 from pathlib import Path
 
@@ -12,6 +14,10 @@ MAX_SOURCE_BYTES = 128_000_000
 MAX_TREE_BYTES = 8_000_000
 MAX_DIFF_FILES = 200
 MAX_DIFF_BYTES = 1_000_000
+HARNESS_REPOSITORY = "ejmlabs/ejm-harness"
+HARNESS_PIN = ".github/harness-revision"
+MAX_HARNESS_METADATA_BYTES = 8_000_000
+MAX_HARNESS_SELECTION_BYTES = 4_096
 
 
 def run(*args):
@@ -19,7 +25,7 @@ def run(*args):
 
 
 def full_sha(value):
-    if not re.fullmatch(r"[0-9a-f]{40}", value):
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value):
         raise ValueError("Source and diff revisions must be full lowercase commit SHAs")
     return value
 
@@ -84,17 +90,145 @@ def review_diff(repository, base, head, token):
     return patch
 
 
+def harness_pin(root, revision):
+    """Read a small ordinary pin blob, never a source-controlled filesystem path."""
+    full_sha(revision)
+    entry = run("git", "-C", str(root), "ls-tree", "-l", "-z", revision, "--", HARNESS_PIN)
+    if not entry.endswith(b"\0") or entry.count(b"\0") != 1:
+        raise ValueError("Missing or unsafe harness pin blob")
+    metadata, path = entry[:-1].split(b"\t", 1)
+    mode, kind, blob, size = metadata.split()
+    if path != HARNESS_PIN.encode() or mode not in (b"100644", b"100755") or kind != b"blob" or size not in (b"40", b"41"):
+        raise ValueError("Harness pin must be a small ordinary Git blob")
+    value = run("git", "-C", str(root), "cat-file", "blob", full_sha(blob.decode()))
+    if not re.fullmatch(br"[0-9a-f]{40}\n?", value):
+        raise ValueError("Unpinned harness dependency")
+    return value.decode().rstrip("\n")
+
+
+class NoHarnessRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, response, code, message, headers, new_url):
+        raise ValueError("Harness source authority must not redirect")
+
+
+def harness_json(path, token):
+    """Read bounded metadata only from the fixed harness API authority."""
+    if not re.fullmatch(r"branches/main|compare/[0-9a-f]{40}\.\.\.[0-9a-f]{40}\?per_page=1", path):
+        raise ValueError("Invalid harness metadata path")
+    url = "https://api.github.com/repos/" + HARNESS_REPOSITORY + "/" + path
+    request = urllib.request.Request(url, headers={
+        "Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    })
+    try:
+        with urllib.request.build_opener(NoHarnessRedirects()).open(request, timeout=30) as response:
+            if response.status != 200 or response.geturl() != url:
+                raise ValueError("Unexpected harness metadata response")
+            data = response.read(MAX_HARNESS_METADATA_BYTES + 1)
+        if not data or len(data) > MAX_HARNESS_METADATA_BYTES:
+            raise ValueError("Harness metadata exceeds its byte limit")
+        value = json.loads(data)
+        if not isinstance(value, dict):
+            raise ValueError("Harness metadata must be an object")
+        return value
+    except (OSError, ValueError):
+        raise ValueError("Could not verify protected harness source metadata") from None
+
+
+def select_harness(profile, head, base, token):
+    if profile == "ejm-cli":
+        revision = harness_pin("product", full_sha(head))
+        try:
+            branch = harness_json("branches/main", token)
+            if branch.get("name") != "main" or branch.get("protected") is not True:
+                raise ValueError("Harness main must be protected")
+            main = full_sha(branch["commit"]["sha"])
+            comparison = harness_json("compare/" + revision + "..." + main + "?per_page=1", token)
+            ahead = comparison.get("ahead_by")
+            if (comparison.get("status") != ("identical" if revision == main else "ahead")
+                    or type(comparison.get("behind_by")) is not int or comparison["behind_by"] != 0
+                    or type(ahead) is not int or (ahead != 0 if revision == main else ahead <= 0)
+                    or comparison["base_commit"]["sha"] != revision
+                    or comparison["merge_base_commit"]["sha"] != revision):
+                raise ValueError("Harness pin is not an ancestor of protected main")
+            return {"repository": HARNESS_REPOSITORY, "revision": revision,
+                    "tree": full_sha(comparison["base_commit"]["commit"]["tree"]["sha"]),
+                    "protected_main": main, "pin_source": "head", "pin_revision": head}
+        except (KeyError, TypeError):
+            raise ValueError("Incomplete protected harness source metadata") from None
+    if profile == "ejm-ide":
+        # IDE keeps its existing trusted-base selection until its own adoption.
+        pin = Path("base", HARNESS_PIN)
+        if pin.is_symlink():
+            raise ValueError("Unsafe harness pin")
+        revision = full_sha(pin.read_text().strip())
+        return {"repository": HARNESS_REPOSITORY, "revision": revision,
+                "pin_source": "base", "pin_revision": full_sha(base)}
+    return None
+
+
+def load_harness_selection(profile, head, base):
+    file = Path("harness-selection.json")
+    if file.is_symlink():
+        raise ValueError("Unsafe harness source selection")
+    with file.open("rb") as source:
+        data = source.read(MAX_HARNESS_SELECTION_BYTES + 1)
+    if len(data) > MAX_HARNESS_SELECTION_BYTES:
+        raise ValueError("Harness source selection exceeds its byte limit")
+    selection = json.loads(data)
+    expected = {"repository", "revision", "pin_source", "pin_revision"}
+    if profile == "ejm-cli":
+        expected.update(("tree", "protected_main"))
+    if not isinstance(selection, dict) or set(selection) != expected or selection["repository"] != HARNESS_REPOSITORY:
+        raise ValueError("Invalid harness source selection")
+    revision = full_sha(selection["revision"])
+    if profile == "ejm-cli":
+        full_sha(selection["tree"])
+        full_sha(selection["protected_main"])
+        if selection["pin_source"] != "head" or selection["pin_revision"] != head or harness_pin("product", head) != revision:
+            raise ValueError("Harness selection does not match admitted CLI source")
+    elif selection != select_harness(profile, head, base, ""):
+        raise ValueError("Harness selection does not match trusted IDE base")
+    return selection
+
+
+def archive_harness(selection):
+    revision = full_sha(selection["revision"])
+    if run("git", "-C", "harness", "rev-parse", "HEAD").decode().strip() != revision:
+        raise ValueError("Harness checkout does not match selected source")
+    tree = full_sha(run("git", "-C", "harness", "rev-parse", "HEAD^{tree}").decode().strip())
+    if selection.get("tree", tree) != tree:
+        raise ValueError("Harness checkout tree does not match source authority")
+    data = source_archive("harness", revision, "ejm-harness", "tar")
+    return data, {**selection, "tree": tree, "archive_sha256": hashlib.sha256(data).hexdigest()}
+
+
 def main():
     head, base = full_sha(os.environ["PR_HEAD"]), full_sha(os.environ["PR_BASE"])
     repository = os.environ["GITHUB_REPOSITORY"]
+    profile = repository.split("/")[-1]
+    if len(sys.argv) == 2 and sys.argv[1] == "select-harness":
+        if os.environ["PROFILE"] != profile:
+            raise ValueError("Harness profile does not match admitted repository")
+        selection = select_harness(profile, head, base, os.environ.get("HARNESS_READ_TOKEN", ""))
+        if selection is not None:
+            with Path("harness-selection.json").open("x") as output:
+                output.write(json.dumps(selection))
+        with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+            output.write("revision=" + (selection["revision"] if selection else "") + "\n")
+        return
+    if len(sys.argv) != 1:
+        raise ValueError("Unknown source preparation operation")
+    selection = load_harness_selection(profile, head, base) if profile in ("ejm-cli", "ejm-ide") else None
     out = Path("prepared")
     out.mkdir()
     (out / "product.tar").write_bytes(source_archive("product", head, "product", "tar"))
-    if Path("harness/.git").exists():
-        harness = run("git", "-C", "harness", "rev-parse", "HEAD").decode().strip()
-        (out / "harness.tar").write_bytes(source_archive("harness", harness, "ejm-harness", "tar"))
+    context = {"repository": repository, "pr": int(os.environ["PR_NUMBER"]), "head": head, "base": base}
+    if selection is not None:
+        data, context["harness"] = archive_harness(selection)
+        (out / "harness.tar").write_bytes(data)
     (out / "change.patch").write_bytes(review_diff(repository, base, head, os.environ["GH_TOKEN"]))
-    (out / "context.json").write_text(json.dumps({"repository": repository, "pr": int(os.environ["PR_NUMBER"]), "head": head, "base": base}))
+    (out / "context.json").write_text(json.dumps(context))
 
 
 if __name__ == "__main__":
