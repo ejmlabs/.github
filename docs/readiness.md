@@ -85,6 +85,23 @@ with all protections enforced and no exception. Its installed caller pins
 resolution and model access. It does not complete product acceptance or the
 negative cases listed below.
 
+### Verified SemVer update
+
+[PR #7](https://github.com/ejmlabs/.github/pull/7) passed at reviewed head
+`de1fc39a3fa11ae62be6acf754fe92cdd54fa769` in
+[run 39236669549](https://github.com/ejmlabs/.github/actions/runs/39236669549).
+Both actual `gpt-6.1-sol` medium passes returned no findings, and all five
+required statuses passed. Separate unedited human decisions, the current
+maintainer role, and the exact-head native approval were verified.
+
+It merged normally as
+[`300a975bfa4b323285c1aaa6db234e74d601b96b`](https://github.com/ejmlabs/.github/commit/300a975bfa4b323285c1aaa6db234e74d601b96b).
+The reviewed and merged trees matched, and the full protection response was
+unchanged. No exception was used. This adopted retained implementation
+`72379a74a1d7c264b2805d8fab87a808c2144458`, preserving the merged CLI validator
+fixes and correcting SemVer prerelease classification. Its 63 policy tests and
+generation, standards, and workflow checks passed. No release was created.
+
 ### Product caller acceptance
 
 Studio [adoption PR #1](https://github.com/ejmlabs/ejmlabs/pull/1) installed the
@@ -136,11 +153,22 @@ with the repaired fixture; the temporary probe was then removed. On macOS
 arm64, the final focused test, ten repeated runs, all six hook tests, scoped
 strict Clippy, rustfmt, shared standards, Prettier, strict OpenSpec validation,
 and whitespace checks passed. Production deadlines and the test assertions are
-unchanged. The full native gate was not repeated, and the hosted Windows
-recheck remains unverified. After the push, the new head had no commit statuses
+unchanged. The full local native gate was not repeated. After the push, the new head had no commit statuses
 or automatic workflow run. GitHub dismissed native review `5566851420` from
-the previous head. Fresh human readiness and approval, a new exact-head
-recovery authorization, and all non-AI checks remain required.
+the previous head.
+
+The owner then reviewed that full head and authorized separate readiness and
+approval commands and an AI-only recovery. Both commands remained unedited,
+and native approval `5569972356` recorded the current approval comment. In
+[run 39235095968](https://github.com/ejmlabs/ejm-harness/actions/runs/39235095968),
+Linux, macOS, registry, and standards jobs passed. Windows passed the repaired
+deadline test but failed
+`cancellation_during_tool_hooks_preserves_effect_and_recovery_boundaries` with
+`deadline has elapsed`. Required Quality failed. Both AI jobs again stopped on
+the old caller's duplicate flag before model execution. The recovery exception
+remained unused because Quality failed; protection was not weakened. A further
+fixture repair and fresh hosted checks are required. Any changed head needs
+new human decisions and a new exact-head recovery authorization.
 
 Before that push, the owner explicitly authorized a stale-head admission test
 on the same PR. A new `/ready` comment named the older
@@ -232,6 +260,17 @@ adoption patches and requires its own checks.
    vulnerability reporting, dependency review, and CodeQL without enrolling in
    a billed private security product. Require approval for all external
    contributors and keep fork secrets/write tokens disabled.
+
+Missing-key acceptance remains pending. This stage adds exact validator
+support for a `.github`-only caller selected by label
+`acceptance:missing-model-key`; adoption keeps the normal caller shape.
+The normal route forwards existing secrets, while the mutually exclusive
+fixture route forwards none. Products reject this caller. Validator adoption
+and fixture installation each require their own protected PR before live
+negative testing. No secret was removed, no fixture route was installed, and
+no missing-key run was dispatched by this stage. See
+[operations](operations.md#missing-model-key-acceptance-staging) for the sequence
+and evidence required.
 
 The release pipeline validates independent SemVer metadata, dated notes, an
 exact checked main commit, live human decisions, and unchanged reviewed source.

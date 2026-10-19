@@ -144,6 +144,18 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertEqual(ai["needs"], ["admission", "prepare"])
         self.assertIn("ai", self.governance["jobs"]["finish"]["needs"])
 
+    def test_review_step_excludes_ambient_tokens_and_preserves_admission_rechecks(self):
+        ai = self.governance["jobs"]["ai"]
+        review = next(step for step in ai["steps"] if step.get("uses", "").startswith("openai/codex-action@"))
+        for name in ("GH_TOKEN", "GITHUB_TOKEN"):
+            self.assertEqual(review.get("env", {}).get(name), "")
+        self.assertEqual(ai["env"]["GH_TOKEN"], "${{ github.token }}")
+        checks = [step for step in ai["steps"] if step.get("name") == "Recheck current human admission"]
+        self.assertEqual(len(checks), 2)
+        for step in checks:
+            self.assertNotIn("GH_TOKEN", step.get("env", {}))
+            self.assertNotIn("GITHUB_TOKEN", step.get("env", {}))
+
     def test_ai_does_not_repeat_the_action_managed_git_check_flag(self):
         # The pinned action always supplies this single-use codex exec flag.
         # Repeating it in codex-args aborts both reviews before a model call.

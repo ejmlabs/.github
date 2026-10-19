@@ -124,7 +124,7 @@ def licenses(root, profile):
 
 
 def consumer_workflows(revision):
-    """Return the only accepted consumer workflows for one reviewed revision."""
+    """Return the normal consumer workflows for one reviewed revision."""
     if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
         raise ValueError("Standards revision must be a full lowercase commit SHA")
     return {name: text.replace("STANDARDS_REVISION", revision) for name, text in {
@@ -172,6 +172,19 @@ jobs:
       standards-ref: "STANDARDS_REVISION"
 """,
     }.items()}
+
+
+def missing_model_key_workflows(revision):
+    """Return the exact shared-only caller for staged missing-key acceptance."""
+    documents = consumer_workflows(revision)
+    header, job = documents["pr.yml"].split("  governance:\n", 1)
+    original = "    if: ${{ github.event.issue.pull_request }}\n"
+    scope = "github.event.issue.pull_request && github.repository == 'ejmlabs/.github'"
+    label = "contains(github.event.issue.labels.*.name, 'acceptance:missing-model-key')"
+    normal = job.replace(original, "    if: ${{ " + scope + " && !" + label + " }}\n")
+    missing = job.split("    secrets:\n", 1)[0].replace(original, "    if: ${{ " + scope + " && " + label + " }}\n")
+    documents["pr.yml"] = header + "  governance:\n" + normal + "  missing_model_key:\n" + missing
+    return documents
 
 
 def _reusable_workflow(text, name):
@@ -292,7 +305,12 @@ def workflows(root, profile):
     pin = re.search(r"^    uses: ejmlabs/\.github/\.github/workflows/governance\.yml@([0-9a-f]{40})$", pr, re.M)
     if not pin:
         raise ValueError("PR workflow must pin governance.yml to a full commit SHA")
-    for name, expected in consumer_workflows(pin[1]).items():
+    consumers = consumer_workflows(pin[1])
+    if profile == ".github":
+        fixture = missing_model_key_workflows(pin[1])
+        if pr == fixture["pr.yml"]:
+            consumers = fixture
+    for name, expected in consumers.items():
         if read(root, ".github/workflows/" + name) != expected:
             raise ValueError("Workflow differs from the canonical consumer: " + name)
     if profile == ".github":

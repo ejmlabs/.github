@@ -6,6 +6,12 @@ Main requires a PR, one native approval recorded from an explicit human maintain
 
 Enable read-only default workflow tokens and bot review recording. Allow only pinned actions from actions/*, astral-sh/setup-uv, openai/codex-action, and this shared repository. Enable Actions sharing within the organization for this private shared repository. Never grant untrusted builds model keys, source-read secrets, deployment credentials, or write tokens. Do not reuse caches produced by PR code in a privileged job.
 
+The Codex action step clears inherited `GH_TOKEN` and `GITHUB_TOKEN`; the model
+needs neither. Trusted admission rechecks retain their read token. The pinned
+action supplies its own token for its internal permission check and isolates
+the OpenAI key behind a separate proxy. The read-only profile limits writes,
+not filesystem reads, so keep unrelated credentials out of the reviewer job.
+
 Every account with write access must be a human with maintain or admin permission. The settings tool rejects ordinary writers and bots before changing any repository. GitHub Actions app identity alone cannot prove which workflow created a status: a writer can add a branch workflow that uses the same identity. If ordinary writers become necessary, first migrate required result publication to a dedicated GitHub App whose credential is confined to a protected environment and unavailable to branch workflows.
 
 After removing or demoting a maintainer, revoke their open PR decisions before completing the access change. Commands, finalization, and releases check current roles; GitHub does not send a continuous role-change event to this pipeline. Organization administrators can change repository policy and therefore remain trusted.
@@ -38,6 +44,34 @@ caller pins to that exact revision. A separate admitted change can enable the
 hook under the new trusted validator. The older validator rejects local action
 steps, so combining adoption and execution in one change would fail Repository
 standards. Keep all human admission, approval and required checks intact.
+
+## Missing model key acceptance staging
+
+This stage adds validator support for one exact missing-key caller and adopts
+it through the normal shared caller shape. It does not install the fixture
+caller. Product callers keep their existing form and reject the fixture form.
+
+`missing_model_key_workflows(FULL_SHA)` generates the shared-only fixture.
+Its two issue-comment routes both require repository `ejmlabs/.github` and
+call the same immutable governance revision with the existing token permissions
+and human admission. Without label `acceptance:missing-model-key`, only the
+normal route runs and forwards the existing secrets. With that label, only the
+fixture route runs and forwards no secrets. Neither route uses
+`secrets: inherit`. Adding or removing the label starts no run.
+
+Install this in two protected changes. First review and retain the validator
+implementation, then update both normal caller pins to that exact SHA while
+keeping their shape. Once that adoption merges, a separate reviewed PR can
+install the exact fixture caller using the same SHA in both routes and the
+release caller. Each setup PR needs fresh human decisions, all required checks,
+and both actual AI passes. Keep secret values and repository access unchanged.
+
+Only a later admitted fixture run can establish missing-secret forwarding.
+Both AI jobs must stop at the existing missing-key guard before Codex executes.
+Record step states, all five statuses, and the current native approval before
+claiming isolated AI-check blocking. Validator tests and generation alone do
+not prove this GitHub behavior. The fixture PR used for negative acceptance
+must remain unmerged.
 
 ## Credentials
 

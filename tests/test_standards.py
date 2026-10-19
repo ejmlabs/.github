@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from standards import MIT_TERMS, consumer_workflows, licenses, read, semver, versions, workflows
+from standards import MIT_TERMS, consumer_workflows, licenses, missing_model_key_workflows, read, semver, versions, workflows
 from build_workflows import governance, release_workflow, yaml
 from review_result import validate
 
@@ -99,9 +99,65 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn('      standards-ref: "' + "1" * 40 + '"\n', (self.directory / "release.yml").read_text())
 
     def test_revision_must_be_a_lowercase_full_sha(self):
-        for revision in (None, 1, "a" * 39, "a" * 41, "A" * 40, "a" * 40 + "\n", "main"):
-            with self.subTest(revision=revision), self.assertRaises(ValueError):
-                consumer_workflows(revision)
+        for caller in (consumer_workflows, missing_model_key_workflows):
+            for revision in (None, 1, "a" * 39, "a" * 41, "A" * 40, "a" * 40 + "\n", "main"):
+                with self.subTest(caller=caller.__name__, revision=revision), self.assertRaises(ValueError):
+                    caller(revision)
+
+    def test_missing_model_key_caller_is_accepted_only_for_the_shared_profile(self):
+        profiles = (".github", "ejm-cli", "ejm-harness", "ejm-ide", "ejmlabs")
+        for profile in profiles:
+            workflows(self.root, profile)
+        for name, text in missing_model_key_workflows(self.revision).items():
+            (self.directory / name).write_text(text)
+        workflows(self.root, ".github")
+        for profile in profiles[1:]:
+            with self.subTest(profile=profile), self.assertRaises(ValueError):
+                workflows(self.root, profile)
+
+    def test_missing_model_key_routes_keep_admission_and_omit_fixture_secrets(self):
+        normal = consumer_workflows(self.revision)
+        fixture = missing_model_key_workflows(self.revision)
+        self.assertEqual(fixture["release.yml"], normal["release.yml"])
+        normal_header, original_job = normal["pr.yml"].split("  governance:\n", 1)
+        header, jobs = fixture["pr.yml"].split("  governance:\n", 1)
+        normal_job, missing_job = jobs.split("  missing_model_key:\n", 1)
+        self.assertEqual(header, normal_header)
+        original = "    if: ${{ github.event.issue.pull_request }}\n"
+        normal_condition = "    if: ${{ github.event.issue.pull_request && github.repository == 'ejmlabs/.github' && !contains(github.event.issue.labels.*.name, 'acceptance:missing-model-key') }}\n"
+        missing_condition = "    if: ${{ github.event.issue.pull_request && github.repository == 'ejmlabs/.github' && contains(github.event.issue.labels.*.name, 'acceptance:missing-model-key') }}\n"
+        self.assertTrue(normal_job.startswith(normal_condition))
+        self.assertTrue(missing_job.startswith(missing_condition))
+        self.assertEqual(normal_job.replace(normal_condition, original), original_job)
+        self.assertEqual(missing_job.replace(missing_condition, original), original_job.split("    secrets:\n", 1)[0])
+        self.assertNotIn("secrets:", missing_job)
+        self.assertNotIn("inherit", fixture["pr.yml"])
+
+    def test_missing_model_key_caller_rejects_changed_routes_credentials_permissions_and_pins(self):
+        original = missing_model_key_workflows(self.revision)
+        normal_job, missing_job = original["pr.yml"].split("  missing_model_key:\n", 1)
+        mutations = {
+            "different label": original["pr.yml"].replace("acceptance:missing-model-key", "acceptance:other"),
+            "repository guard removed": original["pr.yml"].replace(" && github.repository == 'ejmlabs/.github'", ""),
+            "routes overlap": original["pr.yml"].replace(" && !contains(", " && contains("),
+            "automatic event": original["pr.yml"].replace("on:\n", "on:\n  push:\n"),
+            "fixture receives key": original["pr.yml"] + "    secrets:\n      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}\n",
+            "fixture inherits secrets": original["pr.yml"] + "    secrets: inherit\n",
+            "normal key omitted": original["pr.yml"].replace("      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}\n", ""),
+            "fixture can write source": normal_job + "  missing_model_key:\n" + missing_job.replace("contents: read", "contents: write"),
+            "root write permissions": original["pr.yml"].replace("permissions: {}", "permissions:\n  contents: write"),
+            "fixture uses another pin": normal_job + "  missing_model_key:\n" + missing_job.replace(self.revision, self.other_revision),
+            "additional job": original["pr.yml"] + "  extra:\n    runs-on: ubuntu-24.04\n    steps: []\n",
+        }
+        for name, text in mutations.items():
+            with self.subTest(name=name):
+                (self.directory / "pr.yml").write_text(text)
+                with self.assertRaises(ValueError):
+                    workflows(self.root, ".github")
+        (self.directory / "pr.yml").write_text(original["pr.yml"])
+        (self.directory / "release.yml").write_text(consumer_workflows(self.other_revision)["release.yml"])
+        with self.assertRaises(ValueError):
+            workflows(self.root, ".github")
 
     def test_consumer_trigger_and_yaml_bypasses_are_rejected(self):
         original = consumer_workflows(self.revision)["pr.yml"]
