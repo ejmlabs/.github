@@ -1,9 +1,11 @@
 import ast
 import base64
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -149,6 +151,38 @@ class WorkflowSecurityTests(unittest.TestCase):
             if step.get("uses", "").startswith("openai/codex-action@"):
                 extra_args = json.loads(step["with"].get("codex-args", "[]"))
                 self.assertFalse(any(arg.split("=", 1)[0] == "--skip-git-repo-check" for arg in extra_args))
+
+    def test_release_draft_classifies_prereleases_without_replacing_existing_assets(self):
+        script = self.release["jobs"]["draft"]["steps"][-1]["run"]
+        cases = (
+            ("1.2.3", []),
+            ("1.2.3-rc.1", ["--prerelease", "--latest=false"]),
+            ("1.2.3+build-alpha", []),
+            ("1.2.3-beta.1+build-2", ["--prerelease", "--latest=false"]),
+        )
+        for version, flags in cases:
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "bin").mkdir()
+                gh = root / "bin/gh"
+                gh.write_text("#!/usr/bin/env python3\nimport json, os, sys\nwith open(os.environ['COMMAND_LOG'], 'a') as log:\n    log.write(json.dumps(sys.argv[1:]) + '\\n')\n")
+                gh.chmod(0o755)
+                assets = root / "release-assets"
+                assets.mkdir()
+                (assets / "provenance.json").write_text(json.dumps({"version": version, "commit": "a" * 40}))
+                (assets / "source.zip").write_bytes(b"source fixture")
+                (root / "release-notes.md").write_text("Source release fixture.\n")
+                log = root / "commands.jsonl"
+                env = {**os.environ, "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"],
+                       "GITHUB_REPOSITORY": "ejmlabs/ejmlabs", "COMMAND_LOG": str(log)}
+                subprocess.run(["bash", "-e", "-c", script], cwd=root, env=env, check=True, capture_output=True, text=True)
+                commands = [json.loads(line) for line in log.read_text().splitlines()]
+                tag = "v" + version
+                self.assertEqual(commands, [
+                    ["api", "--method", "POST", "repos/ejmlabs/ejmlabs/git/refs", "-f", "ref=refs/tags/" + tag, "-f", "sha=" + "a" * 40],
+                    ["release", "create", tag, "--repo", "ejmlabs/ejmlabs", "--verify-tag", "--draft", "--title", tag,
+                     "--notes-file", "release-notes.md", *flags, "release-assets/provenance.json", "release-assets/source.zip"],
+                ])
 
     def test_embedded_expressions_survive_as_literal_python_data(self):
         literal = "${{ inputs.commit }} / ${{ secrets.OPENAI_API_KEY }}"

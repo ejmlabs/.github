@@ -47,6 +47,12 @@ CLI and IDE quality checks remain blocked until the harness is public. The owner
 
 If private cross-repository access is authorized later, use a fine-grained GitHub token with **Contents: read** for **ejmlabs/ejm-harness only**, give it an expiry, and save it as EJM_HARNESS_TOKEN in ejm-cli and ejm-ide. The trusted preparation job archives the pinned harness revision; the untrusted build receives only source data. Once the dependency is public, remove this secret. Never copy a broad personal token into Actions.
 
+## Draft source releases
+
+The shared release workflow creates drafts from the checked source version. SemVer prereleases such as `1.2.3-rc.1` are marked as GitHub prereleases with Latest disabled. Build metadata does not change this classification: `1.2.3+build-alpha` remains stable, while `1.2.3-rc.1+build-2` remains a prerelease. Stable drafts retain GitHub's default Latest behavior. Review the draft before explicit publication.
+
+Tag creation and draft creation or asset upload are separate writes. A failed or canceled run may leave a tag without a draft, or an incomplete draft. Stop and inspect the run, the existing tag's exact commit, and the draft's state, assets, checksums, and provenance. Record the repository, version, commit, and proposed recovery. Obtain explicit owner authorization for that scoped recovery before any write. Do not delete or move the tag, replace released assets, retry automatically, or publish an incomplete draft. Reruns and requests for an existing version remain blocked. If source or asset integrity cannot be established, prepare a new version through a checked PR.
+
 ## Bootstrap and rollout
 
 1. Test and commit the shared implementation. Retain that exact commit under `workflow-pins/FULL_SHA` before adding callers. The shared repository's active ruleset must block updates and deletion for `workflow-pins/*`, with no bypass actors. Keep callers pinned to the full SHA, rather than the branch name. A new implementation needs a new commit and retention reference. This keeps implementation commits reachable after squash merges and deletion of adoption branches.
