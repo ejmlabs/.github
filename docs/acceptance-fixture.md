@@ -8,7 +8,8 @@ approval should allow Quality and Repository standards to finish, while both
 AI jobs fail at the missing-key guard before Codex executes. Keep all merge
 protections enforced and verify that AI review is the only failed requirement.
 
-A later fixture commit adds a bounded wait in the secret-free Quality job.
+`tests/test_acceptance_cancellation.py` adds a bounded 180-second wait in the
+secret-free Quality job and prints `EJM_ACCEPTANCE_CANCELLATION_ARMED` first.
 After confirming native approval and that the wait is active, a human may
 revoke that exact head. Verify both human statuses fail, native approval is
 dismissed, the active admitted run is cancelled, and finalization does not
