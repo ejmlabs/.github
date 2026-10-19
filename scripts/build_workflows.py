@@ -127,7 +127,7 @@ case "$PROFILE" in
     npm run check:rust
     node scripts/pack-proof.mjs
     ;;
-  ejmlabs) node design-kit/scripts/check-kit.mjs; npm --prefix site test; npm --prefix site run build ;;
+  ejmlabs) node scripts/check.mjs; npm --prefix site test; npm --prefix site run build ;;
   .github) python3 -m unittest discover -s tests -v; python3 scripts/build_workflows.py --check ;;
   *) exit 1 ;;
 esac

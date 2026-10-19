@@ -195,6 +195,30 @@ Builds must not import or execute review data. Keep model network and repository
 credentials disabled. Keep a pin change unmerged until the required source is
 available and both reviews complete.
 
+## Studio quality entry
+
+Studio must provide `scripts/check.mjs` before adopting a shared revision with
+this recipe:
+
+```sh
+node scripts/check.mjs
+npm --prefix site test
+npm --prefix site run build
+```
+
+The entry belongs to Studio and calls its current internal checks. Shared policy
+does not select the asset layout. These commands run in the admitted Quality job
+without credentials and stop at the first failure. Keep the entry when replacing
+retained assets. Adopt shared revisions through reviewed caller pin updates.
+A shared policy test does not prove a hosted Studio run or site deployment.
+
+For entry changes, supply the relevant consumer call path as
+[bounded Studio source context](../review/consumer-sources/ejmlabs/README.md).
+Its manifest pins the public owner commit and each copied blob. Keep these
+read-only sources separate from canonical workflow review data, retain their
+rights notice, and never execute them in shared checks. Static copies do not
+replace the consumer's admitted Quality run.
+
 ## CLI quality prerequisites
 
 Only the CLI profile runs `./product/.github/actions/setup-ci` from the exact
@@ -360,7 +384,7 @@ main commit, the repository's SemVer `VERSION` and dated release notes. See
 [Releasing](../RELEASING.md) for the dispatch and artifact contract.
 
 This revision's canonical PR and release callers both pin
-`40d446bb4c5113216fd05ec5423625b7af473987`. Its archive validator preserves
+`6717b433c462e01abaed86e2118e4843827598cb`. Its archive validator preserves
 committed notice bytes. The earlier `c4f2873ef0eef5bc3c7d75cf71fa3489a911d134`
 pin normalizes line endings in expected notices. An original CRLF notice then
 fails validation even though the archive contains its exact committed bytes.
@@ -369,8 +393,9 @@ Adopt the corrected caller pin through review; preserve the original notices.
 The coupled PR caller update also adopts the reviewed CLI harness selector,
 optional public UI source handoff, and UI owner profile. Shared checks retain
 their human admission, completion guard, two medium Sol reviews, required
-statuses, and separate missing-model-key route. This change adds no UI source
-pin and updates no product caller. It does not prove a first draft release or
+statuses, and separate missing-model-key route. Studio keeps its public
+`scripts/check.mjs` quality entry and bounded consumer source context. This
+change adds no UI source pin and updates no product caller. It does not prove a first draft release or
 duplicate-tag refusal; those paths still require separate authorized runs.
 
 Prereleases such as `1.2.3-rc.1` have Latest disabled. Build metadata does not
