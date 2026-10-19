@@ -57,6 +57,7 @@ model execution because our extra arguments repeated the pinned action's
 `--skip-git-repo-check` flag. The required AI review status correctly failed.
 The repair removes that duplicate and adds a regression check. A fresh admitted
 run after the trusted-main pin update must establish account and model access.
+See the [first admitted run](https://github.com/ejmlabs/.github/actions/runs/39188464933).
 
 OPENAI_API_KEY exists separately in all five repositories. It was collected
 through a hidden local prompt. No private harness access token was provisioned.
@@ -70,7 +71,7 @@ Total provider spending limits and GitHub budgets still need owner verification.
 | Studio | Isolated design kit consistency check, all three site tests, site build, shared standards/version checks, and strict OpenSpec validation passed | Admitted GitHub run |
 | CLI | Focused parser and package lifecycle regressions, strict Clippy, architecture/skill checks, shared standards/version checks, and strict OpenSpec validation passed | Complete assembled `./scripts/check` and admitted GitHub run |
 | Harness | Focused registry identity and protected-path regressions, policy self-tests, static policy checks, shared standards/version checks, and strict OpenSpec validation passed | Complete workspace, registry, and Windows gates in the assembled adoption snapshot |
-| IDE | Before the final dependency update: 611 frontend tests, 205 native library tests, 8 integration tests, Clippy, format, lint, types, frontend build, and site checks/build passed. The updated npm lock audit reports zero vulnerabilities | Final frontend and real extension-template builds, assembled full gate, trust UI acceptance in both themes and by keyboard, and admitted GitHub run |
+| IDE | Before the final dependency update: 611 frontend tests, 205 native library tests, 8 integration tests, Clippy, format, lint, types, frontend build, and site checks/build passed. The updated npm lock audit reports zero vulnerabilities. After the update, the frontend build and both extension-template build/import restriction tests passed on Node 24.19.0 | Assembled full gate, trust UI acceptance in both themes and by keyboard, and admitted GitHub run |
 
 The IDE lock uses DOMPurify 3.4.16 and esbuild 0.28.1. Linux still depends on
 glib 0.18.5 through GTK, with RUSTSEC-2024-0429. Linux support remains unaccepted
