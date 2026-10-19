@@ -20,11 +20,60 @@ After removing or demoting a maintainer, revoke their open PR decisions before c
 
 Only trusted main receives issue-comment events. Bot and unrelated comments are filtered before a runner starts. The script rechecks the current human's maintain/admin role, exact current head, non-draft main target, and the original command. Serialize admission per PR, reject repeated events and Actions reruns, and consume each comment once. A commit can be readmitted only after explicit revocation and a new human command.
 
-Admission limits: 200 changed files, 12,000 added/deleted lines, 1 MB diff. Quality has a 45 minute limit, the separate registry gate 25 minutes, preparation 5 minutes, and each AI pass 9 minutes inside a 12 minute job. AI passes run independently and serially. There are no automatic model retries. Model output is capped at 64 KB and 50 findings. A failed or incomplete pass blocks merge. Critical, high, and medium findings block; low findings are advisory. Review artifacts are retained 7 days; source handoff artifacts 3 days.
+Admission limits: 200 changed files, 12,000 added/deleted lines, 1 MB diff. Quality has a 45 minute limit, the separate registry gate 25 minutes, preparation 5 minutes, and each AI pass 9 minutes inside a 12 minute job. AI passes run independently and serially. There are no automatic model retries. Model output is capped at 64 KB and 50 findings. A failed job blocks merge. After the completion guard below is adopted, an incomplete result also fails validation. Critical, high, and medium findings block; low findings are advisory. Review artifacts are retained 7 days; source handoff artifacts 3 days.
+
+Each review result must include `complete` as a JSON boolean. Only `true` can
+pass validation. A missing field, a nonboolean value, or `false` fails the pass,
+even when `findings` is empty. The reviewer must use `false` when required
+source or context is absent and explain the gap in its summary. The validator
+does not infer completion from prose. A reviewer can still misstate completion;
+maintainer review and the other required gates remain necessary.
+
+This guard takes effect only after a consumer adopts the retained implementation
+that contains it. It cannot change results from an older pinned caller. For a
+shared workflow pin change, provide the exact old and new implementation source
+as bounded review data and verify it against the canonical Git objects before
+admission. Do not enable network or repository credentials in the model step to
+fill that gap. Until the source is available and both reviews complete, keep the
+pin change unmerged. See [current acceptance](readiness.md#review-completeness-guard).
 
 Harness quality installs both root and registry locked npm dependencies with lifecycle scripts disabled before running `./scripts/check`. Root ESLint includes registry sources. The separate registry job also runs its native, WebAssembly, schema, auth, and build checks.
 
 These bounds limit each admitted run. Set a dedicated OpenAI project spending limit and GitHub Actions budget/alerts to bound total spending across admitted PRs. An organization member can still request workflows they are allowed to dispatch; restrict repository roles and revoke access when needed. GitHub administrators retain control over repository settings. No repository policy can stop an organization owner from changing the policy itself.
+
+## Static workflow review data
+
+Run the shared exporter on macOS or Linux, including WSL, from a local checkout
+that contains both canonical implementation commits:
+
+```sh
+python3 scripts/export_review_context.py \
+  --old FULL_OLD_IMPLEMENTATION_SHA \
+  --new FULL_NEW_IMPLEMENTATION_SHA \
+  --destination /path/to/product/.github/review-context
+```
+
+The destination must be new and its parent directories must exist without
+symlinks. For a later rotation, export to a fresh staging directory and review
+replacement of the old pair in the same PR as both caller pin changes. Do not
+keep accumulating earlier snapshots.
+
+The exporter reads a fixed list of 16 files at each exact Git commit: both
+reusable workflows, their generator and runtime scripts, the prompt and schema,
+and community templates. It writes ordinary, nonexecutable files below each
+commit SHA plus a manifest of commit, tree, blob, mode, SHA-256, and size. The
+combined data and manifest must fit within 750,000 bytes. It neither fetches
+objects nor executes exported code. Source-controlled archive attributes cannot
+hide or substitute a selected blob. Exported files are review data; builds and
+scripts must not import or execute them.
+
+Verify both commit IDs against the protected canonical `workflow-pins/FULL_SHA`
+references and compare the exported bytes with those Git objects before human
+admission. The manifest records local object identity; it does not establish
+remote provenance by itself, and the currently installed workflow does not
+automatically authenticate snapshots. The fixed list covers this shared
+implementation's owned workflows and code, rather than recursively downloading
+other actions or dependencies. Keep the snapshot pair and caller pins in sync.
 
 ## CLI setup hook adoption
 

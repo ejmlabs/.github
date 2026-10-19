@@ -51,7 +51,7 @@ class StandardTests(unittest.TestCase):
     def test_ai_result_identity_limits_and_blocking_findings(self):
         with tempfile.TemporaryDirectory() as directory:
             file = Path(directory) / "result.json"
-            result = {"head": "a" * 40, "pass": 1, "summary": "Checked the complete diff.", "findings": []}
+            result = {"head": "a" * 40, "pass": 1, "complete": True, "summary": "Checked the complete diff.", "findings": []}
             file.write_text(json.dumps(result))
             self.assertFalse(validate(file, "a" * 40, 1)[1])
             with self.assertRaises(ValueError): validate(file, "b" * 40, 1)
@@ -64,6 +64,35 @@ class StandardTests(unittest.TestCase):
             with self.assertRaises(ValueError): validate(file, "a" * 40, 1)
             file.write_text("x" * 64001)
             with self.assertRaises(ValueError): validate(file, "a" * 40, 1)
+
+    def test_ai_incomplete_review_cannot_pass_with_empty_findings(self):
+        # Actual harness PR #12 pass 1 output, accepted by the old validator.
+        result = {
+            "head": "7a409665b4259135c85ca55c83bc5815cba237aa",
+            "pass": 1,
+            "summary": "Incomplete review. Inspected all four changed files and local workflow callers. The shared workflow implementations at the old and new pins are absent from the archive, so their behavioral changes and trust boundaries could not be verified offline. No concrete defects established from the supplied source.",
+            "findings": [],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            file = Path(directory) / "result.json"
+            file.write_text(json.dumps(result))
+            with self.assertRaises(ValueError):
+                validate(file, result["head"], result["pass"])
+            result["complete"] = False
+            file.write_text(json.dumps(result))
+            with self.assertRaisesRegex(ValueError, "incomplete"):
+                validate(file, result["head"], result["pass"])
+
+    def test_ai_completion_requires_a_json_boolean(self):
+        with tempfile.TemporaryDirectory() as directory:
+            file = Path(directory) / "result.json"
+            result = {"head": "a" * 40, "pass": 1, "summary": "Checked the complete diff.", "findings": []}
+            for value in (None, 0, 1, "true", "false", [], {}):
+                with self.subTest(complete=value):
+                    result["complete"] = value
+                    file.write_text(json.dumps(result))
+                    with self.assertRaises(ValueError):
+                        validate(file, "a" * 40, 1)
 
 
 class WorkflowTests(unittest.TestCase):
