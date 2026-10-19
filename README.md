@@ -12,6 +12,9 @@ This is the standards implementation. Activation and live run evidence are track
 
 Python 3.11 or newer for policy tests and generation. GitHub Team supports protection of the current private repositories. Hosted checks use pinned Node 24, Rust 1.99.1, and tool versions. Consumers need OPENAI_API_KEY for AI review. CLI and IDE quality checks remain blocked until the harness is public, as the owner chose not to provision a private cross-repository token.
 
+CLI setup-hook validation is prepared for a separate execution change. See
+[the staged adoption process](docs/operations.md#cli-setup-hook-adoption).
+
 ## Quick start
 
 ```sh

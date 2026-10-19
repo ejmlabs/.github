@@ -160,7 +160,10 @@ Human commands bind to the full current PR head:
 
 Readiness admits one bounded run. Approval records the human maintainer's
 decision, including self approval, through a native bot review. New commits
-need new decisions. Never post these commands on a human's behalf.
+need new decisions. A human must review and make both decisions for the full
+current head. An assistant may record the separate commands only with that
+human's explicit authorization for that exact SHA. A generic request to
+continue does not grant consent or let the assistant make either decision.
 
 The configured reviewer uses two independent serial `gpt-6.1-sol` passes with
 medium reasoning. Builds receive no model key or write token. Static review
@@ -187,11 +190,16 @@ Total provider spending limits and GitHub budgets still need owner verification.
 | Studio | Isolated design kit consistency check, all three site tests, site build, shared standards/version checks, and strict OpenSpec validation passed. PR #2 verified all five statuses and both actual AI passes, then merged normally with unchanged full protection and an exact reviewed-tree match | Remaining negative live cases below |
 | CLI | Complete assembled `./scripts/check` passed on macOS arm64 at `e287e3bbab83e4cc0d2eea94e61d0d819a6acf1f` against reviewed sibling harness `35205aa49b9261d133395c4d6116c37c456ecb95`: 35 unit and 5 integration tests, strict Clippy, release build, Rustdoc, dependency/license checks, and real PTY interaction/restoration. Shared standards/version and strict OpenSpec validation passed | Updated hosted harness pin, Linux acceptance, and admitted GitHub run; private harness CI remains blocked |
 | Harness | Earlier assembled macOS workspace gate passed: 157 Rust tests, 4 policy tests, 11 runtime tests, 16 Python SDK tests, 15 TypeScript SDK tests, strict Clippy, formatting, builds, rustdoc, dependency/license checks, generated protocol, lint, types, and Python distributions. One subprocess fixture test was deliberately ignored. The separate registry gate passed after one import reorder: native and WebAssembly Clippy, 2 Rust tests, 10 schema tests, 24 Worker tests, audits, and both actual Worker dry-run builds. Shared standards/version and strict OpenSpec validation passed. The hosted run passed Linux, macOS, registry, and standards jobs but failed Windows Quality; combined failed-check blocking was observed. The pushed fixture repair has the focused local evidence recorded above. Live stale-head admission rejection and native approval dismissal after a push were verified | Admit the current repair, verify Windows and all non-AI statuses, then complete protected recovery and fresh repaired-caller AI acceptance |
-| IDE | Before the final dependency update: 205 native library tests, 8 integration tests, Clippy, native formatting, and site checks/build passed. The updated npm lock audit reports zero vulnerabilities. After the update, all 611 frontend tests, formatting, lint, strict TypeScript, the frontend build, and both real extension-template build/import restriction tests passed on Node 24.19.0 with at most two test workers | Assembled native gate, trust UI acceptance in both themes and by keyboard, and admitted GitHub run |
+| IDE | The assembled gate at `267ad8aa2e42debf5d97ff7ce5ad8dd1c48eb0d8` passed 611 frontend tests, 205 native library tests, 8 integration tests, strict Clippy, formatting, lint, TypeScript, and production builds. Both real extension-template build/import restriction tests passed on Node 24.19.0 with at most two test workers. The npm lock audit reports zero vulnerabilities. Browser fixture checks covered trust in both themes and by keyboard; native tests covered canonical-root trust and expiry. Current head `ad97a401ac956ab7dac167e08d9459b9317309c6` changes only OpenSpec task evidence from that tested head. The compiled source, dependency graph, locks, and trust UI are unchanged, so the existing native and browser evidence still applies | Reviewed hosted harness pin and admitted GitHub run after authorized public dependency access; Linux advisory and other platform acceptance below |
 
 The IDE lock uses DOMPurify 3.4.16 and esbuild 0.28.1. Linux still depends on
 glib 0.18.5 through GTK, with RUSTSEC-2024-0429. Linux support remains unaccepted
 until a compatible upstream change and native verification resolve that limit.
+The IDE browser checks used fixed fixture responses; they do not verify native
+process execution or the desktop host's trust boundary. Seven optional native
+tests remained ignored: the disposable Harbor index test and six installed
+language-server tests. Windows, installer signing, and distribution remain
+unverified by the local gate.
 
 All-ref secret scans of the four original repositories reported no leaks.
 Partial source security scans found and led to a fix for automatic execution

@@ -199,5 +199,96 @@ class WorkflowTests(unittest.TestCase):
         self.add_reusable("governance.yml", data)
         workflows(self.root, ".github")
 
+    def test_local_cli_setup_hook_accepts_only_the_scoped_quality_step(self):
+        cases = ("valid", "different path", "missing profile", "different profile", "extra environment", "privileged job", "other unprivileged job", "duplicate step", "release")
+        for case in cases:
+            with self.subTest(case=case):
+                data = governance()
+                steps = data["jobs"]["quality"]["steps"]
+                hook = {
+                    "name": "Prepare ejm-cli remote test prerequisites",
+                    "if": "${{ needs.admission.outputs.profile == 'ejm-cli' }}",
+                    "uses": "./product/.github/actions/setup-ci",
+                }
+                steps.insert(-1, hook)
+                if case == "different path":
+                    hook["uses"] = "./product/.github/actions/other"
+                elif case == "missing profile":
+                    del hook["if"]
+                elif case == "different profile":
+                    hook["if"] = "${{ needs.admission.outputs.profile == 'ejm-harness' }}"
+                elif case == "extra environment":
+                    hook["env"] = {"EXTRA": "value"}
+                elif case in ("privileged job", "other unprivileged job"):
+                    steps.remove(hook)
+                    data["jobs"]["prepare" if case == "privileged job" else "registry"]["steps"].append(hook)
+                elif case == "duplicate step":
+                    steps.append(hook.copy())
+                elif case == "release":
+                    data = release_workflow()
+                    data["jobs"]["draft"]["steps"].append(hook)
+                name = "draft-release.yml" if case == "release" else "governance.yml"
+                self.add_reusable(name, data)
+                if case == "valid":
+                    workflows(self.root, ".github")
+                else:
+                    with self.assertRaises(ValueError):
+                        workflows(self.root, ".github")
+                (self.directory / name).unlink()
+
+    def test_literal_hook_lookalike_cannot_authorize_another_step(self):
+        for case in ("prepare hook", "unconditioned quality hook", "valid quality hook"):
+            with self.subTest(case=case):
+                data = governance()
+                for job in data["jobs"].values():
+                    job["steps"] = [step for step in job["steps"] if step.get("uses") != "./product/.github/actions/setup-ci"]
+                hook = {
+                    "name": "Prepare ejm-cli remote test prerequisites",
+                    "if": "${{ needs.admission.outputs.profile == 'ejm-cli' }}",
+                    "uses": "./product/.github/actions/setup-ci",
+                }
+                data["jobs"]["quality"]["name"] = '-\n' + yaml(hook, 2) + '\n-\n'
+                if case == "prepare hook":
+                    data["jobs"]["prepare"]["steps"].append({"uses": hook["uses"]})
+                elif case == "unconditioned quality hook":
+                    data["jobs"]["quality"]["steps"].append({"uses": hook["uses"]})
+                else:
+                    data["jobs"]["quality"]["steps"].insert(-1, hook)
+                self.add_reusable("governance.yml", data)
+                if case == "valid quality hook":
+                    workflows(self.root, ".github")
+                else:
+                    with self.assertRaises(ValueError):
+                        workflows(self.root, ".github")
+
+    def test_comment_dash_cannot_hide_extra_cli_setup_fields(self):
+        hook = {
+            "name": "Prepare ejm-cli remote test prerequisites",
+            "if": "${{ needs.admission.outputs.profile == 'ejm-cli' }}",
+            "uses": "./product/.github/actions/setup-ci",
+        }
+        name = '        "name": "Prepare ejm-cli remote test prerequisites"\n'
+        for extra in ({"env": {"EXTRA": "value"}}, {"continue-on-error": True}, {}):
+            with self.subTest(extra=extra):
+                data = governance()
+                for job in data["jobs"].values():
+                    job["steps"] = [step for step in job["steps"] if step.get("uses") != hook["uses"]]
+                data["jobs"]["quality"]["steps"].insert(-1, {**extra, **hook})
+                text = self.add_reusable("governance.yml", data)
+                if extra:
+                    # This is still one real YAML step with an extra field. The
+                    # comment must not become a second, canonical step boundary.
+                    text = text.replace(name, "        #      -\n" + name)
+                else:
+                    # Comments before a real sequence boundary retain source
+                    # line mapping and must not reject the permitted hook.
+                    text = text.replace("      -\n" + name, "      # setup prerequisites\n      -\n" + name)
+                (self.directory / "governance.yml").write_text(text)
+                if extra:
+                    with self.assertRaises(ValueError):
+                        workflows(self.root, ".github")
+                else:
+                    workflows(self.root, ".github")
+
 
 if __name__ == "__main__": unittest.main()
