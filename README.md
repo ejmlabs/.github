@@ -8,7 +8,7 @@ Shared repository policy and reusable GitHub workflows for ejm-cli, ejm-harness,
 
 This is the standards implementation. Activation and live run evidence are tracked in each adoption PR and [the operations guide](docs/operations.md). Installing these files does not publish a product or prove that every security surface has been tested.
 
-Studio PR #3 and harness PR #12 remain open: their AI jobs returned incomplete reviews that the older result validator accepted. See [the completion guard and rollout limits](docs/readiness.md#review-completeness-guard). A successful job does not establish a complete review.
+Shared PR #14 was held after its AI jobs returned incomplete reviews that the older result validator accepted. Earlier studio PR #3 and harness PR #12 runs exposed the same defect. Fresh product reviews now include both pinned workflow sources. See [the completion guard and rollout limits](docs/readiness.md#review-completeness-guard). A successful job does not establish a complete review.
 
 ## Requirements
 
@@ -32,8 +32,9 @@ Use the consumer PR and draft-release workflow templates described in [operation
 
 Edit scripts in `scripts/`, prompts in `review/`, and then regenerate with `python3 scripts/build_workflows.py`. Review the generated workflows and validate them with actionlint. Tests cover identity, exact-head decisions, replay, stale results, SemVer, symlink policy, and model output. No third-party Python library is needed. Scripts are embedded into the reusable workflows so private consumers need no token to download shared code.
 
-For consumer pin changes, export the exact old and new shared implementations
-with `scripts/export_review_context.py` before review. See
+For every caller pin change, including this repository's own callers, export
+the exact old and new shared implementations with
+`scripts/export_review_context.py` before review. See
 [static workflow review data](docs/operations.md#static-workflow-review-data).
 
 ## Documentation

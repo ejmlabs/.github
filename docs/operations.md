@@ -33,7 +33,9 @@ This guard takes effect only after a consumer adopts the retained implementation
 that contains it. It cannot change results from an older pinned caller. For a
 shared workflow pin change, provide the exact old and new implementation source
 as bounded review data and verify it against the canonical Git objects before
-admission. Do not enable network or repository credentials in the model step to
+admission. This also applies to the shared repository's own caller changes:
+its current source tree does not replace either exact pinned implementation.
+Do not enable network or repository credentials in the model step to
 fill that gap. Until the source is available and both reviews complete, keep the
 pin change unmerged. See [current acceptance](readiness.md#review-completeness-guard).
 
@@ -44,13 +46,15 @@ These bounds limit each admitted run. Set a dedicated OpenAI project spending li
 ## Static workflow review data
 
 Run the shared exporter on macOS or Linux, including WSL, from a local checkout
-that contains both canonical implementation commits:
+that contains both canonical implementation commits. Include the source pair
+in every repository that changes a shared caller pin, including this shared
+repository:
 
 ```sh
 python3 scripts/export_review_context.py \
   --old FULL_OLD_IMPLEMENTATION_SHA \
   --new FULL_NEW_IMPLEMENTATION_SHA \
-  --destination /path/to/product/.github/review-context
+  --destination /path/to/repository/.github/review-context
 ```
 
 The destination must be new and its parent directories must exist without
@@ -74,6 +78,9 @@ remote provenance by itself, and the currently installed workflow does not
 automatically authenticate snapshots. The fixed list covers this shared
 implementation's owned workflows and code, rather than recursively downloading
 other actions or dependencies. Keep the snapshot pair and caller pins in sync.
+The old revision must match the trusted default caller that will evaluate the
+PR; the new revision must match the proposed callers. Before admitting a changed
+head, confirm that both exact implementations are present in its review data.
 
 ## CLI setup hook adoption
 
