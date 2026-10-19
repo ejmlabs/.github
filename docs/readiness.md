@@ -211,7 +211,8 @@ used the trusted default caller's pin
 appeared in each PR. Earlier shared acceptance does not turn these explicitly
 incomplete product reviews into complete reviews.
 
-This repair adds a required boolean `complete` result and rejects missing,
+Retained implementation `aa4144fa978d711a5e009b384718b4cf27cf87bf` adds a
+required boolean `complete` result and rejects missing,
 nonboolean, or false completion before accepting a pass. The prompt requires
 `false` when needed source or context is absent. Local regression coverage
 reproduces acceptance of the actual incomplete output by the old validator.
@@ -222,6 +223,15 @@ pin change receives fresh complete reviews. No exception or automatic model
 retry is authorized by this repair. Both product PRs were converted to drafts
 to block merging while this gap is repaired. Their reviewed heads and recorded
 human comments were preserved.
+
+The shared adoption updates both caller pins to that same retained revision.
+All 75 policy tests, generated workflow checks, actionlint, repository standards,
+relative documentation links and anchors, and whitespace checks passed locally.
+The added offline exporter supplies exactly the selected old and new canonical
+Git blobs as inert review data. Its six regression tests cover byte identity,
+archive-attribute bypass, missing and unsafe sources, bounds, and destination
+collisions. Consumer source exports and their fresh hosted acceptance are
+separate from local validation of this shared repair.
 
 ### Product caller acceptance
 
@@ -458,7 +468,9 @@ created during this setup.
 The accepted SemVer correction is retained in combined implementation
 `72379a74a1d7c264b2805d8fab87a808c2144458`, whose 63 local policy tests,
 generation, actionlint, and whitespace checks passed. PR #7 verified its two
-actual AI passes and normal protected merge. The current shared caller pins
+actual AI passes and normal protected merge. The accepted shared caller pins
 `965cd684713ae91a7804745eddd452cc392af11d`, which preserves that correction.
-Product callers still need reviewed pin updates where applicable. Live release
+This completion repair proposes `aa4144fa978d711a5e009b384718b4cf27cf87bf`,
+which also preserves it. Product callers still need reviewed pin updates where
+applicable. Live release
 creation and recovery remain unverified; no release workflow was dispatched.
