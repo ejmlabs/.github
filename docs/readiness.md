@@ -1,6 +1,6 @@
 # Public readiness rollout
 
-Evidence recorded on 2026-10-19 UTC. All five repositories remain private.
+Evidence snapshot recorded on 2026-10-19 at 11:16 UTC. All five repositories remain private.
 Product source fixes require protected adoption PRs.
 This record does not declare the products ready for public release.
 
@@ -21,6 +21,11 @@ GitHub API readback confirmed these settings for `.github`, `ejmlabs`,
 - Dependency alerts, automatic security updates, and immutable releases are
   enabled. An active tag rule prevents changing or deleting `v*` tags.
 
+A fresh readback at 11:12:48 UTC checked all five repositories after recovery.
+All 60 assertions passed, including strict enforcement of the five required
+statuses under GitHub Actions app `15368`. All repositories remained private
+with no tags or releases.
+
 The writer audit found only human administrator `everettmorgan`. The policy
 requires every writer to be a human maintainer or administrator. An ordinary
 writer could forge GitHub Actions statuses through a branch workflow, so adding
@@ -34,7 +39,10 @@ fixes enter through adoption PRs. Each consumer pins an immutable shared
 workflow revision. New PRs and pushes have no automatic quality or AI trigger.
 The retry guard becomes active for each consumer after its pin update merges.
 Fresh admitted PRs verified the repaired caller in the shared repository and
-studio. Harness, CLI, and IDE still need acceptance after their caller updates.
+an earlier studio revision. Harness recovery and CLI adoption have merged.
+Current studio and harness refreshes still need fresh human decisions and
+hosted acceptance. CLI acceptance follows its separate rollout. IDE hosted
+Quality remains blocked under the owner's public-harness-only policy.
 
 ### Shared workflow recovery
 
@@ -113,12 +121,61 @@ normally as `8a33398f5569edb21ebc9b2e4b3d7d97087aef4a`; the reviewed and merged
 trees matched, and full main protection was unchanged. No exception was used.
 
 That merge adopted retained implementation
-`965cd684713ae91a7804745eddd452cc392af11d` through the normal caller. The next
-protected change installs its exact shared-only alternate caller. Neither
-validator acceptance nor caller installation proves omitted-key behavior.
-A dedicated unmerged fixture still needs fresh human admission and live
-missing-key, revocation, dismissal, and active-cancellation evidence. See
-[the staging procedure](operations.md#missing-model-key-acceptance-staging).
+`965cd684713ae91a7804745eddd452cc392af11d` through the normal caller.
+
+[PR #10](https://github.com/ejmlabs/.github/pull/10) installed the exact
+shared-only alternate caller. At reviewed head
+`688807eb598245bf0aa1b45a132361cc5c157924`, all five required statuses passed in
+[run 39239510733](https://github.com/ejmlabs/.github/actions/runs/39239510733).
+Both actual `gpt-6.1-sol` medium passes returned no findings. Separate unedited
+human decisions and the exact-head native approval were verified. Both the
+action and CLI-step logs showed empty `GH_TOKEN` and `GITHUB_TOKEN` values.
+The pinned action's internal permission check retained its own token.
+
+PR #10 merged normally as `f557478a0a681bae21e2579783d7b57ce7b668db`.
+Its reviewed and merged trees matched, and full main protection stayed
+unchanged. No exception was used. Validator adoption and caller installation
+were followed by the separate live negative tests below. See
+[the fixture procedure](operations.md#missing-model-key-acceptance-staging).
+
+### Verified missing-key and revocation acceptance
+
+The dedicated [PR #12](https://github.com/ejmlabs/.github/pull/12) tested the
+shared caller with label `acceptance:missing-model-key`. Each fixture head
+received its own separate, unedited human readiness and approval commands.
+The normal route skipped; the alternate route forwarded no model key.
+
+Fixture A, `8f39767cff0a58559dbd6cebdcf6cf89c7d84ecc`, completed
+[run 39240795382](https://github.com/ejmlabs/.github/actions/runs/39240795382).
+Both AI jobs reported `OPENAI_API_KEY is required; review fails closed` and
+skipped their Codex review steps. The other four required statuses and the
+exact-head native approval passed. Current main was fully included, the PR
+had no conflicts or unresolved reviews, and no other merge rule was unmet.
+AI review was the sole unmet merge requirement. No model call occurred.
+
+Fixture B, `d1c9f1e447293b80ea4bd892e8bf6de8485d4629`, added one hosted
+180-second hold in the secret-free Quality job. In
+[run 39241261759](https://github.com/ejmlabs/.github/actions/runs/39241261759),
+the terminal job log recorded `EJM_ACCEPTANCE_CANCELLATION_ARMED` at
+10:59:05.8936625 UTC. The explicitly authorized exact-head revoke comment was
+created at 10:59:34 UTC, 28.1063375 seconds into the hold. The active Quality
+step, job, and admitted run were cancelled before the hold could finish.
+
+Both human statuses failed, and the native bot approval was dismissed with
+reason `Revoked by a current human maintainer`. The finalizer failed with
+`Readiness was revoked or superseded` and did not restore either human status.
+The separate revoke-event
+[run 39241394569](https://github.com/ejmlabs/.github/actions/runs/39241394569)
+ran only admission; preparation, builds, AI, and finish all skipped. Both
+original AI passes stopped at the missing-key guard before Codex. No model
+call occurred. The terminal marker, rather than job metadata alone, proved
+that revocation happened during the active hold.
+
+Full main protection matched before and after both tests. The active-rules
+readback showed no additional main rules. PR #12 was then closed without
+merging, and its fixture label was removed; neither fixture entered main.
+These results cover the shared fixture. Outside-actor and real duplicate-tag
+acceptance remain open below.
 
 ### Product caller acceptance
 
@@ -139,6 +196,12 @@ human commands and native bot approval were verified. The PR merged normally as
 [`dc4d2680dcd308916b2686e310e1ade0d18efb7b`](https://github.com/ejmlabs/ejmlabs/commit/dc4d2680dcd308916b2686e310e1ade0d18efb7b).
 Fresh full administrative protection responses matched before and after the
 merge. The merged tree matched the reviewed tree. No exception was used.
+
+Studio [PR #3](https://github.com/ejmlabs/ejmlabs/pull/3) now refreshes the caller
+at `662765b7031637bcdc70fb2f414d18e81761cabd`, based on
+`dc4d2680dcd308916b2686e310e1ade0d18efb7b`. Fresh human readiness and approval,
+all required checks, and both actual AI passes remain pending for this head.
+The earlier PR #2 result does not establish this refresh's hosted acceptance.
 
 Harness [PR #1](https://github.com/ejmlabs/ejm-harness/pull/1) previously tested
 head `b97d5838a68a56495ba17f413a566b7122aabb24`. In
@@ -185,11 +248,51 @@ deadline test but failed
 `deadline has elapsed`. Required Quality failed. Both AI jobs again stopped on
 the old caller's duplicate flag before model execution. The recovery exception
 remained unused because Quality failed; protection was not weakened. A further
-fixture repair and fresh hosted checks are required. Any changed head needs
+fixture repair and fresh hosted checks were required. The changed head needed
 new human decisions and a new exact-head recovery authorization.
 
-Before that push, the owner explicitly authorized a stale-head admission test
-on the same PR. A new `/ready` comment named the older
+The final reviewed repair, `6da46394f29b3d0d1f068175b1715e8c6b048d23`, passed
+all non-AI jobs in
+[run 39239206945](https://github.com/ejmlabs/ejm-harness/actions/runs/39239206945).
+Quality passed on Linux, macOS, and Windows; registry and Repository standards
+also passed. Windows passed all six hook tests, including both previously
+failing deadline and cancellation cases. The separate exact-head human
+commands and native approval passed. Both AI jobs still used the old default
+caller and failed on the duplicate argument before model execution.
+
+The owner approved recovery for that exact head. Only AI review became
+advisory for the merge; all non-AI gates and administrator enforcement stayed
+active. PR #1 merged as
+[`ee1d2e3df5d77027be226d20830f6c5ea84d0d1d`](https://github.com/ejmlabs/ejm-harness/commit/ee1d2e3df5d77027be226d20830f6c5ea84d0d1d).
+The merged tree matched reviewed tree
+`8cd865538c50004973aed13162759859f73bf907`. Full protection was restored on
+the first attempt and matched its saved snapshot. This recovery did not
+provide two actual AI reviews of the adoption patch. A fresh admitted PR must
+still verify both real passes through the repaired caller with every gate
+enforced.
+
+Harness [PR #12](https://github.com/ejmlabs/ejm-harness/pull/12) prepares that
+normal acceptance at `7a409665b4259135c85ca55c83bc5815cba237aa`, based on
+`ee1d2e3df5d77027be226d20830f6c5ea84d0d1d`. Fresh human readiness and approval,
+all required checks, and both actual AI passes remain pending for this head.
+
+CLI [adoption PR #1](https://github.com/ejmlabs/ejm-cli/pull/1) also merged as
+`4b263d4cb2a50a3641d566d6c18fdf7a0551b759`. Current CLI dependency access and
+setup follow their separate rollout, including shared
+[PR #11](https://github.com/ejmlabs/.github/pull/11), whose shared changes
+remain pending. Actual two-pass acceptance of the current CLI caller remains
+separate from that merge.
+
+IDE [PR #2](https://github.com/ejmlabs/ejm-ide/pull/2) now has head
+`0b221630db35100b6a0ced1f877b2617cfa9b880`. Since
+`ad97a401ac956ab7dac167e08d9459b9317309c6`, only its two normal callers and
+OpenSpec evidence changed. Product source, dependencies, and locks remain
+unchanged. It remains unadmitted under the owner's public-harness-only policy;
+neither earlier local checks nor these caller changes establish hosted
+acceptance for the current head.
+
+In a separate test on harness PR #1, the owner explicitly authorized a new
+`/ready` comment naming the older
 `2a7dbf189b9e4a93b5db9c501f49f95883678f63` commit. In
 [run 39233021628](https://github.com/ejmlabs/ejm-harness/actions/runs/39233021628),
 admission rejected it because the command did not name the current PR head.
@@ -224,23 +327,32 @@ shared and studio acceptance runs above established model access through their
 installed repaired callers.
 See the [first admitted run](https://github.com/ejmlabs/.github/actions/runs/39188464933).
 
-OPENAI_API_KEY exists separately in all five repositories. It was collected
-through a hidden local prompt. No private harness access token was provisioned.
-Total provider spending limits and GitHub budgets still need owner verification.
+The model keys used for acceptance were collected through a hidden local
+prompt. Current CLI credential configuration and hosted Quality need their
+own live evidence; the separate CLI rollout owns that verification. IDE
+hosted Quality remains blocked until the harness is public under the owner's
+existing access policy. Total provider spending limits and GitHub budgets
+still need owner verification.
 
 ## Local and hosted evidence
 
 | Area | Evidence | Remaining verification |
 | --- | --- | --- |
-| Shared standards | All 59 Python policy tests, generator check, actionlint, uniform standards validation, and secret scan passed for the accepted implementation. PR #5 verified both actual AI passes, all required statuses, native bot self approval, and a normal protected merge | Negative live cases and release acceptance below |
-| Studio | Isolated design kit consistency check, all three site tests, site build, shared standards/version checks, and strict OpenSpec validation passed. PR #2 verified all five statuses and both actual AI passes, then merged normally with unchanged full protection and an exact reviewed-tree match | Remaining negative live cases below |
-| CLI | Complete assembled `./scripts/check` passed on macOS arm64 at `e287e3bbab83e4cc0d2eea94e61d0d819a6acf1f` against reviewed sibling harness `35205aa49b9261d133395c4d6116c37c456ecb95`: 35 unit and 5 integration tests, strict Clippy, release build, Rustdoc, dependency/license checks, and real PTY interaction/restoration. Shared standards/version and strict OpenSpec validation passed | Updated hosted harness pin, Linux acceptance, and admitted GitHub run; private harness CI remains blocked |
-| Harness | Earlier assembled macOS workspace gate passed: 157 Rust tests, 4 policy tests, 11 runtime tests, 16 Python SDK tests, 15 TypeScript SDK tests, strict Clippy, formatting, builds, rustdoc, dependency/license checks, generated protocol, lint, types, and Python distributions. One subprocess fixture test was deliberately ignored. The separate registry gate passed after one import reorder: native and WebAssembly Clippy, 2 Rust tests, 10 schema tests, 24 Worker tests, audits, and both actual Worker dry-run builds. Shared standards/version and strict OpenSpec validation passed. The hosted run passed Linux, macOS, registry, and standards jobs but failed Windows Quality; combined failed-check blocking was observed. The pushed fixture repair has the focused local evidence recorded above. Live stale-head admission rejection and native approval dismissal after a push were verified | Admit the current repair, verify Windows and all non-AI statuses, then complete protected recovery and fresh repaired-caller AI acceptance |
-| IDE | The assembled gate at `267ad8aa2e42debf5d97ff7ce5ad8dd1c48eb0d8` passed 611 frontend tests, 205 native library tests, 8 integration tests, strict Clippy, formatting, lint, TypeScript, and production builds. Both real extension-template build/import restriction tests passed on Node 24.19.0 with at most two test workers. The npm lock audit reports zero vulnerabilities. Browser fixture checks covered trust in both themes and by keyboard; native tests covered canonical-root trust and expiry. Current head `ad97a401ac956ab7dac167e08d9459b9317309c6` changes only OpenSpec task evidence from that tested head. The compiled source, dependency graph, locks, and trust UI are unchanged, so the existing native and browser evidence still applies | Reviewed hosted harness pin and admitted GitHub run after authorized public dependency access; Linux advisory and other platform acceptance below |
+| Shared standards | All 67 Python policy tests, generator check, actionlint, and uniform standards validation passed for the accepted implementation. PRs #5, #7, #9, and #10 verified both actual AI passes and normal protected merges. PR #12 verified missing-key failure as the sole unmet merge requirement and active revocation, cancellation, and native approval dismissal without model calls; it closed unmerged | Outside-actor admission rejection and real duplicate-tag release acceptance below |
+| Studio | Isolated design kit consistency check, all three site tests, site build, shared standards/version checks, and strict OpenSpec validation passed. PR #2 verified all five statuses and both actual AI passes, then merged normally with unchanged full protection and an exact reviewed-tree match | Current caller refresh PR #3 needs fresh human decisions, every required check, and both actual AI passes; earlier PR #2 acceptance applies to its reviewed revision |
+| CLI | Complete assembled `./scripts/check` passed on macOS arm64 at `e287e3bbab83e4cc0d2eea94e61d0d819a6acf1f` against reviewed sibling harness `35205aa49b9261d133395c4d6116c37c456ecb95`: 35 unit and 5 integration tests, strict Clippy, release build, Rustdoc, dependency/license checks, and real PTY interaction/restoration. Shared standards/version and strict OpenSpec validation passed. Adoption PR #1 merged as `4b263d4cb2a50a3641d566d6c18fdf7a0551b759` | Current dependency-access and setup rollout, including shared PR #11, and actual two-pass hosted acceptance of current CLI source; earlier local evidence does not establish those results |
+| Harness | Earlier assembled macOS workspace gate passed: 157 Rust tests, 4 policy tests, 11 runtime tests, 16 Python SDK tests, 15 TypeScript SDK tests, strict Clippy, formatting, builds, rustdoc, dependency/license checks, generated protocol, lint, types, and Python distributions. One subprocess fixture test was deliberately ignored. The separate registry gate passed after one import reorder: native and WebAssembly Clippy, 2 Rust tests, 10 schema tests, 24 Worker tests, audits, and both actual Worker dry-run builds. Shared standards/version and strict OpenSpec validation passed. Final hosted run 39239206945 passed Linux, macOS, Windows, registry, and standards; all six Windows hook tests passed. PR #1 completed its approved AI-only recovery with matching trees and restored full protection. Live stale-head admission rejection and native approval dismissal after a push were verified | Normal acceptance PR #12 needs fresh human decisions, both actual AI passes through the repaired caller, and all required checks enforced |
+| IDE | The assembled gate at `267ad8aa2e42debf5d97ff7ce5ad8dd1c48eb0d8` passed 611 frontend tests, 205 native library tests, 8 integration tests, strict Clippy, formatting, lint, TypeScript, and production builds. Both real extension-template build/import restriction tests passed on Node 24.19.0 with at most two test workers. The proposed npm lock audit reported zero vulnerabilities. Browser fixture checks covered trust in both themes and by keyboard; native tests covered canonical-root trust and expiry. PR #2 head `0b221630db35100b6a0ced1f877b2617cfa9b880` adds only caller and OpenSpec changes since `ad97a401ac956ab7dac167e08d9459b9317309c6`, which changed only OpenSpec evidence from the tested source. Product source, dependencies, locks, and trust UI remain unchanged | PR #2 remains unadmitted until authorized public dependency access; current hosted checks, default-branch dependency alerts, Linux advisory, and other platform acceptance remain open |
 
-The IDE lock uses DOMPurify 3.4.16 and esbuild 0.28.1. Linux still depends on
-glib 0.18.5 through GTK, with RUSTSEC-2024-0429. Linux support remains unaccepted
-until a compatible upstream change and native verification resolve that limit.
+The unmerged IDE PR #2 lock uses DOMPurify 3.4.16 and esbuild 0.28.1. At
+11:14 UTC, GitHub listed four open dependency advisories on IDE main
+`2395ddfbe7d4d252e3985267bf5924317c821cce`: two low advisories for DOMPurify
+3.4.15, one low advisory for esbuild 0.27.7, and one medium advisory for glib
+0.18.5. The three npm fixes remain in that unmerged PR. Linux still depends
+on glib 0.18.5 through GTK, with RUSTSEC-2024-0429 / GHSA-wrw7-89jp-8q8g.
+Linux remains unsupported pending a compatible upstream change and native
+verification.
+
 The IDE browser checks used fixed fixture responses; they do not verify native
 process execution or the desktop host's trust boundary. Seven optional native
 tests remained ignored: the disposable Harbor index test and six installed
@@ -255,22 +367,25 @@ adoption patches and requires its own checks.
 
 ## Acceptance order and remaining gates
 
-1. Complete the pending harness recovery through its
-   required gates. Verify the installed harness caller with a fresh admitted
-   PR. Each exact head needs a human readiness command and a separate approval
-   decision. Shared and studio positive acceptance is recorded above.
-2. Verify revocation, missing-secret failure, outsider
-   and bot admission rejection, and refused duplicate release tags in GitHub.
-   These negative cases remain open. The harness runs above demonstrate
-   stale-head admission rejection and failed-check blocking in its combined
-   failure case. A new commit dismissed the previous native approval and
-   inherited no successful statuses. Local tests alone cannot establish these
-   GitHub integrations.
-3. Merge the harness readiness fixes through the required gates. After a
-   separately approved visibility change makes the harness public, update both
-   host pins to the reviewed fixed commit and verify CLI and IDE. Their current
-   pins predate the harness fixes, and their private cross-repository CI is
-   intentionally blocked.
+1. Complete current studio PR #3 and harness PR #12 acceptance. Each exact head
+   needs a fresh human readiness command and a separate approval decision,
+   both actual AI passes, and every required check. Those human decisions and
+   hosted results remain pending. Harness recovery is complete; shared and
+   earlier studio positive acceptance is recorded above.
+2. Verify outsider, bot, and non-maintainer admission rejection and a refused
+   duplicate release tag in GitHub. Those cases remain open. Shared PR #12
+   verified missing-secret failure, isolated AI-check blocking, revocation,
+   native dismissal, and active cancellation. The harness also verified stale
+   admission rejection. A new commit dismissed the previous native approval
+   and inherited no successful statuses. Local tests alone cannot establish
+   untested GitHub integrations.
+3. Complete the separately reviewed CLI dependency-access and setup rollout,
+   including shared PR #11, then verify its current hosted source and both
+   actual AI passes. IDE hosted Quality remains blocked until a separately
+   approved visibility change makes the harness public. Its reviewed harness
+   pin and admitted checks still need acceptance after that access is available.
+   This shared record does not establish current CLI credential configuration
+   or private hosted Quality.
 4. Complete the remaining local and platform checks above. Keep OpenSpec
    verification tasks open until their evidence exists, then sync and archive.
 5. Before any repository becomes public, review all refs and release assets
@@ -279,17 +394,6 @@ adoption patches and requires its own checks.
    a billed private security product. Require approval for all external
    contributors and keep fork secrets/write tokens disabled.
 
-Missing-key acceptance remains pending. This stage adds exact validator
-support for a `.github`-only caller selected by label
-`acceptance:missing-model-key`; adoption keeps the normal caller shape.
-The normal route forwards existing secrets, while the mutually exclusive
-fixture route forwards none. Products reject this caller. Validator adoption
-and fixture installation each require their own protected PR before live
-negative testing. No secret was removed, no fixture route was installed, and
-no missing-key run was dispatched by this stage. See
-[operations](operations.md#missing-model-key-acceptance-staging) for the sequence
-and evidence required.
-
 The release pipeline validates independent SemVer metadata, dated notes, an
 exact checked main commit, live human decisions, and unchanged reviewed source.
 It creates a new tag and a draft source release with archives, checksums, and
@@ -297,10 +401,10 @@ provenance. Native installers, signing, registry publication, and deployment
 need separate product-specific acceptance. No product tag or release was
 created during this setup.
 
-The SemVer prerelease correction passed all 60 local policy tests, workflow
-generation, actionlint, and whitespace checks. Its implementation commit
-`2fa07f9e3abb5c6dd408f1fcc438e7dce553ec74` is retained under its protected
-`workflow-pins/FULL_SHA` reference, with updates and deletion blocked and no
-bypass actors. This patch updates the shared repository's own callers to that
-revision. Product callers still need reviewed pin updates. Live release
+The accepted SemVer correction is retained in combined implementation
+`72379a74a1d7c264b2805d8fab87a808c2144458`, whose 63 local policy tests,
+generation, actionlint, and whitespace checks passed. PR #7 verified its two
+actual AI passes and normal protected merge. The current shared caller pins
+`965cd684713ae91a7804745eddd452cc392af11d`, which preserves that correction.
+Product callers still need reviewed pin updates where applicable. Live release
 creation and recovery remain unverified; no release workflow was dispatched.
