@@ -1,0 +1,41 @@
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import configure_repositories as settings
+
+
+class SettingsSafetyTests(unittest.TestCase):
+    def test_hold_never_enables_actions_or_sets_allowlist(self):
+        with patch.object(settings, "api", return_value={}) as api:
+            settings.configure("ejm-cli", protect=False, hold=True)
+        writes = [call for call in api.call_args_list if len(call.args) > 1 and call.args[1] != "GET"]
+        action_permissions = [call.args[2] for call in writes if call.args[0].endswith("/actions/permissions")]
+        self.assertEqual(action_permissions, [{"enabled": False}])
+        self.assertFalse(any(call.args[0].endswith("/selected-actions") for call in writes))
+
+    def test_workflow_writer_must_be_a_human_maintainer(self):
+        for role, kind in (("write", "User"), ("admin", "Bot")):
+            with self.subTest(role=role, kind=kind), patch.object(settings, "api", return_value=[
+                {"login": "writer", "type": kind, "role_name": role, "permissions": {"push": True}}
+            ]):
+                with self.assertRaisesRegex(ValueError, "human maintainers"):
+                    settings.collaborators("ejm-cli")
+
+    def test_maintainer_and_readonly_roles_are_allowed(self):
+        people = [
+            {"login": "owner", "type": "User", "role_name": "admin", "permissions": {"push": True}},
+            {"login": "reader", "type": "User", "role_name": "read", "permissions": {"push": False}},
+        ]
+        with patch.object(settings, "api", return_value=people):
+            self.assertEqual(len(settings.collaborators("ejm-cli")), 2)
+
+    def test_activation_requires_a_full_shared_revision(self):
+        with self.assertRaisesRegex(ValueError, "full immutable SHA"):
+            settings.installed_consumers("ejm-cli", "main")
+
+
+if __name__ == "__main__":
+    unittest.main()
