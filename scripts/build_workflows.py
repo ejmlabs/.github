@@ -104,6 +104,9 @@ PY
         "strategy": {"fail-fast": False, "max-parallel": 2, "matrix": {"os": "${{ fromJSON(needs.admission.outputs.profile == 'ejm-harness' && '[\"ubuntu-24.04\",\"macos-15\",\"windows-2025\"]' || needs.admission.outputs.profile == 'ejm-cli' && '[\"ubuntu-24.04\",\"macos-15\"]' || needs.admission.outputs.profile == 'ejm-ide' && '[\"macos-15\"]' || '[\"ubuntu-24.04\"]') }}"}},
         "env": {"CARGO_BUILD_JOBS": "2", "CARGO_INCREMENTAL": "0", "PROFILE": "${{ needs.admission.outputs.profile }}", "CI": "true"},
         "steps": [ARTIFACT, EXTRACT, {"uses": NODE, "with": {"node-version": "24"}}, {"uses": UV, "with": {"version": "0.9.26"}},
+                  run("Install Linux harness keyring build prerequisites", """sudo apt-get update
+sudo apt-get install --yes --no-install-recommends pkg-config libdbus-1-dev
+""", **{"if": "${{ needs.admission.outputs.profile == 'ejm-harness' && runner.os == 'Linux' }}"}),
                   run("Install pinned Rust tools", """if [[ "$PROFILE" == ejm-* ]]; then
   rustup toolchain install 1.99.1 --profile minimal --component clippy,rustfmt
   rustup default 1.99.1
@@ -111,6 +114,7 @@ PY
   cargo install cargo-machete --version 0.9.2 --locked
 fi
 """),
+                  {"name": "Prepare ejm-cli remote test prerequisites", "if": "${{ needs.admission.outputs.profile == 'ejm-cli' }}", "uses": "./product/.github/actions/setup-ci"},
                   run("Run the project's required gate without secrets or write tokens", """cd product
 case "$PROFILE" in
   ejm-cli) ./scripts/check ;;

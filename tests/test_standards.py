@@ -290,6 +290,7 @@ class WorkflowTests(unittest.TestCase):
             with self.subTest(case=case):
                 data = governance()
                 steps = data["jobs"]["quality"]["steps"]
+                steps[:] = [step for step in steps if step.get("uses") != "./product/.github/actions/setup-ci"]
                 hook = {
                     "name": "Prepare ejm-cli remote test prerequisites",
                     "if": "${{ needs.admission.outputs.profile == 'ejm-cli' }}",

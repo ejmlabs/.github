@@ -258,6 +258,21 @@ does not change the caller pins, execute the snapshots, or establish hosted
 acceptance. The changed head needs fresh human decisions and two complete
 model reviews before any protected merge.
 
+Protected main then advanced to
+`8c304c8cdfc8b6fe50f3e442507215e615944f2b`, adding the scoped CLI setup action
+and Linux harness `pkg-config` and `libdbus-1-dev` prerequisites while retaining
+the trusted default caller's `965cd684713ae91a7804745eddd452cc392af11d` pin.
+The local integration preserves those steps and their regression tests along
+with the completion boolean and exporter hardening. At this stage, the proposed
+callers still pin `aa4144fa978d711a5e009b384718b4cf27cf87bf`, and the static
+source pair is unchanged. Those callers do not yet select the combined
+implementation. Its exact revision must be retained and its caller pins and
+source pair updated before fresh human admission. Actual hosted validation of
+the new completion field remains unverified. The integrated local source passes
+77 policy tests, generated workflow checks, the four named workflow actionlint
+checks, and repository standards. These checks cannot establish hosted
+acceptance.
+
 ### Product caller acceptance
 
 Studio [adoption PR #1](https://github.com/ejmlabs/ejmlabs/pull/1) installed the
