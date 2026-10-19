@@ -231,3 +231,11 @@ It creates a new tag and a draft source release with archives, checksums, and
 provenance. Native installers, signing, registry publication, and deployment
 need separate product-specific acceptance. No product tag or release was
 created during this setup.
+
+The SemVer prerelease correction passed all 60 local policy tests, workflow
+generation, actionlint, and whitespace checks. Its implementation commit
+`2fa07f9e3abb5c6dd408f1fcc438e7dce553ec74` is retained under its protected
+`workflow-pins/FULL_SHA` reference, with updates and deletion blocked and no
+bypass actors. This patch updates the shared repository's own callers to that
+revision. Product callers still need reviewed pin updates. Live release
+creation and recovery remain unverified; no release workflow was dispatched.
