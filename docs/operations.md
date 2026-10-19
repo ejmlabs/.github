@@ -71,18 +71,38 @@ Apply the fixture label only to a dedicated, unmerged acceptance PR. Give
 that exact head fresh human readiness and approval. Remove the label when
 closing the fixture. Ordinary PRs keep the normal route and both real reviews.
 
-Only a later admitted fixture run can establish missing-secret forwarding.
+An admitted fixture run must establish missing-secret forwarding.
 Both AI jobs must stop at the existing missing-key guard before Codex executes.
 Record step states, all five statuses, and the current native approval before
 claiming isolated AI-check blocking. Validator tests and generation alone do
 not prove this GitHub behavior. The fixture PR used for negative acceptance
 must remain unmerged.
 
+For active revocation acceptance, use a bounded hosted hold in the secret-free
+Quality job. Require a flushed marker in its terminal log before the exact-head
+revoke comment, within the hold window. In-progress job metadata alone cannot
+prove the wait was active. Verify cancellation of the original step, job, and
+admitted run, failed human statuses, dismissal of the native approval, and no
+later successful human status from finalization. The revoke event must skip
+preparation, builds, and AI. Both Codex steps must remain skipped or unstarted.
+
+Shared [PR #12](https://github.com/ejmlabs/.github/pull/12) completed both the
+missing-key and active-revocation cases with no model calls and unchanged main
+protection, then closed unmerged with its fixture label removed. See the
+[dated acceptance record](readiness.md#verified-missing-key-and-revocation-acceptance)
+for exact source revisions, run IDs, timing, results, and remaining cases.
+
 ## Credentials
 
 Store OPENAI_API_KEY as a selected organization secret or separately in the five repository secrets. Use a dedicated OpenAI project. Missing credentials fail closed. Rotate a leaked key at the provider, remove the secret, audit runs, and readmit only after the incident is contained.
 
-CLI and IDE quality checks remain blocked until the harness is public. The owner chose not to provision EJM_HARNESS_TOKEN. After the harness fixes merge, update both hosts' `.github/harness-revision` to that reviewed immutable commit and verify both consumers before public acceptance.
+IDE hosted Quality remains blocked until the harness is public under the
+owner's existing access policy. Its reviewed `.github/harness-revision` and
+admitted checks still need acceptance after that access is available. CLI
+dependency access and setup follow their separate reviewed rollout, including
+shared [PR #11](https://github.com/ejmlabs/.github/pull/11), whose shared changes
+remain pending. Verify current CLI credential configuration and hosted Quality
+from their own live evidence.
 
 If private cross-repository access is authorized later, use a fine-grained GitHub token with **Contents: read** for **ejmlabs/ejm-harness only**, give it an expiry, and save it as EJM_HARNESS_TOKEN in ejm-cli and ejm-ide. The trusted preparation job archives the pinned harness revision; the untrusted build receives only source data. Once the dependency is public, remove this secret. Never copy a broad personal token into Actions.
 
