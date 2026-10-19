@@ -1,0 +1,2 @@
+# Preserve the public originals, including their line endings and whitespace.
+*-OFL.txt -text -whitespace

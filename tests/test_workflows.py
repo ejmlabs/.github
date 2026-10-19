@@ -111,10 +111,63 @@ class WorkflowSecurityTests(unittest.TestCase):
             "path": "harness", "persist-credentials": False,
             "token": "${{ secrets.EJM_HARNESS_TOKEN || github.token }}",
         })
-        archive = prepare["steps"][index + 2]
+        archive_index, archive = next((i, step) for i, step in enumerate(prepare["steps"])
+                                      if step.get("name") == "Archive source and bounded diff")
+        self.assertLess(index + 1, archive_index)
         self.assertEqual(archive["run"], workflows.python(workflows.source("prepare.py")))
         self.assertNotIn("HARNESS_READ_TOKEN", archive.get("env", {}))
         self.assertNotIn("HARNESS_READ_TOKEN", prepare["env"])
+
+    def test_ui_owner_gate_runs_all_required_checks_and_stops_after_a_failure(self):
+        job = self.governance["jobs"]["quality"]
+        script = next(step["run"] for step in job["steps"] if "./scripts/check" in step.get("run", ""))
+        expected = [
+            ["npm", "ci", "--ignore-scripts"],
+            ["npm", "rebuild", "node-pty", "--ignore-scripts=false"],
+            ["npm", "run", "check"],
+            ["npm", "run", "build"],
+            ["node", "scripts/size.mjs"],
+            ["npm", "run", "size", "-w", "@ejm/demos"],
+            ["npm", "run", "check:rust"],
+            ["node", "scripts/pack-proof.mjs"],
+        ]
+        for failure in (None, *range(len(expected))):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "product").mkdir()
+                (root / "bin").mkdir()
+                log = root / "commands.jsonl"
+                for executable in ("npm", "node"):
+                    stub = root / "bin" / executable
+                    stub.write_text("#!/usr/bin/env python3\nimport json, os, sys\nfrom pathlib import Path\nlog = Path(os.environ['COMMAND_LOG'])\ncount = len(log.read_text().splitlines()) if log.exists() else 0\nwith log.open('a') as output:\n    output.write(json.dumps({'command': [Path(sys.argv[0]).name, *sys.argv[1:]], 'ignore_scripts': os.environ.get('npm_config_ignore_scripts')}) + '\\n')\nsys.exit(19 if str(count) == os.environ.get('FAIL_AT') else 0)\n")
+                    stub.chmod(0o755)
+                env = {**os.environ, "PROFILE": "ejm-ui", "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"],
+                       "COMMAND_LOG": str(log), "FAIL_AT": "none" if failure is None else str(failure)}
+                result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", script], cwd=root, env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0 if failure is None else 19, result.stderr)
+                calls = [json.loads(line) for line in log.read_text().splitlines()]
+                self.assertEqual([call["command"] for call in calls], expected if failure is None else expected[:failure + 1])
+                self.assertTrue(all(call["ignore_scripts"] == "true" for call in calls))
+
+    def test_ui_installs_its_rust_toolchain_without_unused_audit_binaries(self):
+        script = next(step["run"] for step in self.governance["jobs"]["quality"]["steps"]
+                      if step.get("name") == "Install pinned Rust tools")
+        for profile in ("ejm-ui", "ejm-cli", "ejm-harness", "ejm-ide"):
+            with self.subTest(profile=profile), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "bin").mkdir()
+                log = root / "commands.jsonl"
+                for executable in ("rustup", "cargo"):
+                    stub = root / "bin" / executable
+                    stub.write_text("#!/usr/bin/env python3\nimport json, os, sys\nwith open(os.environ['COMMAND_LOG'], 'a') as log:\n    log.write(json.dumps(sys.argv[1:]) + '\\n')\n")
+                    stub.chmod(0o755)
+                env = {**os.environ, "PROFILE": profile, "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"], "COMMAND_LOG": str(log)}
+                subprocess.run(["bash", "-e", "-c", script], cwd=root, env=env, check=True, capture_output=True, text=True)
+                calls = [json.loads(line) for line in log.read_text().splitlines()]
+                expected = [["toolchain", "install", "1.99.1", "--profile", "minimal", "--component", "clippy,rustfmt"], ["default", "1.99.1"]]
+                if profile != "ejm-ui":
+                    expected.extend([["install", "cargo-deny", "--version", "0.20.2", "--locked"], ["install", "cargo-machete", "--version", "0.9.2", "--locked"]])
+                self.assertEqual(calls, expected)
 
     def test_privileged_jobs_run_only_trusted_scripts_and_actions(self):
         trusted_sources = {workflows.source(name) for name in ("governance.py", "prepare.py", "review_result.py")}
@@ -147,7 +200,7 @@ class WorkflowSecurityTests(unittest.TestCase):
                         source = embedded_source(script)
                         if source is not None:
                             self.assertIn(source, trusted_sources)
-                            self.assertRegex(script.splitlines()[0], r'^python3 - (?:admit|verify|finish|select-harness|review-result\.json "\$PR_HEAD" "\$REVIEW_PASS")? <<\x27TRUSTED_PYTHON\x27$')
+                            self.assertRegex(script.splitlines()[0], r'^python3 - (?:admit|verify|finish|select-harness|ui-pin|review-result\.json "\$PR_HEAD" "\$REVIEW_PASS")? <<\x27TRUSTED_PYTHON\x27$')
                             encoded = base64.b64encode(source.encode()).decode()
                             self.assertEqual(script.splitlines()[1:], [
                                 "import base64",
@@ -210,6 +263,18 @@ class WorkflowSecurityTests(unittest.TestCase):
         for step in checks:
             self.assertNotIn("GH_TOKEN", step.get("env", {}))
             self.assertNotIn("GITHUB_TOKEN", step.get("env", {}))
+
+    def test_ui_source_is_a_fixed_owner_checkout_before_the_credential_free_handoff(self):
+        steps = self.governance["jobs"]["prepare"]["steps"]
+        read = next(step for step in steps if step.get("id") == "ui")
+        self.assertEqual(embedded_source(read["run"]), workflows.source("prepare.py"))
+        self.assertIn(" ui-pin ", read["run"].splitlines()[0])
+        owner = next(step for step in steps if step.get("with", {}).get("repository") == "ejmlabs/ejm-ui")
+        self.assertEqual(owner["if"], "${{ steps.ui.outputs.revision != '' }}")
+        self.assertEqual(owner["with"], {"repository": "ejmlabs/ejm-ui", "ref": "${{ steps.ui.outputs.revision }}", "path": "ejm-ui", "persist-credentials": False, "fetch-depth": 1, "submodules": False})
+        self.assertLess(steps.index(read), steps.index(owner))
+        archive = next(step for step in steps if step.get("name") == "Archive source and bounded diff")
+        self.assertLess(steps.index(owner), steps.index(archive))
 
     def test_ai_does_not_repeat_the_action_managed_git_check_flag(self):
         # The pinned action always supplies this single-use codex exec flag.

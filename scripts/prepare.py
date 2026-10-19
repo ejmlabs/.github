@@ -30,6 +30,26 @@ def full_sha(value):
     return value
 
 
+def ui_revision(root):
+    """Read the optional owner source pin from protected main, never PR source."""
+    root = Path(root).resolve()
+    path = root / ".github/ui-source.json"
+    if (root / ".github").is_symlink() or path.is_symlink():
+        raise ValueError("Unsafe UI source pin")
+    if not path.exists():
+        return ""
+    if not path.is_file() or path.stat().st_size > 1024:
+        raise ValueError("Missing or oversized UI source pin")
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if (not isinstance(value, dict) or set(value) != {"repository", "revision"}
+            or value["repository"] != "ejmlabs/ejm-ui"):
+        raise ValueError("UI source must be the fixed ejmlabs/ejm-ui owner")
+    revision = value["revision"]
+    if not isinstance(revision, str):
+        raise ValueError("UI source revision must be a commit SHA")
+    return full_sha(revision)
+
+
 def source_archive(root, sha, prefix, format_):
     """Export committed bytes, without allowing source-controlled archive attributes."""
     full_sha(sha)
@@ -204,7 +224,13 @@ def archive_harness(selection):
 
 
 def main():
+    if sys.argv[1:] == ["ui-pin"]:
+        with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+            output.write("revision=" + ui_revision("base") + "\n")
+        return
     head, base = full_sha(os.environ["PR_HEAD"]), full_sha(os.environ["PR_BASE"])
+    # Validate proposed metadata without allowing it to select privileged input.
+    ui_revision("product")
     repository = os.environ["GITHUB_REPOSITORY"]
     profile = repository.split("/")[-1]
     if len(sys.argv) == 2 and sys.argv[1] == "select-harness":
@@ -227,6 +253,12 @@ def main():
     if selection is not None:
         data, context["harness"] = archive_harness(selection)
         (out / "harness.tar").write_bytes(data)
+    ui = ui_revision("base")
+    if ui:
+        if run("git", "-C", "ejm-ui", "cat-file", "-t", ui).strip() != b"commit":
+            raise ValueError("UI source pin must name a commit, not a tree or tag")
+        (out / "ui.tar").write_bytes(source_archive("ejm-ui", ui, "ejm-ui", "tar"))
+        context["ui_source"] = {"repository": "ejmlabs/ejm-ui", "revision": ui}
     (out / "change.patch").write_bytes(review_diff(repository, base, head, os.environ["GH_TOKEN"]))
     (out / "context.json").write_text(json.dumps(context))
 

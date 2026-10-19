@@ -73,6 +73,95 @@ Set a dedicated OpenAI project spending limit and GitHub Actions budget and
 alerts. Per-run limits do not cap aggregate spending. Restrict repository
 roles and permitted dispatches; organization owners retain control of policy.
 
+## UI owner profile
+
+The explicit `ejm-ui` profile defines the requirements for a future adoption
+by the owner of the `@ejm/*` UI contracts, tokens, themes, and shared site tools.
+It requires `README.md#development` as the contributor guide and uses the same
+five required statuses, human maintainer decisions, exact-commit approval and
+revocation rules, two serial `gpt-6.1-sol` medium
+reviews, spending bounds, replay rejection, and source-release checks as the
+other profiles. It needs no private harness source or cross-repository token.
+
+This is shared policy support, not evidence that a current UI checkout meets
+the contract. Its manifests and invoked scripts are not part of this change.
+Before adoption, review the exact owner commit against every requirement below
+and verify its admitted checks. Do not copy private owner source into public
+review evidence. The public source-assembly route requires separate publication
+approval and an audited public owner revision before consumer adoption.
+
+This support does not add workflows, protection, secrets, or
+community files to UI, and it does not activate checks there. The default
+settings rollout remains `.github`, `ejmlabs`, `ejm-cli`, `ejm-harness`, and
+`ejm-ide`. UI settings require an explicit `--repository ejm-ui` selection after
+reviewed callers are installed on its protected main. Do not run the settings
+tool as part of source preparation. Each repository needs its own authorized
+adoption and verified settings readback.
+
+The profile emits one Ubuntu 24.04 Quality job with the existing 45-minute
+limit, two Cargo build jobs, and no repository or model credentials. It installs Node 24
+and Rust 1.99.1 with Clippy and rustfmt. It does not install the Cargo audit
+binaries used by the other Rust profiles. An adopting owner must provide these
+command interfaces. They run in order and stop at the first failure:
+
+```sh
+export npm_config_ignore_scripts=true
+npm ci --ignore-scripts
+npm rebuild node-pty --ignore-scripts=false
+npm run check
+npm run build
+node scripts/size.mjs
+npm run size -w @ejm/demos
+npm run check:rust
+node scripts/pack-proof.mjs
+```
+
+The explicit `node-pty` rebuild is the single dependency lifecycle exception.
+It runs only inside admitted credential-free Quality. The owner must lock that
+native dependency and verify its Linux rebuild and test use. All other installs,
+including any nested packed-consumer install, must preserve disabled lifecycle
+scripts. The required packed-consumer proof must use the npm registry and check
+six packed public interfaces in a temporary consumer.
+
+The synthetic shell tests in `tests/test_workflows.py` exercise the emitted
+command sequence, lifecycle environment and stopping at every failed command.
+They do not run private owner scripts or prove UI compatibility, hosted
+execution, duration or the coverage of an owner's packed-consumer proof.
+
+The required owner commands must cover source, theme, component, TypeScript,
+test, build, bundle-size, terminal, and packed-consumer checks. The profile does
+not run model calls, product captures, product honesty checks that require sibling
+repositories, or browser rendering acceptance. Those need separately reviewed
+immutable product inputs and their own evidence. The separate registry job
+continues to run only for `ejm-harness`.
+
+An adopting UI owner must keep one canonical SemVer in `VERSION` and a matching
+dated `CHANGELOG.md` entry. Root npm metadata, all eight owned npm packages
+(`core`, `demos`, `ink`, `shots`, `site`, `ssg`, `tokens`, and `ui`), their root npm lock entries, and
+`crates/ejm-tui` with its Cargo lock entry must match it. Applications, examples,
+and nested test fixtures are consumers and do not set the owner's release
+version. Adding an owned package requires a reviewed inventory update.
+
+The root and owned npm packages must keep `private: true` and
+`SEE LICENSE IN LICENSE`. Each package must name its exact repository directory
+and carry a complete scoped `LICENSE` and `THIRD_PARTY_NOTICES.md`. The
+software and documentation must retain MIT terms, and brand assets their owners'
+reserved rights. The terminal crate must keep MIT metadata and `publish = false`.
+Token font notices must preserve the original Manrope and IBM Plex Mono OFL
+bytes; the validator checks reviewed hashes against
+[independently obtained public notices](../tests/fixtures/font-notices/README.md).
+React copies must keep the same complete text after line-ending and trailing-space
+normalization. A notice
+update requires review of that allowlist. Source-release archives must include
+these package notices, font notices, and version manifests with their committed
+bytes, including original line endings. The workflow produces source drafts;
+it does not publish npm packages, a crate, a binary, or a deployment.
+
+The version and license tests use synthetic owner manifests and scoped licenses.
+The public font fixtures separately exercise the unchanged hash allowlist.
+Neither fixture set establishes that a private owner checkout satisfies this
+contract. That requires the separate review and adoption evidence above.
+
 ## Static workflow review data
 
 Before changing a caller pin, include the exact old and new implementations
@@ -227,6 +316,42 @@ such access is explicitly authorized, use an expiring fine-grained token with
 Contents read for the one dependency repository. Successful checkout and
 secret timestamps do not prove scope or expiry. Never give that token to PR
 code or infer authorization for another private dependency.
+
+## Public UI source assembly
+
+The implementation supports an optional `.github/ui-source.json` in consumers:
+
+```json
+{
+  "repository": "ejmlabs/ejm-ui",
+  "revision": "FULL_40_CHARACTER_LOWERCASE_COMMIT_SHA"
+}
+```
+
+The repository name is fixed. Branches, tags, extra fields, symlink metadata and
+files above 1,024 bytes fail. The selected revision must name a commit. Publish
+and audit the UI owner source before consumer adoption; this route adds no
+private source secret or fallback token.
+
+Trusted preparation reads the dependency from protected main, validates the
+proposed metadata without using it to select a checkout, then archives the
+exact committed UI tree with the existing source file and byte bounds. Archive
+attributes cannot omit or rewrite files. Product and dependency archives share
+one immutable artifact identity. The reviewer receives their static source;
+credential-free Quality and registry jobs receive the same data. Those build
+jobs install the UI lockfile with lifecycle scripts disabled when needed. No
+product script executes in source preparation or result publication.
+
+Adopt this workflow through a reviewed caller pin first. Add or rotate the UI
+manifest while the product still works with the trusted old dependency. Its
+adoption PR is checked with the old protected-main pin, so that run does not
+establish execution of the new UI revision. Verify a fresh admitted PR against
+the installed pin before adopting new UI APIs or removing the live kit. Pin
+changes and owner package checks do not establish site publication.
+
+Consumers without a manifest keep their existing dependency setup. UI
+governance, public source approval, package publication and site deployment
+remain separate tasks; this shared implementation enables none by itself.
 
 ## Draft source releases
 

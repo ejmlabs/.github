@@ -135,5 +135,21 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaises((KeyError, ValueError)):
                 namespace["validate_archive"](self.archive(format_, omit="LICENSE"), format_, "ejmlabs-0.1.0", {"LICENSE": (self.root / "LICENSE").read_bytes()})
 
+    def test_ui_release_requires_package_metadata_and_exact_font_notice_bytes(self):
+        paths = set(namespace["DOCS"]) | {"VERSION", "package.json", "package-lock.json", "crates/ejm-tui/Cargo.toml", "crates/ejm-tui/Cargo.lock", *namespace["UI_FONT_NOTICES"]}
+        paths.update(path + "/" + name for path in namespace["UI_PACKAGES"] for name in ("package.json", "LICENSE", "THIRD_PARTY_NOTICES.md"))
+        for name in paths:
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"Copyright fixture\r\nPreserve the exact notice bytes.\r\n")
+        tree = type("Tree", (), {"stdout": "\n".join(sorted(paths)).encode()})()
+        with patch.object(namespace["subprocess"], "run", return_value=tree):
+            required = namespace["archive_requirements"](self.root, SHA, "ejm-ui")
+        self.assertEqual(set(required), paths)
+        self.assertTrue(all(value == b"Copyright fixture\r\nPreserve the exact notice bytes.\r\n" for value in required.values()))
+        for format_ in ("zip", "tar.gz"):
+            with self.subTest(format=format_), self.assertRaises((KeyError, ValueError)):
+                namespace["validate_archive"](self.archive(format_), format_, "ejmlabs-0.1.0", required)
+
 
 if __name__ == "__main__": unittest.main()

@@ -6,7 +6,7 @@ from standards import COMMUNITY_GUIDES
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("root", type=Path)
-parser.add_argument("repository", choices=("ejm-cli", "ejm-harness", "ejm-ide", "ejmlabs", ".github"))
+parser.add_argument("repository", choices=COMMUNITY_GUIDES)
 parser.add_argument("--check", action="store_true")
 args = parser.parse_args()
 guide = COMMUNITY_GUIDES[args.repository]
