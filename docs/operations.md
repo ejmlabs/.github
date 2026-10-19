@@ -383,6 +383,21 @@ The shared workflow creates source drafts from an exact checked protected
 main commit, the repository's SemVer `VERSION` and dated release notes. See
 [Releasing](../RELEASING.md) for the dispatch and artifact contract.
 
+This revision's canonical PR and release callers both pin
+`6717b433c462e01abaed86e2118e4843827598cb`. Its archive validator preserves
+committed notice bytes. The earlier `c4f2873ef0eef5bc3c7d75cf71fa3489a911d134`
+pin normalizes line endings in expected notices. An original CRLF notice then
+fails validation even though the archive contains its exact committed bytes.
+Adopt the corrected caller pin through review; preserve the original notices.
+
+The coupled PR caller update also adopts the reviewed CLI harness selector,
+optional public UI source handoff, and UI owner profile. Shared checks retain
+their human admission, completion guard, two medium Sol reviews, required
+statuses, and separate missing-model-key route. Studio keeps its public
+`scripts/check.mjs` quality entry and bounded consumer source context. This
+change adds no UI source pin and updates no product caller. It does not prove a first draft release or
+duplicate-tag refusal; those paths still require separate authorized runs.
+
 Prereleases such as `1.2.3-rc.1` have Latest disabled. Build metadata does not
 change classification: `1.2.3+build-alpha` is stable;
 `1.2.3-rc.1+build-2` is a prerelease. Stable drafts keep GitHub's default Latest
