@@ -8,22 +8,35 @@ Shared repository policy and reusable GitHub workflows for ejm-cli, ejm-harness,
 
 This is the standards implementation. Activation and live run evidence are tracked in each adoption PR and [the operations guide](docs/operations.md). Installing these files does not publish a product or prove that every security surface has been tested.
 
+Studio and harness adopted the completion repair at
+`aa4144fa978d711a5e009b384718b4cf27cf87bf` after complete reviews of both pinned
+implementations. Their review runs used the older validator. Hosted enforcement
+of the new completion field remains unverified.
+
+Shared PR #14 now proposes combined revision
+`c4f2873ef0eef5bc3c7d75cf71fa3489a911d134`, which also preserves the CLI and
+Linux harness prerequisites. Earlier incomplete reviews and a canceled run do
+not establish acceptance of this revision. See
+[the completion guard and rollout limits](docs/readiness.md#review-completeness-guard).
+A successful job does not establish a complete review.
+
 ## Requirements
 
 Python 3.11 or newer for policy tests and generation. GitHub Team supports protection of the current private repositories. Hosted checks use pinned Node 24, Rust 1.99.1, and tool versions. Consumers need OPENAI_API_KEY for AI review. IDE hosted Quality remains blocked until the harness is public under the owner's access policy.
 
 CLI private harness review and checkout are authorized. The owner attested that EJM_HARNESS_TOKEN is an expiring fine-grained token with Contents read for ejmlabs/ejm-harness only, and hosted CLI source preparation succeeded. That attestation is not independent metadata verification. Reviewed harness API adoption, the immutable source pin and the complete consumer gate remain separate requirements. See [Credentials](docs/operations.md#credentials).
 
-The prepared CLI quality hook calls the product setup action for relay build
-and browser-test prerequisites. Keep it in draft until the trusted CLI baseline
-contains the reviewed setup action, retaining its current working harness pin.
+The shared source includes a CLI quality hook for the product setup action's
+relay build and browser-test prerequisites. Adopt it only after the trusted CLI
+baseline contains the reviewed setup action, retaining its working harness pin.
 Adopt the new harness APIs after the setup hook can run. See
 [CLI setup and adoption](docs/operations.md#cli-quality-prerequisites).
 
 The harness Linux quality job also needs `pkg-config` and `libdbus-1-dev` for
-its native keyring backend. The shared workflow installs these fixed Ubuntu
-packages before the product gate. Harness callers must adopt the reviewed
-workflow pin before publishing that backend.
+its native keyring backend. The shared source installs these fixed Ubuntu
+packages before the product gate. Both prerequisite steps need adoption of a
+reviewed combined workflow pin before they run in consumer checks. Harness
+callers must adopt that pin before publishing the backend.
 
 ## Quick start
 
@@ -39,6 +52,11 @@ Use the consumer PR and draft-release workflow templates described in [operation
 ## Development
 
 Edit scripts in `scripts/`, prompts in `review/`, and then regenerate with `python3 scripts/build_workflows.py`. Review the generated workflows and validate them with actionlint. Tests cover identity, exact-head decisions, replay, stale results, SemVer, symlink policy, and model output. No third-party Python library is needed. Scripts are embedded into the reusable workflows so private consumers need no token to download shared code.
+
+For every caller pin change, including this repository's own callers, export
+the exact old and new shared implementations with
+`scripts/export_review_context.py` before review. See
+[static workflow review data](docs/operations.md#static-workflow-review-data).
 
 ## Documentation
 

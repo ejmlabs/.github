@@ -20,11 +20,67 @@ After removing or demoting a maintainer, revoke their open PR decisions before c
 
 Only trusted main receives issue-comment events. Bot and unrelated comments are filtered before a runner starts. The script rechecks the current human's maintain/admin role, exact current head, non-draft main target, and the original command. Serialize admission per PR, reject repeated events and Actions reruns, and consume each comment once. A commit can be readmitted only after explicit revocation and a new human command.
 
-Admission limits: 200 changed files, 12,000 added/deleted lines, 1 MB diff. Quality has a 45 minute limit, the separate registry gate 25 minutes, preparation 5 minutes, and each AI pass 9 minutes inside a 12 minute job. AI passes run independently and serially. There are no automatic model retries. Model output is capped at 64 KB and 50 findings. A failed or incomplete pass blocks merge. Critical, high, and medium findings block; low findings are advisory. Review artifacts are retained 7 days; source handoff artifacts 3 days.
+Admission limits: 200 changed files, 12,000 added/deleted lines, 1 MB diff. Quality has a 45 minute limit, the separate registry gate 25 minutes, preparation 5 minutes, and each AI pass 9 minutes inside a 12 minute job. AI passes run independently and serially. There are no automatic model retries. Model output is capped at 64 KB and 50 findings. A failed job blocks merge. After the completion guard below is adopted, an incomplete result also fails validation. Critical, high, and medium findings block; low findings are advisory. Review artifacts are retained 7 days; source handoff artifacts 3 days.
+
+Each review result must include `complete` as a JSON boolean. Only `true` can
+pass validation. A missing field, a nonboolean value, or `false` fails the pass,
+even when `findings` is empty. The reviewer must use `false` when required
+source or context is absent and explain the gap in its summary. The validator
+does not infer completion from prose. A reviewer can still misstate completion;
+maintainer review and the other required gates remain necessary.
+
+This guard takes effect only after a consumer adopts the retained implementation
+that contains it. It cannot change results from an older pinned caller. For a
+shared workflow pin change, provide the exact old and new implementation source
+as bounded review data and verify it against the canonical Git objects before
+admission. This also applies to the shared repository's own caller changes:
+its current source tree does not replace either exact pinned implementation.
+Do not enable network or repository credentials in the model step to
+fill that gap. Until the source is available and both reviews complete, keep the
+pin change unmerged. See [current acceptance](readiness.md#review-completeness-guard).
 
 Harness quality installs both root and registry locked npm dependencies with lifecycle scripts disabled before running `./scripts/check`. Root ESLint includes registry sources. The separate registry job also runs its native, WebAssembly, schema, auth, and build checks.
 
 These bounds limit each admitted run. Set a dedicated OpenAI project spending limit and GitHub Actions budget/alerts to bound total spending across admitted PRs. An organization member can still request workflows they are allowed to dispatch; restrict repository roles and revoke access when needed. GitHub administrators retain control over repository settings. No repository policy can stop an organization owner from changing the policy itself.
+
+## Static workflow review data
+
+Run the shared exporter on macOS or Linux, including WSL, from a local checkout
+that contains both canonical implementation commits. Include the source pair
+in every repository that changes a shared caller pin, including this shared
+repository:
+
+```sh
+python3 scripts/export_review_context.py \
+  --old FULL_OLD_IMPLEMENTATION_SHA \
+  --new FULL_NEW_IMPLEMENTATION_SHA \
+  --destination /path/to/repository/.github/review-context
+```
+
+The destination must be new and its parent directories must exist without
+symlinks. For a later rotation, export to a fresh staging directory and review
+replacement of the old pair in the same PR as both caller pin changes. Do not
+keep accumulating earlier snapshots.
+
+The exporter reads a fixed list of 16 files at each exact Git commit: both
+reusable workflows, their generator and runtime scripts, the prompt and schema,
+and community templates. It writes ordinary, nonexecutable files below each
+commit SHA plus a manifest of commit, tree, blob, mode, SHA-256, and size. The
+combined data and manifest must fit within 750,000 bytes. It neither fetches
+objects nor executes exported code. Source-controlled archive attributes cannot
+hide or substitute a selected blob. Exported files are review data; builds and
+scripts must not import or execute them.
+
+Verify both commit IDs against the protected canonical `workflow-pins/FULL_SHA`
+references and compare the exported bytes with those Git objects before human
+admission. The manifest records local object identity; it does not establish
+remote provenance by itself, and the currently installed workflow does not
+automatically authenticate snapshots. The fixed list covers this shared
+implementation's owned workflows and code, rather than recursively downloading
+other actions or dependencies. Keep the snapshot pair and caller pins in sync.
+The old revision must match the trusted default caller that will evaluate the
+PR; the new revision must match the proposed callers. Before admitting a changed
+head, confirm that both exact implementations are present in its review data.
 
 ## CLI quality prerequisites
 
@@ -62,17 +118,34 @@ the binary the gate uses. This adds source compilation; no hosted duration has
 been measured for this setup. Keep the current deadline until an admitted run
 provides evidence for a change.
 
-This candidate is based on protected main
-`d8b31f1debf095b104f6de76193bf531ec4ddd2c`. Its callers retain reviewed implementation
-`965cd684713ae91a7804745eddd452cc392af11d`, including the CLI validator, SemVer
-release fixes, shared missing-model-key fixture routes and narrowed reviewer
-credentials. This change preserves those callers and controls. It adds the
-conditioned CLI action and fixed Linux harness package setup to quality; it
-changes no validator, allowed action source, permission or admission rule. The protected parent also
-contains the dated missing-key and active-revocation acceptance record, which
-this change preserves.
+The prerequisite implementation merged into protected main
+`8c304c8cdfc8b6fe50f3e442507215e615944f2b`, whose trusted caller still pins
+`965cd684713ae91a7804745eddd452cc392af11d`. This completion repair builds on
+that main and preserves the CLI validator, conditioned CLI action, Linux
+harness package setup, SemVer release fixes, shared missing-model-key fixture
+routes and narrowed reviewer credentials. It also preserves the dated
+missing-key and active-revocation acceptance record. The completion guard
+changes review-result validation; no allowed action source, permission or
+human admission rule changes.
 
-Keep this hook change in draft until the product prerequisites are trusted:
+Combined implementation `c4f2873ef0eef5bc3c7d75cf71fa3489a911d134` retains both
+the completion repair and these prerequisite execution steps. Its protected
+`workflow-pins/FULL_SHA` reference blocks updates and deletion, with no bypass
+actors. This shared adoption proposes that exact revision for the normal and
+missing-key PR routes, draft release caller, and `standards-ref`. Its static
+source pair contains old `965cd684713ae91a7804745eddd452cc392af11d` and new
+`c4f2873ef0eef5bc3c7d75cf71fa3489a911d134`. Shared main continues to use the old
+caller until the protected adoption merges.
+
+Studio and harness adopted the earlier completion-only revision
+`aa4144fa978d711a5e009b384718b4cf27cf87bf`. Neither that revision nor the old
+shared trusted caller contains the prerequisite execution steps. Consumer
+adoption of the combined revision requires separate reviewed pin changes; this
+shared source change does not establish hosted consumer execution. See
+[the integration record](readiness.md#review-completeness-guard).
+
+Before adopting the combined implementation in the CLI, establish these
+prerequisites:
 
 1. Land the reviewed local setup action in the trusted CLI baseline while
    retaining its current reviewed working harness pin. The action must work
@@ -84,13 +157,13 @@ Keep this hook change in draft until the product prerequisites are trusted:
    described under [Credentials](#credentials). Successful source preparation
    proves access to the selected source, not least-privilege scope or adoption
    of the new harness APIs.
-3. Review the hook change against the current protected baseline and rerun its
+3. Review the shared implementation against the current protected baseline and run its
    policy and generation checks. Request fresh human readiness and approval for
    the exact new head after it leaves draft. An earlier approval does not apply
    to a rebuilt candidate. Preserve the repaired model startup, human commands,
    required checks and administrator enforcement.
-4. After review and passing checks, merge the hook through protected review and
-   retain its exact reviewed implementation under `workflow-pins/FULL_SHA`.
+4. After review and passing checks, retain the exact shared implementation under
+   `workflow-pins/FULL_SHA` and merge its adoption through protected review.
    Move the CLI caller's `uses` pin and `standards-ref` together to that reviewed
    revision through its own admitted change, still retaining the working harness
    pin. Keep the shared caller's retained SemVer fixes. Do not weaken protected
@@ -121,9 +194,9 @@ CLI keeps its reviewed product setup action. No local-action allowance changes.
 
 Hosted harness API PR #2 at `4aeff321c3ab1148bfc92776471552308d3e62da`
 confirmed the missing-header failure on Ubuntu 24.04 in job `118036420366` of
-run `39245467732`; its macOS quality job passed. This local workflow change
-does not establish a passing Linux harness run. First review, merge and retain
-the shared revision, then adopt both harness caller pins and `standards-ref`
+run `39245467732`; its macOS quality job passed. This source change
+does not establish a passing Linux harness run. After the shared revision is
+reviewed, retained and adopted through protected review, adopt both harness caller pins and `standards-ref`
 through a bounded protected change on the working harness baseline. Rebuild and
 readmit the API layer on that adopted parent. The old trusted caller cannot run
 setup that exists only in the API PR's head. Keep the 45-minute gate and all
