@@ -14,6 +14,7 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Fixed
 
+- Prepare CLI harness-pin updates against the proposed immutable dependency only after verifying that it belongs to the fixed harness repository's protected main history. Bind the selected source and archive to review context. Consumers must adopt the reviewed workflow revision before this behavior is active.
 - Require an explicit boolean completion result before accepting either AI review pass. Reject incomplete reviews even when they report no findings.
 - Clear inherited GitHub token variables on the Codex action step while preserving trusted admission rechecks.
 - Bind the CLI setup allowance to its actual quality step; literal YAML text and comment dashes cannot authorize another local action or hide extra step fields.

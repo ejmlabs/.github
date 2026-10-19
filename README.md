@@ -16,13 +16,17 @@ Studio and harness use completion repair
 `aa4144fa978d711a5e009b384718b4cf27cf87bf`. Studio PR #4 verified both actual
 reviews with `complete: true` under that installed guard. Hosted execution of
 the combined revision remains separate from its adoption review, which ran the
-older caller. CLI still needs its completion-guard update; IDE repairs remain
-unadmitted drafts. See [the evidence and limits](docs/readiness.md).
+older caller. CLI [PR #4](https://github.com/ejmlabs/ejm-cli/pull/4) and harness
+[PR #13](https://github.com/ejmlabs/ejm-harness/pull/13) subsequently adopted
+that combined revision through their protected checks. The new harness APIs
+and CLI dependency update still need their own acceptance. IDE repairs follow
+their separate rollout. See [the evidence and limits](docs/readiness.md).
 
-No source repository has been made public by this rollout. Audit current
-history and private data, then publish this shared repository before harness:
-public callers cannot use private reusable workflows. Public security settings,
-external-contributor controls, and owner spending limits still need verification.
+The dated readiness audit records the pre-publication settings. The owner is
+handling public visibility separately, with shared workflows published before
+public consumers adopt them. Check current access, protection and hosted
+acceptance for each adoption. External-contributor acceptance and owner spending
+limits remain separate checks.
 First releases, native binaries, signing, and package publishing have separate
 gates; they are not prerequisites for publishing the audited source.
 
@@ -37,6 +41,13 @@ relay build and browser-test prerequisites. Adopt it only after the trusted CLI
 baseline contains the reviewed setup action, retaining its working harness pin.
 Adopt the new harness APIs after the setup hook can run. See
 [CLI setup and adoption](docs/operations.md#cli-quality-prerequisites).
+
+The proposed CLI dependency selector also permits an atomic harness-pin and
+lockfile update after proving the selected commit belongs to protected harness
+`main`. The source archive and authority record travel together through CI.
+This requires its own reviewed workflow adoption; current pinned callers keep
+their existing selection behavior. See
+[CLI dependency selection](docs/operations.md#cli-harness-pin-updates).
 
 The harness Linux quality job also needs `pkg-config` and `libdbus-1-dev` for
 its native keyring backend. The shared source installs these fixed Ubuntu

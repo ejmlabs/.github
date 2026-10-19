@@ -50,9 +50,34 @@ Shared PR #14 then merged the combined
 `c4f2873ef0eef5bc3c7d75cf71fa3489a911d134` adoption after complete reviews,
 including the CLI and harness prerequisites and canonical source pair. Studio
 PR #4 verified the installed completion boolean at `aa4144fa...`; its passing
-run does not prove execution of the combined caller. CLI still pins
-`ae903129...`, which lacks the guard, and follows its separate rollout. IDE
-repairs remain drafts; hosted Quality waits for public harness access.
+run does not prove execution of the combined caller. CLI PR #4 then adopted
+the combined revision as `d5113beb9c42565e6dc124052dbd633d0d12d25d`, and
+harness PR #13 adopted it as `99ba4575ad9070a7a0f3296a35e746858af904b0`.
+Their protected checks passed. The required API source and atomic CLI
+dependency update remain separate from those caller changes. IDE repairs and
+the owner's public visibility work follow their separate rollout.
+
+### Proposed CLI dependency selection
+
+The CLI dependency update has a concrete lockfile constraint. An offline
+metadata check used protected CLI `d5113beb9c42565e6dc124052dbd633d0d12d25d`,
+the current harness pin `4a751c6a3f24d7d143140f79ff53517fb93e3531` and
+proposed harness API head `90aa7350e30eaad908d14e8b3260610d5f15f2fe`.
+The old pair passed with the original lock. The new pair required a resolved
+lock, which then failed against the old harness under `--locked`. Both source
+fixture locks were restored. These metadata results are not product gates or
+acceptance of that unmerged API head.
+
+The proposed shared preparation change verifies a CLI head's harness pin
+against the fixed repository's protected main history and binds the selected
+source archive to its review context. IDE retains trusted-base selection.
+See [the selection contract and adoption order](operations.md#cli-harness-pin-updates).
+The current C4 callers do not contain this change. Shared review, retained
+implementation identity, CLI caller adoption and a fresh atomic pin/lock
+consumer gate remain pending. No policy exception is part of this change.
+The owner's separate public-source rollout controls repository visibility.
+Earlier entries below retain their named source snapshots; later adoption
+records above supersede their then-current caller status.
 
 ### Shared workflow recovery
 
