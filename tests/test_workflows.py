@@ -61,6 +61,30 @@ class WorkflowSecurityTests(unittest.TestCase):
             with self.subTest(job=name):
                 self.assertRegex(job.get("if", ""), r"^\$\{\{ github\.run_attempt == 1(?: && | \}\}$)")
 
+    def test_cli_setup_runs_after_tools_only_in_the_unprivileged_quality_job(self):
+        hooks = [(name, index, step) for name, job in self.governance["jobs"].items()
+                 for index, step in enumerate(job["steps"]) if step.get("uses", "").startswith("./")]
+        self.assertEqual(len(hooks), 1)
+        name, index, hook = hooks[0]
+        self.assertEqual(name, "quality")
+        self.assertEqual(hook["uses"], "./product/.github/actions/setup-ci")
+        self.assertEqual(hook["if"], "${{ needs.admission.outputs.profile == 'ejm-cli' }}")
+        steps = self.governance["jobs"][name]["steps"]
+        self.assertIn("rustup toolchain install", steps[index - 1]["run"])
+        self.assertIn("./scripts/check", steps[index + 1]["run"])
+
+    def test_harness_dbus_setup_is_linux_only_and_before_the_required_gate(self):
+        installers = [(name, index, step) for name, job in self.governance["jobs"].items()
+                      for index, step in enumerate(job["steps"]) if "libdbus-1-dev" in step.get("run", "")]
+        self.assertEqual(len(installers), 1)
+        name, index, step = installers[0]
+        self.assertEqual(name, "quality")
+        self.assertEqual(step["if"], "${{ needs.admission.outputs.profile == 'ejm-harness' && runner.os == 'Linux' }}")
+        gates = [i for i, item in enumerate(self.governance["jobs"][name]["steps"])
+                 if "./scripts/check" in item.get("run", "")]
+        self.assertEqual(len(gates), 1)
+        self.assertLess(index, gates[0])
+
     def test_privileged_jobs_run_only_trusted_scripts_and_actions(self):
         trusted_sources = {workflows.source(name) for name in ("governance.py", "prepare.py", "review_result.py")}
         trusted_sources.add("\n".join([
