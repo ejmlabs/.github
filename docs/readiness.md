@@ -1,7 +1,7 @@
 # Public readiness rollout
 
 Evidence snapshot recorded on 2026-10-19 at 11:16 UTC. All five repositories remain private.
-Caller review and adoption updates below include evidence through 14:30 UTC.
+Caller review and adoption updates below include evidence through 14:48 UTC.
 Product source fixes require protected adoption PRs.
 This record does not declare the products ready for public release.
 
@@ -41,13 +41,16 @@ workflow revision. New PRs and pushes have no automatic quality or AI trigger.
 The retry guard becomes active for each consumer after its pin update merges.
 Fresh admitted PRs verified the repaired caller in the shared repository and
 an earlier studio revision. Harness recovery and CLI adoption have merged.
-The revised studio refresh merged normally after two complete reviews of both
-pinned implementations and all required checks. Harness's revised refresh has
-two complete reviews; its Windows Quality job is still active. Shared PR #14
-was held after incomplete reviews and now includes its own canonical source
-pair, pending fresh decisions and complete reviews. Hosted enforcement of the
-new completion boolean remains unverified. CLI acceptance follows its separate rollout. IDE hosted
-Quality remains blocked under the owner's public-harness-only policy.
+The revised studio and harness refreshes merged normally after two complete
+reviews of both pinned implementations and all required checks. They install
+the earlier completion-only revision `aa4144fa978d711a5e009b384718b4cf27cf87bf`.
+Shared PR #14 was held after incomplete reviews and a canceled run. It now
+proposes combined revision `c4f2873ef0eef5bc3c7d75cf71fa3489a911d134`, including
+the merged CLI and harness prerequisites and its own canonical source pair.
+Fresh decisions and complete reviews remain required. Hosted enforcement of
+the new completion boolean remains unverified. CLI consumer acceptance follows
+its separate rollout. IDE hosted Quality remains blocked under the owner's
+public-harness-only policy.
 
 ### Shared workflow recovery
 
@@ -219,8 +222,8 @@ required boolean `complete` result and rejects missing,
 nonboolean, or false completion before accepting a pass. The prompt requires
 `false` when needed source or context is absent. Local regression coverage
 reproduces acceptance of the actual incomplete output by the old validator.
-Studio has now adopted the repair through the protected merge below. Shared
-and harness adoption and fresh execution of the new completion field remain
+Studio and harness adopted this earlier repair through the protected merges
+below. Shared adoption and fresh execution of the new completion field remain
 pending in this snapshot. Both revised product heads include the canonical
 old and new shared source and received complete reviews under their previous
 default callers. No exception or automatic model retry is authorized by this
@@ -228,8 +231,8 @@ repair. Both original product heads were converted to drafts
 to block merging while this gap is repaired. Their reviewed heads and recorded
 human comments were preserved.
 
-The shared adoption updates both caller pins to that same retained revision.
-All 75 policy tests, generated workflow checks, actionlint, repository standards,
+The original completion-only implementation passed all 75 policy tests,
+generated workflow checks, actionlint, repository standards,
 relative documentation links and anchors, and whitespace checks passed locally.
 The added offline exporter supplies exactly the selected old and new canonical
 Git blobs as inert review data. Its six regression tests cover byte identity,
@@ -248,30 +251,39 @@ pin `aa4144fa978d711a5e009b384718b4cf27cf87bf` did not govern that run.
 The older validator accepted both outputs. PR #14 was returned to draft, and
 those outputs do not establish two complete reviews or merge readiness.
 
-This revision adds both exact implementations to this repository's own
-`.github/review-context/`, with the same 16-file source list per revision and a
-manifest. The pair covers old pin `965cd684713ae91a7804745eddd452cc392af11d`
-and new pin `aa4144fa978d711a5e009b384718b4cf27cf87bf`. Local checks compare
-the bytes, manifest, and modes against canonical local Git objects and enforce
-the 750,000-byte bound. These files are static review data. This preparation
-does not change the caller pins, execute the snapshots, or establish hosted
-acceptance. The changed head needs fresh human decisions and two complete
-model reviews before any protected merge.
+Head `c0505e774fd57497e226dd244ff9caf1f464f139` added the missing old and new
+source pair. Its admitted
+[run 39270766743](https://github.com/ejmlabs/.github/actions/runs/39270766743)
+was canceled after protected main advanced and the PR conflicted. Pass 1 was
+interrupted; pass 2 never started under the serialized review strategy. This
+run does not establish two complete reviews or acceptance of a later head.
+PR #14 was returned to draft.
 
-Protected main then advanced to
+Protected main advanced to
 `8c304c8cdfc8b6fe50f3e442507215e615944f2b`, adding the scoped CLI setup action
 and Linux harness `pkg-config` and `libdbus-1-dev` prerequisites while retaining
 the trusted default caller's `965cd684713ae91a7804745eddd452cc392af11d` pin.
-The local integration preserves those steps and their regression tests along
-with the completion boolean and exporter hardening. At this stage, the proposed
-callers still pin `aa4144fa978d711a5e009b384718b4cf27cf87bf`, and the static
-source pair is unchanged. Those callers do not yet select the combined
-implementation. Its exact revision must be retained and its caller pins and
-source pair updated before fresh human admission. Actual hosted validation of
-the new completion field remains unverified. The integrated local source passes
-77 policy tests, generated workflow checks, the four named workflow actionlint
-checks, and repository standards. These checks cannot establish hosted
-acceptance.
+Combined implementation `c4f2873ef0eef5bc3c7d75cf71fa3489a911d134` merges that
+main with the completion boolean and exporter hardening, preserving both
+prerequisite steps and their regression tests. Its tree is
+`dc440b03159b377979b6b76dde119eec98aa75cb`. Its protected retention reference
+was verified at 14:46:29 UTC under active rule `25369476`, with updates and
+deletion blocked and no bypass actors. All 77 policy tests, generated workflow
+checks, the four named workflow actionlint checks, and repository standards
+passed locally for the integrated source.
+
+This shared adoption proposes that combined revision for both PR routes and
+the draft release caller, including `standards-ref`. Its own
+`.github/review-context/` now contains the exact old
+`965cd684713ae91a7804745eddd452cc392af11d` and new
+`c4f2873ef0eef5bc3c7d75cf71fa3489a911d134` implementations, using the same
+16-file source list per revision and a manifest. Local checks compare the
+bytes, manifest, and modes against canonical Git objects and enforce the
+750,000-byte bound. These files are static review data and are never executed
+or imported. This shared adoption needs fresh human decisions and two complete
+model reviews before any protected merge. Actual hosted validation of the new
+completion field remains unverified; neither local checks nor earlier complete
+reviews under old callers establish that enforcement.
 
 ### Product caller acceptance
 
@@ -309,6 +321,16 @@ The reviewed and merged trees both equal
 was unchanged. No exception was used. This run executed the old `5fae8515...`
 caller; the merge installs `aa4144fa...` but does not establish hosted
 enforcement of its new completion boolean.
+
+Studio [PR #4](https://github.com/ejmlabs/ejmlabs/pull/4) prepares fresh
+acceptance of that installed guard at head
+`da9c01d6138f1757cda9109431c32fd59a581a29`, based on
+`a1b3fa068b7147410d0f72217d522b47ecd36759`. It changes only OpenSpec evidence;
+its caller remains at `aa4144fa978d711a5e009b384718b4cf27cf87bf`. Local
+standards, documentation links, strict OpenSpec validation, and whitespace
+checks passed. At preparation on 2026-10-19, it was a draft with no statuses,
+admitted CI, or model run.
+Those local checks do not establish hosted completion-field enforcement.
 
 Harness [PR #1](https://github.com/ejmlabs/ejm-harness/pull/1) previously tested
 head `b97d5838a68a56495ba17f413a566b7122aabb24`. In
@@ -386,16 +408,28 @@ studio. Fresh human readiness and approval admitted
 Both actual Sol 6.1 medium passes explicitly completed the scoped static
 review, including both supplied implementations and affected call paths, with
 no findings. At 14:30 UTC, standards, registry, Linux Quality, and macOS Quality
-had passed; Windows Quality was still active. The PR remains unmerged until
-every required check passes. The run executes old pin `5fae8515...`, so it does
-not establish hosted enforcement of the proposed completion boolean.
+had passed; Windows Quality was still active. The run then completed
+successfully with all five required statuses, Linux, macOS, Windows, and
+registry checks passing. Both complete review artifacts and their digests,
+separate exact-head human decisions, and the native approval were verified.
+
+PR #12 merged normally at 14:47:32 UTC as
+[`09b779ee0452dda07b7f52503be22e65fe238373`](https://github.com/ejmlabs/ejm-harness/commit/09b779ee0452dda07b7f52503be22e65fe238373).
+The reviewed and merged trees both equal
+`c98793042e99e9a7c716aee39e69b05428edfaa8`, and full main protection was
+unchanged. No exception was used. The run executed old pin
+`5fae851502c2e3c31d4df9a44f8d56c2cb49e098`; the merge installs
+`aa4144fa978d711a5e009b384718b4cf27cf87bf`. It does not establish hosted
+enforcement of the new completion boolean or adoption of the combined
+prerequisite revision.
 
 CLI [adoption PR #1](https://github.com/ejmlabs/ejm-cli/pull/1) also merged as
 `4b263d4cb2a50a3641d566d6c18fdf7a0551b759`. Current CLI dependency access and
 setup follow their separate rollout, including shared
-[PR #11](https://github.com/ejmlabs/.github/pull/11), whose shared changes
-remain pending. Actual two-pass acceptance of the current CLI caller remains
-separate from that merge.
+[PR #11](https://github.com/ejmlabs/.github/pull/11), which merged into shared
+main as `8c304c8cdfc8b6fe50f3e442507215e615944f2b`. Consumer adoption of its
+prerequisites and actual two-pass acceptance of the current CLI caller remain
+separate from that shared merge.
 
 IDE [PR #2](https://github.com/ejmlabs/ejm-ide/pull/2) now has head
 `0b221630db35100b6a0ced1f877b2617cfa9b880`. Since
@@ -454,10 +488,10 @@ still need owner verification.
 
 | Area | Evidence | Remaining verification |
 | --- | --- | --- |
-| Shared standards | All 67 Python policy tests, generator check, actionlint, and uniform standards validation passed for the accepted implementation. PRs #5, #7, #9, and #10 verified both actual AI passes and normal protected merges. PR #12 verified missing-key failure as the sole unmet merge requirement and active revocation, cancellation, and native approval dismissal without model calls; it closed unmerged | Outside-actor admission rejection and real duplicate-tag release acceptance below |
-| Studio | Isolated design kit consistency check, all three site tests, site build, shared standards/version checks, and strict OpenSpec validation passed. PR #2 verified both actual AI passes. Revised PR #3 supplied both canonical workflow implementations, received two complete actual Sol 6.1 medium reviews and all five statuses, then merged normally with matching trees and unchanged full protection | The adopted completion boolean needs fresh hosted execution; other live acceptance limits remain below |
-| CLI | Complete assembled `./scripts/check` passed on macOS arm64 at `e287e3bbab83e4cc0d2eea94e61d0d819a6acf1f` against reviewed sibling harness `35205aa49b9261d133395c4d6116c37c456ecb95`: 35 unit and 5 integration tests, strict Clippy, release build, Rustdoc, dependency/license checks, and real PTY interaction/restoration. Shared standards/version and strict OpenSpec validation passed. Adoption PR #1 merged as `4b263d4cb2a50a3641d566d6c18fdf7a0551b759` | Current dependency-access and setup rollout, including shared PR #11, and actual two-pass hosted acceptance of current CLI source; earlier local evidence does not establish those results |
-| Harness | Earlier assembled macOS workspace gate passed: 157 Rust tests, 4 policy tests, 11 runtime tests, 16 Python SDK tests, 15 TypeScript SDK tests, strict Clippy, formatting, builds, rustdoc, dependency/license checks, generated protocol, lint, types, and Python distributions. One subprocess fixture test was deliberately ignored. The separate registry gate passed after one import reorder: native and WebAssembly Clippy, 2 Rust tests, 10 schema tests, 24 Worker tests, audits, and both actual Worker dry-run builds. Shared standards/version and strict OpenSpec validation passed. Final hosted run 39239206945 passed Linux, macOS, Windows, registry, and standards; all six Windows hook tests passed. PR #1 completed its approved AI-only recovery with matching trees and restored full protection. Live stale-head admission rejection and native approval dismissal after a push were verified. Revised PR #12 supplied canonical workflow sources and received two complete actual reviews; standards, registry, Linux, and macOS passed in run 39267669806 | Windows Quality and protected merge are pending. The proposed completion boolean still needs hosted execution |
+| Shared standards | The earlier accepted implementation passed all 67 Python policy tests, generator check, actionlint, and uniform standards validation. PRs #5, #7, #9, and #10 verified both actual AI passes and normal protected merges. PR #12 verified missing-key failure as the sole unmet merge requirement and active revocation, cancellation, and native approval dismissal without model calls; it closed unmerged. Combined retained revision `c4f2873e...` passed 77 local policy tests and focused checks | Shared PR #14 needs fresh complete reviews and protected adoption. New completion-field hosted execution, outside-actor admission rejection, and real duplicate-tag release acceptance remain open |
+| Studio | Isolated design kit consistency check, all three site tests, site build, shared standards/version checks, and strict OpenSpec validation passed. PR #2 verified both actual AI passes. Revised PR #3 supplied both canonical workflow implementations, received two complete actual Sol 6.1 medium reviews and all five statuses, then merged normally with matching trees and unchanged full protection | Draft PR #4 prepares fresh hosted execution of the installed completion boolean; it has not been admitted. Other live acceptance limits remain below |
+| CLI | Complete assembled `./scripts/check` passed on macOS arm64 at `e287e3bbab83e4cc0d2eea94e61d0d819a6acf1f` against reviewed sibling harness `35205aa49b9261d133395c4d6116c37c456ecb95`: 35 unit and 5 integration tests, strict Clippy, release build, Rustdoc, dependency/license checks, and real PTY interaction/restoration. Shared standards/version and strict OpenSpec validation passed. Adoption PR #1 merged as `4b263d4cb2a50a3641d566d6c18fdf7a0551b759`. Shared PR #11 merged its prerequisites into shared main | Reviewed consumer adoption of the combined prerequisites and actual two-pass hosted acceptance of current CLI source; earlier local and shared-source evidence do not establish those results |
+| Harness | Earlier assembled macOS workspace gate passed: 157 Rust tests, 4 policy tests, 11 runtime tests, 16 Python SDK tests, 15 TypeScript SDK tests, strict Clippy, formatting, builds, rustdoc, dependency/license checks, generated protocol, lint, types, and Python distributions. One subprocess fixture test was deliberately ignored. The separate registry gate passed after one import reorder: native and WebAssembly Clippy, 2 Rust tests, 10 schema tests, 24 Worker tests, audits, and both actual Worker dry-run builds. Shared standards/version and strict OpenSpec validation passed. Final hosted run 39239206945 passed Linux, macOS, Windows, registry, and standards; all six Windows hook tests passed. PR #1 completed its approved AI-only recovery with matching trees and restored full protection. Live stale-head admission rejection and native approval dismissal after a push were verified. Revised PR #12 supplied canonical workflow sources, received two complete actual reviews and all five statuses in run 39267669806, then merged normally with matching trees and unchanged full protection | The installed completion boolean still needs hosted execution. Adoption of the combined prerequisite revision remains separate |
 | IDE | The assembled gate at `267ad8aa2e42debf5d97ff7ce5ad8dd1c48eb0d8` passed 611 frontend tests, 205 native library tests, 8 integration tests, strict Clippy, formatting, lint, TypeScript, and production builds. Both real extension-template build/import restriction tests passed on Node 24.19.0 with at most two test workers. The proposed npm lock audit reported zero vulnerabilities. Browser fixture checks covered trust in both themes and by keyboard; native tests covered canonical-root trust and expiry. PR #2 head `0b221630db35100b6a0ced1f877b2617cfa9b880` adds only caller and OpenSpec changes since `ad97a401ac956ab7dac167e08d9459b9317309c6`, which changed only OpenSpec evidence from the tested source. Product source, dependencies, locks, and trust UI remain unchanged | PR #2 remains unadmitted until authorized public dependency access; current hosted checks, default-branch dependency alerts, Linux advisory, and other platform acceptance remain open |
 
 The unmerged IDE PR #2 lock uses DOMPurify 3.4.16 and esbuild 0.28.1. At
@@ -483,12 +517,13 @@ adoption patches and requires its own checks.
 
 ## Acceptance order and remaining gates
 
-1. Adopt the completion guard and supply canonical old and new shared workflow
-   source before resuming studio PR #3 and harness PR #12. Their human decisions
-   were recorded, but their actual model summaries were incomplete. Both PRs
-   remain drafts. Revised heads need fresh human decisions, both complete AI
-   passes, and every required check. Harness recovery is complete; shared and
-   earlier studio positive acceptance is recorded above.
+1. Complete shared PR #14's adoption of the retained combined revision with its
+   canonical old and new workflow source, fresh human decisions, two complete
+   AI passes, and every required check. Revised studio PR #3 and harness PR #12
+   have merged after complete reviews and protected checks; their original
+   incomplete outputs remain invalid. Fresh admitted acceptance must still
+   exercise the new completion field through an installed caller. Earlier
+   complete results under old validators do not prove that enforcement.
 2. Verify outsider, bot, and non-maintainer admission rejection and a refused
    duplicate release tag in GitHub. Those cases remain open. Shared PR #12
    verified missing-secret failure, isolated AI-check blocking, revocation,
@@ -496,13 +531,14 @@ adoption patches and requires its own checks.
    admission rejection. A new commit dismissed the previous native approval
    and inherited no successful statuses. Local tests alone cannot establish
    untested GitHub integrations.
-3. Complete the separately reviewed CLI dependency-access and setup rollout,
-   including shared PR #11, then verify its current hosted source and both
+3. Complete the separately reviewed CLI consumer setup rollout using the merged
+   shared prerequisites, then verify its current hosted source and both
    actual AI passes. IDE hosted Quality remains blocked until a separately
    approved visibility change makes the harness public. Its reviewed harness
    pin and admitted checks still need acceptance after that access is available.
-   This shared record does not establish current CLI credential configuration
-   or private hosted Quality.
+   The owner attested the CLI credential scope and expiry; this record does not
+   independently verify that metadata or establish the full private hosted
+   Quality gate.
 4. Complete the remaining local and platform checks above. Keep OpenSpec
    verification tasks open until their evidence exists, then sync and archive.
 5. Before any repository becomes public, review all refs and release assets
@@ -523,7 +559,9 @@ The accepted SemVer correction is retained in combined implementation
 generation, actionlint, and whitespace checks passed. PR #7 verified its two
 actual AI passes and normal protected merge. The accepted shared caller pins
 `965cd684713ae91a7804745eddd452cc392af11d`, which preserves that correction.
-This completion repair proposes `aa4144fa978d711a5e009b384718b4cf27cf87bf`,
-which also preserves it. Product callers still need reviewed pin updates where
+The earlier product completion repair at
+`aa4144fa978d711a5e009b384718b4cf27cf87bf` and this combined shared proposal at
+`c4f2873ef0eef5bc3c7d75cf71fa3489a911d134` also preserve it. Product callers
+still need reviewed pin updates where
 applicable. Live release
 creation and recovery remain unverified; no release workflow was dispatched.

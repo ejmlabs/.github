@@ -120,8 +120,8 @@
       ]
     },
     "new": {
-      "commit": "aa4144fa978d711a5e009b384718b4cf27cf87bf",
-      "tree": "b51d243de9c73681cfa5fbc4c5393bf5ca8bf88e",
+      "commit": "c4f2873ef0eef5bc3c7d75cf71fa3489a911d134",
+      "tree": "dc440b03159b377979b6b76dde119eec98aa75cb",
       "files": [
         {
           "path": ".github/workflows/draft-release.yml",
@@ -133,9 +133,9 @@
         {
           "path": ".github/workflows/governance.yml",
           "mode": "100644",
-          "blob": "36cf29bf644e7a08702e78e64f77b4df8dc72aaa",
-          "size": 164208,
-          "sha256": "50e65c7c3f010c7fbbdc4acb1a2c9b66b4b37ad8ade570dbb37425efdefb779e"
+          "blob": "51834cf2fe188fcb46c0a3e9b1720e27742f49a5",
+          "size": 164726,
+          "sha256": "5a68b9406b56b543d7eaf7910d631836b2044f9ccf3c0dc649cbbbfa66d45677"
         },
         {
           "path": "review/prompt.md",
@@ -154,9 +154,9 @@
         {
           "path": "scripts/build_workflows.py",
           "mode": "100644",
-          "blob": "34647391d6135b48f9037e603c334a7da669cfdb",
-          "size": 15767,
-          "sha256": "76151c1e30892ed6b1211371657833202e33bfa360eb9ac81162dd132ab67ddc"
+          "blob": "ef556603367efb5351d9d937fecc680e64f7d3fb",
+          "size": 16220,
+          "sha256": "2ef4866a2833a0161dab49710dc1df3ddf30735a2666f3419d1eabb96f328816"
         },
         {
           "path": "scripts/governance.py",

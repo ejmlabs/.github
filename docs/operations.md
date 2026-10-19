@@ -128,11 +128,20 @@ missing-key and active-revocation acceptance record. The completion guard
 changes review-result validation; no allowed action source, permission or
 human admission rule changes.
 
-The integration-stage callers remain pinned to
+Combined implementation `c4f2873ef0eef5bc3c7d75cf71fa3489a911d134` retains both
+the completion repair and these prerequisite execution steps. Its protected
+`workflow-pins/FULL_SHA` reference blocks updates and deletion, with no bypass
+actors. This shared adoption proposes that exact revision for the normal and
+missing-key PR routes, draft release caller, and `standards-ref`. Its static
+source pair contains old `965cd684713ae91a7804745eddd452cc392af11d` and new
+`c4f2873ef0eef5bc3c7d75cf71fa3489a911d134`. Shared main continues to use the old
+caller until the protected adoption merges.
+
+Studio and harness adopted the earlier completion-only revision
 `aa4144fa978d711a5e009b384718b4cf27cf87bf`. Neither that revision nor the old
-trusted caller contains these prerequisite execution steps. Retain the combined
-implementation and update its caller pins and static source pair before
-claiming that a consumer runs both repairs. See
+shared trusted caller contains the prerequisite execution steps. Consumer
+adoption of the combined revision requires separate reviewed pin changes; this
+shared source change does not establish hosted consumer execution. See
 [the integration record](readiness.md#review-completeness-guard).
 
 Before adopting the combined implementation in the CLI, establish these

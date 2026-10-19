@@ -8,7 +8,17 @@ Shared repository policy and reusable GitHub workflows for ejm-cli, ejm-harness,
 
 This is the standards implementation. Activation and live run evidence are tracked in each adoption PR and [the operations guide](docs/operations.md). Installing these files does not publish a product or prove that every security surface has been tested.
 
-Shared PR #14 was held after its AI jobs returned incomplete reviews that the older result validator accepted. Earlier studio PR #3 and harness PR #12 runs exposed the same defect. Fresh product reviews now include both pinned workflow sources. See [the completion guard and rollout limits](docs/readiness.md#review-completeness-guard). A successful job does not establish a complete review.
+Studio and harness adopted the completion repair at
+`aa4144fa978d711a5e009b384718b4cf27cf87bf` after complete reviews of both pinned
+implementations. Their review runs used the older validator. Hosted enforcement
+of the new completion field remains unverified.
+
+Shared PR #14 now proposes combined revision
+`c4f2873ef0eef5bc3c7d75cf71fa3489a911d134`, which also preserves the CLI and
+Linux harness prerequisites. Earlier incomplete reviews and a canceled run do
+not establish acceptance of this revision. See
+[the completion guard and rollout limits](docs/readiness.md#review-completeness-guard).
+A successful job does not establish a complete review.
 
 ## Requirements
 
