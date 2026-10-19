@@ -54,6 +54,11 @@ class WorkflowSecurityTests(unittest.TestCase):
                 self.assertNotIn("secrets.", json.dumps(job))
                 self.assertNotIn("GH_TOKEN", job.get("env", {}))
 
+    def test_every_job_rejects_replays_before_allocating_a_runner(self):
+        for name, job in self.governance["jobs"].items():
+            with self.subTest(job=name):
+                self.assertRegex(job.get("if", ""), r"^\$\{\{ github\.run_attempt == 1(?: && | \}\}$)")
+
     def test_privileged_jobs_run_only_trusted_scripts_and_actions(self):
         trusted_sources = {workflows.source(name) for name in ("governance.py", "prepare.py", "review_result.py")}
         trusted_sources.add("\n".join([

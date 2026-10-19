@@ -22,7 +22,9 @@ These bounds limit each admitted run. Set a dedicated OpenAI project spending li
 
 Store OPENAI_API_KEY as a selected organization secret or separately in the five repository secrets. Use a dedicated OpenAI project. Missing credentials fail closed. Rotate a leaked key at the provider, remove the secret, audit runs, and readmit only after the incident is contained.
 
-While the harness is private, create a fine-grained GitHub token with **Contents: read** for **ejmlabs/ejm-harness only**, give it an expiry, and save it as EJM_HARNESS_TOKEN in ejm-cli and ejm-ide. The trusted preparation job archives the pinned harness revision; the untrusted build receives only source data. Once the dependency is public, remove this secret. Never copy a broad personal token into Actions.
+CLI and IDE quality checks remain blocked until the harness is public. The owner chose not to provision EJM_HARNESS_TOKEN. After the harness fixes merge, update both hosts' `.github/harness-revision` to that reviewed immutable commit and verify both consumers before public acceptance.
+
+If private cross-repository access is authorized later, use a fine-grained GitHub token with **Contents: read** for **ejmlabs/ejm-harness only**, give it an expiry, and save it as EJM_HARNESS_TOKEN in ejm-cli and ejm-ide. The trusted preparation job archives the pinned harness revision; the untrusted build receives only source data. Once the dependency is public, remove this secret. Never copy a broad personal token into Actions.
 
 ## Bootstrap and rollout
 

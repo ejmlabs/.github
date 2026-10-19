@@ -70,7 +70,7 @@ def governance():
     templates = {path.name: path.read_text() for path in sorted((ROOT / "templates/community").glob("*.md"))}
     standards_check = source("standards.py", True) + "\nstandards(Path(sys.argv[1]), sys.argv[2], " + repr(templates) + ")\n"
     admission = {
-        "if": "${{ github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association) && ((github.event.action == 'created' && github.event.sender.type == 'User' && (startsWith(github.event.comment.body, '/ready ') || startsWith(github.event.comment.body, '/approve ') || startsWith(github.event.comment.body, '/revoke '))) || (github.event.action != 'created' && (startsWith(github.event.comment.body, '/ready ') || startsWith(github.event.comment.body, '/approve ') || startsWith(github.event.changes.body.from, '/ready ') || startsWith(github.event.changes.body.from, '/approve ')))) }}",
+        "if": "${{ github.run_attempt == 1 && github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association) && ((github.event.action == 'created' && github.event.sender.type == 'User' && (startsWith(github.event.comment.body, '/ready ') || startsWith(github.event.comment.body, '/approve ') || startsWith(github.event.comment.body, '/revoke '))) || (github.event.action != 'created' && (startsWith(github.event.comment.body, '/ready ') || startsWith(github.event.comment.body, '/approve ') || startsWith(github.event.changes.body.from, '/ready ') || startsWith(github.event.changes.body.from, '/approve ')))) }}",
         "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
         "permissions": {"contents": "read", "pull-requests": "write", "statuses": "write", "actions": "write"},
         "concurrency": {"group": "human-command-${{ github.repository }}-${{ github.event.issue.number }}", "cancel-in-progress": False},
@@ -78,7 +78,7 @@ def governance():
         "steps": [run("Validate live maintainer and commit; consume once", python(source("governance.py"), "admit"), id="admit", env={"GH_TOKEN": "${{ github.token }}"})],
     }
     prepare = {
-        "needs": "admission", "if": "${{ needs.admission.outputs.run == 'true' }}",
+        "needs": "admission", "if": "${{ github.run_attempt == 1 && needs.admission.outputs.run == 'true' }}",
         "runs-on": "ubuntu-24.04", "timeout-minutes": 5, "permissions": {"contents": "read", "pull-requests": "read", "statuses": "read"}, "env": ENV,
         "outputs": {"artifact": "${{ steps.sources.outputs.artifact-id }}"},
         "steps": [VERIFY, checkout("product", "${{ needs.admission.outputs.head }}"), checkout("base", "${{ needs.admission.outputs.base }}"),
@@ -100,7 +100,7 @@ PY
                   {"uses": UPLOAD, "id": "sources", "with": {"name": "admitted-sources", "path": "prepared/", "retention-days": 3, "if-no-files-found": "error"}}],
     }
     quality = {
-        "needs": ["admission", "prepare"], "runs-on": "${{ matrix.os }}", "timeout-minutes": 45, "permissions": {},
+        "needs": ["admission", "prepare"], "if": "${{ github.run_attempt == 1 }}", "runs-on": "${{ matrix.os }}", "timeout-minutes": 45, "permissions": {},
         "strategy": {"fail-fast": False, "max-parallel": 2, "matrix": {"os": "${{ fromJSON(needs.admission.outputs.profile == 'ejm-harness' && '[\"ubuntu-24.04\",\"macos-15\",\"windows-2025\"]' || needs.admission.outputs.profile == 'ejm-cli' && '[\"ubuntu-24.04\",\"macos-15\"]' || needs.admission.outputs.profile == 'ejm-ide' && '[\"macos-15\"]' || '[\"ubuntu-24.04\"]') }}"}},
         "env": {"CARGO_BUILD_JOBS": "2", "CARGO_INCREMENTAL": "0", "PROFILE": "${{ needs.admission.outputs.profile }}", "CI": "true"},
         "steps": [ARTIFACT, EXTRACT, {"uses": NODE, "with": {"node-version": "24"}}, {"uses": UV, "with": {"version": "0.9.26"}},
@@ -123,7 +123,7 @@ esac
 """)],
     }
     registry = {
-        "needs": ["admission", "prepare"], "runs-on": "ubuntu-24.04", "timeout-minutes": 25, "permissions": {},
+        "needs": ["admission", "prepare"], "if": "${{ github.run_attempt == 1 }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 25, "permissions": {},
         "env": {"CARGO_BUILD_JOBS": "2", "CARGO_INCREMENTAL": "0", "PROFILE": "${{ needs.admission.outputs.profile }}"},
         "steps": [ARTIFACT, EXTRACT, {"uses": NODE, "if": "${{ needs.admission.outputs.profile == 'ejm-harness' }}", "with": {"node-version": "24"}},
                   run("Run separate registry gate when applicable", """if [[ "$PROFILE" == ejm-harness ]]; then
@@ -140,14 +140,14 @@ fi
 """)],
     }
     standards = {
-        "needs": ["admission", "prepare"], "runs-on": "ubuntu-24.04", "timeout-minutes": 3, "permissions": {},
+        "needs": ["admission", "prepare"], "if": "${{ github.run_attempt == 1 }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 3, "permissions": {},
         "env": {"PROFILE": "${{ needs.admission.outputs.profile }}"},
         "steps": [ARTIFACT, EXTRACT, run("Validate shared public standards and version metadata", python(standards_check, 'product "$PROFILE"'))],
     }
     prompt = (ROOT / "review/prompt.md").read_text()
     schema = (ROOT / "review/schema.json").read_text()
     ai = {
-        "needs": ["admission", "prepare"], "runs-on": "ubuntu-24.04", "timeout-minutes": 12,
+        "needs": ["admission", "prepare"], "if": "${{ github.run_attempt == 1 }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 12,
         "permissions": {"contents": "read", "pull-requests": "read", "statuses": "read"}, "env": ENV,
         "strategy": {"fail-fast": False, "max-parallel": 1, "matrix": {"pass": [1, 2]}},
         "steps": [VERIFY, ARTIFACT,
@@ -174,7 +174,7 @@ PY
                   {"uses": UPLOAD, "if": "${{ always() }}", "with": {"name": "review-${{ matrix.pass }}", "path": "review-result.json", "if-no-files-found": "ignore", "retention-days": 7}}, VERIFY],
     }
     finish = {"needs": ["admission", "prepare", "quality", "registry", "standards", "ai"],
-              "if": "${{ always() && needs.admission.outputs.run == 'true' }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
+              "if": "${{ github.run_attempt == 1 && always() && needs.admission.outputs.run == 'true' }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
               "permissions": {"contents": "read", "pull-requests": "write", "statuses": "write"},
               "env": {**ENV, "JOB_RESULTS": "${{ toJSON(needs) }}"},
               "steps": [run("Publish required results only after live admission validation", python(source("governance.py"), "finish"))]}

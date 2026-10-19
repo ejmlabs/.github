@@ -113,6 +113,20 @@ class AdmissionTests(unittest.TestCase):
         os.environ["GITHUB_RUN_ATTEMPT"] = "2"
         with self.assertRaises(ValueError): admit(API(), self.event)
 
+    def test_replayed_jobs_cannot_verify_or_overwrite_completed_results(self):
+        admit(self.api, self.event)
+        admit(self.api, self.approval())
+        self.finish_environment()
+        finish(self.api)
+        before = copy.deepcopy(self.api.log)
+        os.environ["GITHUB_RUN_ATTEMPT"] = "2"
+        with self.assertRaises(ValueError):
+            live_ready(self.api, 1, SHA, 7)
+        with self.assertRaises(ValueError):
+            finish(self.api)
+        self.assertEqual(self.api.log, before)
+        self.assertEqual(self.api.reviews[0]["state"], "APPROVED")
+
     def test_stale_heads_drafts_and_large_prs_cannot_admit(self):
         for key, value in (("head", {"sha": "c" * 40}), ("draft", True), ("changed_files", 201), ("additions", 12001)):
             api = API()
