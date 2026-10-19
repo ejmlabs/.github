@@ -58,6 +58,19 @@ The four product main callers still use the older revision until their separate
 adoption PRs merge. This exception did not change their settings or waive their
 remaining quality gates.
 
+The first acceptance attempt on [PR #5](https://github.com/ejmlabs/.github/pull/5)
+failed before jobs started: Actions reported that the pinned reusable workflow
+`8e888752e00a29363fb8ae125658159b5c2dee58` was not found. The Contents API still
+returned that file, but the squash merge had deleted its retaining branch.
+No model call occurred. See the [startup failure](https://github.com/ejmlabs/.github/actions/runs/39191146628).
+
+The exact current implementation and the next pending implementation
+`5fae851502c2e3c31d4df9a44f8d56c2cb49e098` now have `workflow-pins/FULL_SHA`
+retention branches. Active rules block updates and deletion, with no bypass
+actors. Main protection still matches its fully restored snapshot. Creating
+these references triggered no CI or AI runs. A fresh valid human admission
+must still verify workflow resolution and model access.
+
 Human commands bind to the full current PR head:
 
 ```text
@@ -92,9 +105,9 @@ Total provider spending limits and GitHub budgets still need owner verification.
 | --- | --- | --- |
 | Shared standards | All 59 Python policy tests, generator check, actionlint, uniform standards validation, and secret scan passed. Live admission, non-AI checks, native bot self approval, exact merged source, repaired caller installation, and full protection restoration were verified | Successful live AI review and final pinned workflow acceptance |
 | Studio | Isolated design kit consistency check, all three site tests, site build, shared standards/version checks, and strict OpenSpec validation passed | Admitted GitHub run |
-| CLI | Focused parser and package lifecycle regressions, strict Clippy, architecture/skill checks, shared standards/version checks, and strict OpenSpec validation passed | Complete assembled `./scripts/check` and admitted GitHub run |
-| Harness | Assembled macOS workspace gate passed: 157 Rust tests, 4 policy tests, 11 runtime tests, 16 Python SDK tests, 15 TypeScript SDK tests, strict Clippy, formatting, builds, rustdoc, dependency/license checks, generated protocol, lint, types, and Python distributions. One subprocess fixture test was deliberately ignored. Shared standards/version and strict OpenSpec validation passed | Separate registry gate and Windows acceptance |
-| IDE | Before the final dependency update: 611 frontend tests, 205 native library tests, 8 integration tests, Clippy, format, lint, types, frontend build, and site checks/build passed. The updated npm lock audit reports zero vulnerabilities. After the update, the frontend build and both extension-template build/import restriction tests passed on Node 24.19.0 | Assembled full gate, trust UI acceptance in both themes and by keyboard, and admitted GitHub run |
+| CLI | Complete assembled `./scripts/check` passed on macOS arm64 at `e287e3bbab83e4cc0d2eea94e61d0d819a6acf1f` against reviewed sibling harness `35205aa49b9261d133395c4d6116c37c456ecb95`: 35 unit and 5 integration tests, strict Clippy, release build, Rustdoc, dependency/license checks, and real PTY interaction/restoration. Shared standards/version and strict OpenSpec validation passed | Updated hosted harness pin, Linux acceptance, and admitted GitHub run; private harness CI remains blocked |
+| Harness | Assembled macOS workspace gate passed: 157 Rust tests, 4 policy tests, 11 runtime tests, 16 Python SDK tests, 15 TypeScript SDK tests, strict Clippy, formatting, builds, rustdoc, dependency/license checks, generated protocol, lint, types, and Python distributions. One subprocess fixture test was deliberately ignored. The separate registry gate passed after one import reorder: native and WebAssembly Clippy, 2 Rust tests, 10 schema tests, 24 Worker tests, audits, and both actual Worker dry-run builds. Shared standards/version and strict OpenSpec validation passed | Linux and Windows acceptance and admitted GitHub run |
+| IDE | Before the final dependency update: 205 native library tests, 8 integration tests, Clippy, native formatting, and site checks/build passed. The updated npm lock audit reports zero vulnerabilities. After the update, all 611 frontend tests, formatting, lint, strict TypeScript, the frontend build, and both real extension-template build/import restriction tests passed on Node 24.19.0 with at most two test workers | Assembled native gate, trust UI acceptance in both themes and by keyboard, and admitted GitHub run |
 
 The IDE lock uses DOMPurify 3.4.16 and esbuild 0.28.1. Linux still depends on
 glib 0.18.5 through GTK, with RUSTSEC-2024-0429. Linux support remains unaccepted
