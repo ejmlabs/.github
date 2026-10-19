@@ -102,6 +102,24 @@ unchanged. No exception was used. This adopted retained implementation
 fixes and correcting SemVer prerelease classification. Its 63 policy tests and
 generation, standards, and workflow checks passed. No release was created.
 
+### Missing-key caller support
+
+[PR #9](https://github.com/ejmlabs/.github/pull/9) passed all five required
+statuses at reviewed head `c1db1f8802acaf1a58066d1f32849d7ce95bb6e8` in
+[run 39238618299](https://github.com/ejmlabs/.github/actions/runs/39238618299).
+Both actual `gpt-6.1-sol` medium passes returned no findings. Separate human
+decisions and the current-head native approval were verified. It merged
+normally as `8a33398f5569edb21ebc9b2e4b3d7d97087aef4a`; the reviewed and merged
+trees matched, and full main protection was unchanged. No exception was used.
+
+That merge adopted retained implementation
+`965cd684713ae91a7804745eddd452cc392af11d` through the normal caller. The next
+protected change installs its exact shared-only alternate caller. Neither
+validator acceptance nor caller installation proves omitted-key behavior.
+A dedicated unmerged fixture still needs fresh human admission and live
+missing-key, revocation, dismissal, and active-cancellation evidence. See
+[the staging procedure](operations.md#missing-model-key-acceptance-staging).
+
 ### Product caller acceptance
 
 Studio [adoption PR #1](https://github.com/ejmlabs/ejmlabs/pull/1) installed the
