@@ -195,7 +195,7 @@
           cd product
           case "$PROFILE" in
             ejm-cli) ./scripts/check ;;
-            ejm-harness) npm ci --ignore-scripts; ./scripts/check ;;
+            ejm-harness) npm ci --ignore-scripts; npm --prefix registry ci --ignore-scripts; ./scripts/check ;;
             ejm-ide) npm ci --ignore-scripts; npm run verify; npm run site:check; npm run site:build ;;
             ejmlabs) node design-kit/scripts/check-kit.mjs; npm --prefix site test; npm --prefix site run build ;;
             .github) python3 -m unittest discover -s tests -v; python3 scripts/build_workflows.py --check ;;

@@ -16,6 +16,8 @@ Only trusted main receives issue-comment events. Bot and unrelated comments are 
 
 Admission limits: 200 changed files, 12,000 added/deleted lines, 1 MB diff. Quality has a 45 minute limit, the separate registry gate 25 minutes, preparation 5 minutes, and each AI pass 9 minutes inside a 12 minute job. AI passes run independently and serially. There are no automatic model retries. Model output is capped at 64 KB and 50 findings. A failed or incomplete pass blocks merge. Critical, high, and medium findings block; low findings are advisory. Review artifacts are retained 7 days; source handoff artifacts 3 days.
 
+Harness quality installs both root and registry locked npm dependencies with lifecycle scripts disabled before running `./scripts/check`. Root ESLint includes registry sources. The separate registry job also runs its native, WebAssembly, schema, auth, and build checks.
+
 These bounds limit each admitted run. Set a dedicated OpenAI project spending limit and GitHub Actions budget/alerts to bound total spending across admitted PRs. An organization member can still request workflows they are allowed to dispatch; restrict repository roles and revoke access when needed. GitHub administrators retain control over repository settings. No repository policy can stop an organization owner from changing the policy itself.
 
 ## Credentials
@@ -28,11 +30,12 @@ If private cross-repository access is authorized later, use a fine-grained GitHu
 
 ## Bootstrap and rollout
 
-1. Test and commit the shared implementation. Add the shared repository's own consumers pinned to that tested commit. Existing consumers pin the same immutable revision.
-2. Review each adoption change, preserving earlier local commits and concurrent work. A trusted comment workflow must exist on main before GitHub can deliver PR comments to it. This is a one-time bootstrap requirement; installing only a branch copy cannot activate issue-comment admission.
-3. During bootstrap, disable existing automatic PR/push workflows before opening adoption PRs. Do not authorize the old workflows to run unreviewed source. After explicit maintainer acceptance of the exact adoption changes, install the trusted callers on main, enable Actions, and verify the required checks using a fresh admitted PR. Do not silently weaken an active protection to merge a bootstrap PR.
-4. Read back main protection, Actions policy, branch rules, dependency alerts, and security settings. Repos remain private until the public-readiness blockers are closed.
-5. Test human readiness, stale pushes, self approval, revocation, missing secrets, failed checks, and a refused duplicate release tag in GitHub before claiming live enforcement. Local policy tests are not evidence of GitHub event delivery or bot review permission.
+1. Test and commit the shared implementation. Retain that exact commit under `workflow-pins/FULL_SHA` before adding callers. The shared repository's active ruleset must block updates and deletion for `workflow-pins/*`, with no bypass actors. Keep callers pinned to the full SHA, rather than the branch name. A new implementation needs a new commit and retention reference. This keeps implementation commits reachable after squash merges and deletion of adoption branches.
+2. Add the shared repository's own consumers pinned to that tested commit. Existing consumers pin the same immutable revision.
+3. Review each adoption change, preserving earlier local commits and concurrent work. A trusted comment workflow must exist on main before GitHub can deliver PR comments to it. This is a one-time bootstrap requirement; installing only a branch copy cannot activate issue-comment admission.
+4. During bootstrap, disable existing automatic PR/push workflows before opening adoption PRs. Do not authorize the old workflows to run unreviewed source. After explicit maintainer acceptance of the exact adoption changes, install the trusted callers on main, enable Actions, and verify the required checks using a fresh admitted PR. Do not silently weaken an active protection to merge a bootstrap PR.
+5. Read back main protection, Actions policy, branch rules, dependency alerts, and security settings. Repos remain private until the public-readiness blockers are closed.
+6. Test human readiness, stale pushes, self approval, revocation, missing secrets, failed checks, and a refused duplicate release tag in GitHub before claiming live enforcement. Local policy tests are not evidence of GitHub event delivery or bot review permission.
 
 ## Public visibility checklist
 
@@ -41,5 +44,7 @@ Before a visibility change, inspect all refs and release assets for private data
 Require two-factor authentication for organization members through the organization owner after checking member readiness and recovery access. This is an organization access change, separate from repository configuration. Review access, installed apps, scoped secrets, workflow pin updates, and supported release lines regularly.
 
 ## Recovery
+
+If GitHub reports `workflow was not found` before any jobs start, inspect the exact caller pin, access policy, and run annotation. A successful Contents API read alone does not establish that Actions can resolve the reusable workflow. If its retaining branch was deleted, restore a protected `workflow-pins/FULL_SHA` reference to the exact reviewed implementation. Keep the caller SHA and main protection unchanged, then verify resolution with a fresh human command for the full current PR head. Do not treat reference retention as proof of a passing review.
 
 Revoke the readiness comment for a suspect head, cancel its run, and inspect the isolated artifacts. A failed shared update is rolled back by an ordinary reviewed PR restoring the previous full workflow SHA. Do not move a shared revision or release tag. Keep GitHub Actions and OpenAI budget notifications enabled. Release setup makes drafts only and does not deploy or upload packages.
