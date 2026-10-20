@@ -8,7 +8,11 @@ from pathlib import Path
 def validate(file, head, number):
     if file.is_symlink() or not file.is_file() or file.stat().st_size > 64_000:
         raise ValueError("Missing, unsafe, or oversized review output")
-    result = json.loads(file.read_text())
+    raw = file.read_bytes()
+    # Fail closed before the artifact is uploaded. Do not include the match.
+    if b"sk-" in raw:
+        raise ValueError("Review output matches a key-like pattern")
+    result = json.loads(raw)
     if set(result) != {"head", "pass", "complete", "summary", "findings"}:
         raise ValueError("Invalid review fields")
     if result["head"] != head or type(result["pass"]) is not int or result["pass"] != number:

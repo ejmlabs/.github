@@ -311,16 +311,22 @@ manifests are not version sources until the application exists, because there
 is no package to keep in lockstep.
 
 Quality uses the default Ubuntu 24.04 job. It does not install the Rust
-toolchain or Cargo audit tools used by the Rust profiles. The project command
-is an explicit no-op (`:`). That is the whole recipe: there is no package
-manifest, test script, or Workers configuration to run, and a failing fallback
-would block every admitted change. The job still runs the shared Node and uv
-setup steps, then succeeds without executing project code. Replace the no-op
-in the same change that adds application code.
+toolchain or Cargo audit tools used by the Rust profiles. While the tree has
+neither `package.json` nor `src`, the project command succeeds without running
+a package, test, or Workers build. The job still runs the shared Node and uv
+setup steps. If either `package.json` or `src` is present, Quality fails
+closed and reports that the recipe must be added in ejmlabs/.github. A
+`wrangler.jsonc` file alone does not count as that application code.
 
-The profile does not select private harness source. It does not change the
+The profile does not select private harness source. It is not part of the
 default settings rollout (`.github`, `ejmlabs`, `ejm-cli`, `ejm-harness`, and
-`ejm-ide`) and does not install callers or enable Actions by itself.
+`ejm-ide`). `configure_repositories.py` accepts `--repository ejm-chess` as an
+explicit opt-in. Apply that settings baseline and read it back before any
+`pr.yml` is installed and before `MODEL_API_KEY` is made visible to the
+repository. The baseline is selected actions with SHA pinning required, a
+read-only default workflow token, fork pull-request approval for all external
+contributors, and `main` protected with the five required statuses and strict
+checks.
 
 ## Missing model key acceptance staging
 
@@ -346,20 +352,33 @@ hold was active.
 
 ## Credentials
 
-Store `MODEL_API_KEY` as a selected organization secret or scoped repository
-secret. Use a dedicated provider project with spending controls. Missing keys
-fail closed. Rotate a leaked key at the provider, remove its stored value,
-audit affected runs and readmit work only after containment.
+Create a new model key in a dedicated provider project. Give that project a
+hard monthly spend cap, model-only scope, and no other projects. Store the new
+key as the organization secret `MODEL_API_KEY`, scoped to selected
+repositories only. Do not copy the previous key value into the new secret.
+Missing keys fail closed. Rotate a leaked key at the provider, remove its
+stored value, audit affected runs and readmit work only after containment.
 
-Generated callers pass `MODEL_API_KEY`. The reusable workflow also accepts the
-previous secret, `OPENAI_API_KEY`, when a caller forwards only that name.
-`MODEL_API_KEY` is used when both are present. Keep the previous organization
-secret until every caller pin and secret mapping has moved; an empty key fails
-review closed. Renaming the organization secret and updating each repository
-caller pin are manual owner steps after this change is on main. This
-repository's installed caller keeps the previous secret and its current pin so
-existing admissions still resolve. Do not point that caller at `MODEL_API_KEY`
-until its pin is a revision that declares the new secret.
+Generated callers pass `MODEL_API_KEY`. The reusable workflow still accepts
+`OPENAI_API_KEY` when an already-installed caller forwards only that name.
+That acceptance is limited to `.github`, `ejmlabs`, `ejm-cli`, `ejm-harness`,
+`ejm-ide`, and `ejm-ui`. `ejm-chess` and any profile added from now on must
+pass `MODEL_API_KEY`. `MODEL_API_KEY` is used when both are present. Keep the
+previous organization secret until every existing caller pin and secret
+mapping has moved; an empty key fails review closed. Creating the new key,
+storing it as `MODEL_API_KEY`, and updating each repository caller pin are
+manual owner steps after this change is on main. This repository's installed
+caller keeps the previous secret and its current pin so existing admissions
+still resolve. Do not point that caller at `MODEL_API_KEY` until its pin is a
+revision that declares the new secret.
+
+Once every caller passes `MODEL_API_KEY`, delete the `OPENAI_API_KEY`
+organization secret and revoke the old key at the provider, then audit recent
+usage. Deleting the GitHub secret alone leaves the old key usable. Remove
+`|| secrets.OPENAI_API_KEY`, the `OPENAI_API_KEY` workflow_call secret,
+`legacy_model_secret_workflows`, `LEGACY_PROFILES`, and the legacy fixture in
+the first release after all five installed callers pin this revision and pass
+`MODEL_API_KEY`, and no later than 2026-11-16.
 
 Public harness source needs no private checkout token. Pin its exact revision
 in `.github/harness-revision`; trusted preparation archives it for the

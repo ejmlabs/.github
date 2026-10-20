@@ -159,6 +159,29 @@ class WorkflowSecurityTests(unittest.TestCase):
                     if profile == "ejm-ui":
                         self.assertTrue(all(call["ignore_scripts"] == "true" for call in calls))
 
+    def test_ejm_chess_quality_fails_closed_when_application_code_appears(self):
+        script = next(step["run"] for step in self.governance["jobs"]["quality"]["steps"] if "ejm-chess)" in step.get("run", ""))
+        message = "ejm-chess has application code; add its quality recipe in ejmlabs/.github"
+        cases = {
+            "empty": ({}, 0),
+            "package.json": ({"package.json": "{}\n"}, 1),
+            "src": ({"src/main.ts": "export {}\n"}, 1),
+            "wrangler.jsonc": ({"wrangler.jsonc": "{}\n"}, 0),
+        }
+        for name, (files, code) in cases.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                product = root / "product"
+                product.mkdir()
+                for path, text in files.items():
+                    target = product / path
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(text)
+                result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", script], cwd=root, env={**os.environ, "PROFILE": "ejm-chess"}, capture_output=True, text=True)
+                self.assertEqual(result.returncode, code, result.stderr)
+                if code:
+                    self.assertIn(message, result.stderr)
+
     def test_ui_installs_its_rust_toolchain_without_unused_audit_binaries(self):
         script = next(step["run"] for step in self.governance["jobs"]["quality"]["steps"]
                       if step.get("name") == "Install pinned Rust tools")
@@ -272,6 +295,12 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertEqual(inputs["codex-home"], "${{ runner.temp }}/review-home")
         self.assertEqual(ai["needs"], ["admission", "prepare"])
         self.assertIn("ai", self.governance["jobs"]["finish"]["needs"])
+        validate = next(step for step in ai["steps"] if step.get("name") == "Validate the exact head, pass, and bounded review output")
+        upload = next(step for step in ai["steps"] if step.get("with", {}).get("path") == "review-result.json")
+        self.assertLess(ai["steps"].index(validate), ai["steps"].index(upload))
+        self.assertNotIn("if", upload)
+        self.assertNotIn("always()", json.dumps(upload))
+        self.assertIn("always()", self.governance["jobs"]["finish"]["if"])
 
     def test_review_step_excludes_ambient_tokens_and_preserves_admission_rechecks(self):
         ai = self.governance["jobs"]["ai"]

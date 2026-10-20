@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from governance import REPOS
-from standards import COMMUNITY_GUIDES, MIT_TERMS, VERSIONS, consumer_workflows, legacy_model_secret_workflows, licenses, missing_model_key_workflows, read, semver, versions, workflows
+from standards import COMMUNITY_GUIDES, LEGACY_PROFILES, MIT_TERMS, VERSIONS, consumer_workflows, legacy_model_secret_workflows, licenses, missing_model_key_workflows, read, semver, versions, workflows
 from build_workflows import governance, release_workflow, yaml
 from review_result import validate
 
@@ -78,6 +78,12 @@ class StandardTests(unittest.TestCase):
             with self.assertRaises(ValueError): validate(file, "a" * 40, 1)
             file.write_text("x" * 64001)
             with self.assertRaises(ValueError): validate(file, "a" * 40, 1)
+            secret = "sk-" + ("a" * 24)
+            file.write_text(json.dumps({"head": "a" * 40, "pass": 1, "complete": True, "summary": secret, "findings": []}))
+            with self.assertRaises(ValueError) as caught:
+                validate(file, "a" * 40, 1)
+            self.assertNotIn(secret, str(caught.exception))
+            self.assertIn("key-like pattern", str(caught.exception))
 
     def test_ai_incomplete_review_cannot_pass_with_empty_findings(self):
         # Actual harness PR #12 pass 1 output, accepted by the old validator.
@@ -215,9 +221,12 @@ class WorkflowTests(unittest.TestCase):
         caller = consumer_workflows(self.revision)["pr.yml"]
         self.assertIn("      MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}\n", caller)
         self.assertNotIn("OPENAI_API_KEY", caller)
+        self.assertEqual(LEGACY_PROFILES, frozenset({".github", "ejmlabs", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui"}))
         legacy = legacy_model_secret_workflows(consumer_workflows(self.revision))
         (self.directory / "pr.yml").write_text(legacy["pr.yml"])
-        workflows(self.root, "ejm-chess")
+        with self.assertRaises(ValueError):
+            workflows(self.root, "ejm-chess")
+        workflows(self.root, "ejm-cli")
         self.reset_callers()
 
     def test_consumer_trigger_and_yaml_bypasses_are_rejected(self):

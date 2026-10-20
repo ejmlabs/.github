@@ -253,6 +253,11 @@ def missing_model_key_workflows(revision):
     return documents
 
 
+# Installed callers that still forward the previous secret name. ejm-chess and
+# every profile added after this set must pass MODEL_API_KEY only.
+LEGACY_PROFILES = frozenset({".github", "ejmlabs", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui"})
+
+
 def legacy_model_secret_workflows(documents):
     """Return callers that still forward the previous model secret name."""
     current = "      MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}\n"
@@ -381,17 +386,17 @@ def workflows(root, profile):
     if not pin:
         raise ValueError("PR workflow must pin governance.yml to a full commit SHA")
     consumers = consumer_workflows(pin[1])
-    legacy = legacy_model_secret_workflows(consumers)
+    legacy_consumers = legacy_model_secret_workflows(consumers)
     if profile == ".github":
         fixture = missing_model_key_workflows(pin[1])
         legacy_fixture = legacy_model_secret_workflows(fixture)
         if pr == fixture["pr.yml"]:
             consumers = fixture
         elif pr == legacy_fixture["pr.yml"]:
-            # Installed callers keep the previous secret until their pin moves.
+            # The installed shared caller keeps the previous secret until its pin moves.
             consumers = legacy_fixture
-    if pr == legacy["pr.yml"]:
-        consumers = legacy
+    if profile in LEGACY_PROFILES and pr == legacy_consumers["pr.yml"]:
+        consumers = legacy_consumers
     for name, expected in consumers.items():
         if read(root, ".github/workflows/" + name) != expected:
             raise ValueError("Workflow differs from the canonical consumer: " + name)

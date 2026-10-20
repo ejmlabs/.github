@@ -8,10 +8,18 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 - Govern `ejm-chess` as a public repository profile. Its version source is
   `VERSION`, its contributor guide is `README.md#development`, and its quality
-  gate is a no-op until application code exists.
+  gate succeeds only while the tree has no `package.json` or `src`. Either
+  path makes Quality fail closed until a real recipe is added here.
+  `configure_repositories.py` can select the repository without adding it to
+  the default settings rollout. Apply and read back its settings baseline
+  before installing `pr.yml` or exposing `MODEL_API_KEY`.
 - Pass the pull-request model key as `MODEL_API_KEY`. Generated callers use
-  that name. Callers that still forward the previous secret name keep working
-  after their pin moves to this revision.
+  that name. Existing profiles may still forward `OPENAI_API_KEY` until their
+  pins move. `ejm-chess` and later profiles cannot. Remove
+  `|| secrets.OPENAI_API_KEY`, the `OPENAI_API_KEY` workflow_call secret,
+  `legacy_model_secret_workflows`, `LEGACY_PROFILES`, and the legacy fixture
+  in the first release after all five installed callers pin this revision and
+  pass `MODEL_API_KEY`, and no later than 2026-11-16.
 - Optional public UI source assembly from protected-main commit pins, with
   static reviewer source and credential-free consumer installation.
 - Shared repository standards, explicit human admission, protected merge gates, two-pass Codex review, and a draft source release pipeline.

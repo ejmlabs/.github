@@ -113,8 +113,7 @@ if [[ -d ../ejm-ui ]]; then
   npm --prefix ../ejm-ui ci --ignore-scripts
 fi
 case "$PROFILE" in
-  # Plan-only repository: no package, test, or Workers project to run yet.
-  ejm-chess) : ;;
+  ejm-chess) if [[ -e package.json || -d src ]]; then echo "ejm-chess has application code; add its quality recipe in ejmlabs/.github" >&2; exit 1; fi ;;
   ejm-cli) ./scripts/check ;;
   ejm-harness) npm ci --ignore-scripts; npm --prefix registry ci --ignore-scripts; ./scripts/check ;;
   ejm-ide) npm ci --ignore-scripts; npm run verify; npm run site:check; npm run site:build ;;
@@ -188,7 +187,7 @@ PY
                       "working-directory": "reviewer", "codex-home": "${{ runner.temp }}/review-home", "permission-profile": ":read-only", "safety-strategy": "drop-sudo",
                       "output-file": "${{ github.workspace }}/review-result.json", "output-schema": schema, "prompt": prompt}},
                   run("Validate the exact head, pass, and bounded review output", python(source("review_result.py"), 'review-result.json "$PR_HEAD" "$REVIEW_PASS"'), env={"PR_HEAD": "${{ needs.admission.outputs.head }}", "REVIEW_PASS": "${{ matrix.pass }}"}),
-                  {"uses": UPLOAD, "if": "${{ always() }}", "with": {"name": "review-${{ matrix.pass }}", "path": "review-result.json", "if-no-files-found": "ignore", "retention-days": 7}}, VERIFY],
+                  {"uses": UPLOAD, "with": {"name": "review-${{ matrix.pass }}", "path": "review-result.json", "if-no-files-found": "ignore", "retention-days": 7}}, VERIFY],
     }
     finish = {"needs": ["admission", "prepare", "quality", "registry", "standards", "ai"],
               "if": "${{ github.run_attempt == 1 && always() && needs.admission.outputs.run == 'true' }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
