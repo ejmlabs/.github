@@ -30,6 +30,10 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Fixed
 
+- Retain valid bounded AI review reports before enforcing blocking findings.
+  Recheck live human admission before upload. Invalid, incomplete or key-like
+  output is not uploaded, including duplicate JSON fields and key markers
+  hidden by JSON escapes.
 - Adopt the reviewed byte-preserving archive validator in this repository's
   canonical PR and source-release callers. Older pins can reject original
   notices with CRLF line endings even when their source archives are exact.

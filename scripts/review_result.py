@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
-"""Validate bounded AI output before it is used in a required status."""
+"""Validate bounded AI output before publication or a required status."""
+import argparse
 import json
 import sys
 from pathlib import Path
+
+
+def unique_fields(pairs):
+    result = dict(pairs)
+    if len(result) != len(pairs):
+        raise ValueError("Duplicate review fields")
+    return result
 
 
 def validate(file, head, number):
@@ -12,7 +20,9 @@ def validate(file, head, number):
     # Fail closed before the artifact is uploaded. Do not include the match.
     if b"sk-" in raw:
         raise ValueError("Review output matches a key-like pattern")
-    result = json.loads(raw)
+    result = json.loads(raw, object_pairs_hook=unique_fields)
+    if "sk-" in json.dumps(result, ensure_ascii=False):
+        raise ValueError("Review output matches a key-like pattern")
     if set(result) != {"head", "pass", "complete", "summary", "findings"}:
         raise ValueError("Invalid review fields")
     if result["head"] != head or type(result["pass"]) is not int or result["pass"] != number:
@@ -41,12 +51,27 @@ def validate(file, head, number):
     return result, any(item["severity"] != "low" for item in findings)
 
 
-if __name__ == "__main__":
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("file", type=Path)
+    parser.add_argument("head")
+    parser.add_argument("number", type=int)
+    parser.add_argument("--github-output", type=Path,
+                        help="Mark valid output safe for upload; enforce the blocking verdict after upload")
+    args = parser.parse_args()
     try:
-        result, blocked = validate(Path(sys.argv[1]), sys.argv[2], int(sys.argv[3]))
+        result, blocked = validate(args.file, args.head, args.number)
         print(f"Review pass {result['pass']}: {len(result['findings'])} finding(s); " + ("blocked" if blocked else "passed"))
+        if args.github_output is not None:
+            with args.github_output.open("a") as output:
+                output.write(f"safe=true\nblocked={str(blocked).lower()}\n")
+            return 0
         # Full bounded JSON remains an artifact. Never execute or interpolate model text.
-        sys.exit(1 if blocked else 0)
+        return 1 if blocked else 0
     except (ValueError, KeyError, OSError, TypeError) as error:
         print(f"Invalid review output: {error}", file=sys.stderr)
-        sys.exit(1)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

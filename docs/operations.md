@@ -62,6 +62,20 @@ cannot be inferred from a successful job or from prose. A model can still
 misstate completion, so human review and the other gates remain necessary.
 Older pinned revisions do not gain new validation automatically.
 
+Each pass validates its exact head, pass number, completion, schema, size and
+key-like text before upload. Validation checks decoded JSON too, so JSON escapes
+cannot hide the rejected `sk-` marker. Duplicate JSON fields are rejected.
+Invalid, incomplete, oversized or key-like output fails without a review
+artifact. This check does not detect every secret format; keep credentials and
+private data out of review input.
+
+A valid report is retained for seven days even when its findings block merge.
+The workflow rechecks live human admission before upload, then fails the AI
+pass for critical, high or medium findings. Low findings remain advisory.
+Revoked or cancelled work does not gain an unconditional upload path. To inspect
+a blocking review, open that pass's `review-1` or `review-2` run artifact. Address
+the findings in a new commit and obtain fresh admission for the new head.
+
 Builds receive no model key, source-read secret, deployment credential or
 write token. Never reuse a cache produced by PR code in a privileged job.
 The Codex step clears inherited `GH_TOKEN` and `GITHUB_TOKEN`. The pinned action

@@ -186,8 +186,13 @@ PY
                       "openai-api-key": "${{ secrets.MODEL_API_KEY || secrets.OPENAI_API_KEY }}", "model": "gpt-6.1-sol", "effort": "medium", "codex-version": "0.163.0",
                       "working-directory": "reviewer", "codex-home": "${{ runner.temp }}/review-home", "permission-profile": ":read-only", "safety-strategy": "drop-sudo",
                       "output-file": "${{ github.workspace }}/review-result.json", "output-schema": schema, "prompt": prompt}},
-                  run("Validate the exact head, pass, and bounded review output", python(source("review_result.py"), 'review-result.json "$PR_HEAD" "$REVIEW_PASS"'), env={"PR_HEAD": "${{ needs.admission.outputs.head }}", "REVIEW_PASS": "${{ matrix.pass }}"}),
-                  {"uses": UPLOAD, "with": {"name": "review-${{ matrix.pass }}", "path": "review-result.json", "if-no-files-found": "ignore", "retention-days": 7}}, VERIFY],
+                  run("Validate the exact head, pass, and bounded review output", python(source("review_result.py"), 'review-result.json "$PR_HEAD" "$REVIEW_PASS" --github-output "$GITHUB_OUTPUT"'), id="review", env={"PR_HEAD": "${{ needs.admission.outputs.head }}", "REVIEW_PASS": "${{ matrix.pass }}"}),
+                  VERIFY,
+                  {"uses": UPLOAD, "if": "${{ steps.review.outputs.safe == 'true' }}", "with": {"name": "review-${{ matrix.pass }}", "path": "review-result.json", "if-no-files-found": "error", "retention-days": 7}},
+                  run("Block merge for review findings", """python3 - <<'PY'
+raise SystemExit('Review has blocking findings; see the retained review artifact')
+PY
+""", **{"if": "${{ steps.review.outputs.blocked == 'true' }}"})],
     }
     finish = {"needs": ["admission", "prepare", "quality", "registry", "standards", "ai"],
               "if": "${{ github.run_attempt == 1 && always() && needs.admission.outputs.run == 'true' }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 3,

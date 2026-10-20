@@ -79,11 +79,14 @@ class StandardTests(unittest.TestCase):
             file.write_text("x" * 64001)
             with self.assertRaises(ValueError): validate(file, "a" * 40, 1)
             secret = "sk-" + ("a" * 24)
-            file.write_text(json.dumps({"head": "a" * 40, "pass": 1, "complete": True, "summary": secret, "findings": []}))
-            with self.assertRaises(ValueError) as caught:
-                validate(file, "a" * 40, 1)
-            self.assertNotIn(secret, str(caught.exception))
-            self.assertIn("key-like pattern", str(caught.exception))
+            encoded = json.dumps({"head": "a" * 40, "pass": 1, "complete": True, "summary": secret, "findings": []})
+            for payload in (encoded, encoded.replace("sk-", "s\\u006b-")):
+                with self.subTest(escaped=payload != encoded):
+                    file.write_text(payload)
+                    with self.assertRaises(ValueError) as caught:
+                        validate(file, "a" * 40, 1)
+                    self.assertNotIn(secret, str(caught.exception))
+                    self.assertIn("key-like pattern", str(caught.exception))
 
     def test_ai_incomplete_review_cannot_pass_with_empty_findings(self):
         # Actual harness PR #12 pass 1 output, accepted by the old validator.

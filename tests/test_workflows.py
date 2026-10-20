@@ -235,7 +235,7 @@ class WorkflowSecurityTests(unittest.TestCase):
                         source = embedded_source(script)
                         if source is not None:
                             self.assertIn(source, trusted_sources)
-                            self.assertRegex(script.splitlines()[0], r'^python3 - (?:admit|verify|finish|select-harness|ui-pin|review-result\.json "\$PR_HEAD" "\$REVIEW_PASS")? <<\x27TRUSTED_PYTHON\x27$')
+                            self.assertRegex(script.splitlines()[0], r'^python3 - (?:admit|verify|finish|select-harness|ui-pin|review-result\.json "\$PR_HEAD" "\$REVIEW_PASS" --github-output "\$GITHUB_OUTPUT")? <<\x27TRUSTED_PYTHON\x27$')
                             encoded = base64.b64encode(source.encode()).decode()
                             self.assertEqual(script.splitlines()[1:], [
                                 "import base64",
@@ -298,9 +298,72 @@ class WorkflowSecurityTests(unittest.TestCase):
         validate = next(step for step in ai["steps"] if step.get("name") == "Validate the exact head, pass, and bounded review output")
         upload = next(step for step in ai["steps"] if step.get("with", {}).get("path") == "review-result.json")
         self.assertLess(ai["steps"].index(validate), ai["steps"].index(upload))
-        self.assertNotIn("if", upload)
+        self.assertEqual(upload["if"], "${{ steps.review.outputs.safe == 'true' }}")
         self.assertNotIn("always()", json.dumps(upload))
         self.assertIn("always()", self.governance["jobs"]["finish"]["if"])
+
+    def test_safe_report_upload_precedes_the_blocking_gate_and_requires_live_admission(self):
+        ai = self.governance["jobs"]["ai"]
+        steps = ai["steps"]
+        validate = next(step for step in steps if step.get("id") == "review")
+        upload = next(step for step in steps if step.get("with", {}).get("path") == "review-result.json")
+        index = steps.index(upload)
+        self.assertEqual(steps[index - 1], workflows.VERIFY)
+        self.assertLess(steps.index(validate), index - 1)
+        self.assertEqual(upload["with"]["if-no-files-found"], "error")
+        self.assertEqual(upload["with"]["retention-days"], 7)
+        gate = steps[index + 1]
+        self.assertEqual(gate["if"], "${{ steps.review.outputs.blocked == 'true' }}")
+        self.assertNotIn("always()", json.dumps(ai))
+        self.assertFalse(any(step.get("continue-on-error") for step in steps))
+        failed = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", gate["run"]], capture_output=True, text=True)
+        self.assertEqual(failed.returncode, 1)
+
+    def test_review_validator_marks_only_safe_exact_complete_reports_for_upload(self):
+        validator = next(step for step in self.governance["jobs"]["ai"]["steps"] if step.get("id") == "review")
+        head = "a" * 40
+        base = {"head": head, "pass": 1, "complete": True, "summary": "Reviewed the full diff.", "findings": []}
+        cases = []
+        for severity in ("critical", "high", "medium", "low"):
+            report = {**base, "findings": [{"severity": severity, "file": "src/auth.rs", "line": 3,
+                                           "title": "Authorization check", "reason": "The boundary requires review."}]}
+            cases.append((severity, json.dumps(report), True, severity != "low"))
+        secret = "sk-" + "fixture" * 4
+        unsafe = json.dumps({**base, "summary": secret})
+        duplicate = json.dumps(base)[:-1] + ', "summary": "Replacement"}'
+        hidden = unsafe.replace("sk-", "s\\u006b-")[:-1] + ', "summary": "Replacement"}'
+        cases.extend([
+            ("empty findings", json.dumps(base), True, False),
+            ("wrong head", json.dumps({**base, "head": "b" * 40}), False, False),
+            ("wrong pass", json.dumps({**base, "pass": 2}), False, False),
+            ("incomplete", json.dumps({**base, "complete": False}), False, False),
+            ("malformed", "{", False, False),
+            ("oversized", " " * 64001, False, False),
+            ("key marker", unsafe, False, False),
+            ("escaped key marker", unsafe.replace("sk-", "s\\u006b-"), False, False),
+            ("duplicate field", duplicate, False, False),
+            ("overwritten escaped key marker", hidden, False, False),
+        ])
+        for name, payload, safe, blocked in cases:
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                report = root / "review-result.json"
+                report.write_text(payload)
+                output = root / "github-output"
+                output.touch()
+                env = {**os.environ, "PR_HEAD": head, "REVIEW_PASS": "1", "GITHUB_OUTPUT": str(output)}
+                result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", validator["run"]],
+                                        cwd=root, env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0 if safe else 1, result.stderr)
+                expected = f"safe=true\nblocked={str(blocked).lower()}\n" if safe else ""
+                self.assertEqual(output.read_text(), expected)
+                self.assertNotIn(secret, result.stdout + result.stderr)
+                if safe:
+                    default = workflows.python(workflows.source("review_result.py"), 'review-result.json "$PR_HEAD" "$REVIEW_PASS"')
+                    gate = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", default],
+                                          cwd=root, env=env, capture_output=True, text=True)
+                    self.assertEqual(gate.returncode, 1 if blocked else 0, gate.stderr)
+                    self.assertEqual(output.read_text(), expected)
 
     def test_review_step_excludes_ambient_tokens_and_preserves_admission_rechecks(self):
         ai = self.governance["jobs"]["ai"]
