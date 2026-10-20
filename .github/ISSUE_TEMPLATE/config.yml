@@ -1,5 +1,17 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Report a vulnerability privately
-    url: https://github.com/ejmlabs/.github/security/advisories/new
+  - name: Report an ejm-cli vulnerability privately
+    url: https://github.com/ejmlabs/ejm-cli/security/advisories/new
+    about: Do not post security details or secrets in public issues.
+  - name: Report an ejm-harness vulnerability privately
+    url: https://github.com/ejmlabs/ejm-harness/security/advisories/new
+    about: Do not post security details or secrets in public issues.
+  - name: Report an ejm-ide vulnerability privately
+    url: https://github.com/ejmlabs/ejm-ide/security/advisories/new
+    about: Do not post security details or secrets in public issues.
+  - name: Report an ejm-ui vulnerability privately
+    url: https://github.com/ejmlabs/ejm-ui/security/advisories/new
+    about: Do not post security details or secrets in public issues.
+  - name: Report an ejmlabs vulnerability privately
+    url: https://github.com/ejmlabs/ejmlabs/security/advisories/new
     about: Do not post security details or secrets in public issues.
