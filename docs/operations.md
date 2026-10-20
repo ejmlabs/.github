@@ -300,6 +300,28 @@ registry sources. The separate registry gate checks native, WebAssembly,
 schema, auth and build behavior. Keep the product guide and its check script
 in sync when those prerequisites change.
 
+## ejm-chess profile
+
+`ejm-chess` is part of the governed public set, with the same human admission,
+required statuses, and caller rules as ejm-cli and ejm-harness. It is a
+Cloudflare Workers TypeScript application. The repository has no application
+code yet; the current work is an OpenSpec plan. The contributor guide is
+`README.md#development`. The canonical version is `VERSION` (0.1.0). Package
+manifests are not version sources until the application exists, because there
+is no package to keep in lockstep.
+
+Quality uses the default Ubuntu 24.04 job. It does not install the Rust
+toolchain or Cargo audit tools used by the Rust profiles. The project command
+is an explicit no-op (`:`). That is the whole recipe: there is no package
+manifest, test script, or Workers configuration to run, and a failing fallback
+would block every admitted change. The job still runs the shared Node and uv
+setup steps, then succeeds without executing project code. Replace the no-op
+in the same change that adds application code.
+
+The profile does not select private harness source. It does not change the
+default settings rollout (`.github`, `ejmlabs`, `ejm-cli`, `ejm-harness`, and
+`ejm-ide`) and does not install callers or enable Actions by itself.
+
 ## Missing model key acceptance staging
 
 The shared-only caller supports label `acceptance:missing-model-key`. The
@@ -324,10 +346,20 @@ hold was active.
 
 ## Credentials
 
-Store `OPENAI_API_KEY` as a selected organization secret or scoped repository
-secret. Use a dedicated OpenAI project with spending controls. Missing keys
+Store `MODEL_API_KEY` as a selected organization secret or scoped repository
+secret. Use a dedicated provider project with spending controls. Missing keys
 fail closed. Rotate a leaked key at the provider, remove its stored value,
 audit affected runs and readmit work only after containment.
+
+Generated callers pass `MODEL_API_KEY`. The reusable workflow also accepts the
+previous secret, `OPENAI_API_KEY`, when a caller forwards only that name.
+`MODEL_API_KEY` is used when both are present. Keep the previous organization
+secret until every caller pin and secret mapping has moved; an empty key fails
+review closed. Renaming the organization secret and updating each repository
+caller pin are manual owner steps after this change is on main. This
+repository's installed caller keeps the previous secret and its current pin so
+existing admissions still resolve. Do not point that caller at `MODEL_API_KEY`
+until its pin is a revision that declares the new secret.
 
 Public harness source needs no private checkout token. Pin its exact revision
 in `.github/harness-revision`; trusted preparation archives it for the

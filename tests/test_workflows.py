@@ -137,6 +137,7 @@ class WorkflowSecurityTests(unittest.TestCase):
                 ["npm", "--prefix", "site", "test"],
                 ["npm", "--prefix", "site", "run", "build"],
             ],
+            "ejm-chess": [],
         }
         for profile, expected in gates.items():
             for failure in (None, *range(len(expected))):
@@ -153,7 +154,7 @@ class WorkflowSecurityTests(unittest.TestCase):
                            "COMMAND_LOG": str(log), "FAIL_AT": "none" if failure is None else str(failure)}
                     result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", script], cwd=root, env=env, capture_output=True, text=True)
                     self.assertEqual(result.returncode, 0 if failure is None else 19, result.stderr)
-                    calls = [json.loads(line) for line in log.read_text().splitlines()]
+                    calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
                     self.assertEqual([call["command"] for call in calls], expected if failure is None else expected[:failure + 1])
                     if profile == "ejm-ui":
                         self.assertTrue(all(call["ignore_scripts"] == "true" for call in calls))
@@ -161,7 +162,7 @@ class WorkflowSecurityTests(unittest.TestCase):
     def test_ui_installs_its_rust_toolchain_without_unused_audit_binaries(self):
         script = next(step["run"] for step in self.governance["jobs"]["quality"]["steps"]
                       if step.get("name") == "Install pinned Rust tools")
-        for profile in ("ejm-ui", "ejm-cli", "ejm-harness", "ejm-ide"):
+        for profile in ("ejm-ui", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-chess"):
             with self.subTest(profile=profile), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 (root / "bin").mkdir()
@@ -172,10 +173,12 @@ class WorkflowSecurityTests(unittest.TestCase):
                     stub.chmod(0o755)
                 env = {**os.environ, "PROFILE": profile, "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"], "COMMAND_LOG": str(log)}
                 subprocess.run(["bash", "-e", "-c", script], cwd=root, env=env, check=True, capture_output=True, text=True)
-                calls = [json.loads(line) for line in log.read_text().splitlines()]
-                expected = [["toolchain", "install", "1.99.1", "--profile", "minimal", "--component", "clippy,rustfmt"], ["default", "1.99.1"]]
-                if profile != "ejm-ui":
-                    expected.extend([["install", "cargo-deny", "--version", "0.20.2", "--locked"], ["install", "cargo-machete", "--version", "0.9.2", "--locked"]])
+                calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+                expected = []
+                if profile != "ejm-chess":
+                    expected = [["toolchain", "install", "1.99.1", "--profile", "minimal", "--component", "clippy,rustfmt"], ["default", "1.99.1"]]
+                    if profile != "ejm-ui":
+                        expected.extend([["install", "cargo-deny", "--version", "0.20.2", "--locked"], ["install", "cargo-machete", "--version", "0.9.2", "--locked"]])
                 self.assertEqual(calls, expected)
 
     def test_privileged_jobs_run_only_trusted_scripts_and_actions(self):
@@ -249,9 +252,18 @@ class WorkflowSecurityTests(unittest.TestCase):
     def test_ai_uses_two_independent_serial_medium_sol_passes(self):
         ai = self.governance["jobs"]["ai"]
         self.assertEqual(ai["strategy"], {"fail-fast": False, "max-parallel": 1, "matrix": {"pass": [1, 2]}})
+        secrets = self.governance["on"]["workflow_call"]["secrets"]
+        self.assertEqual(list(secrets), ["MODEL_API_KEY", "OPENAI_API_KEY", "EJM_HARNESS_TOKEN"])
+        self.assertFalse(any(item["required"] for item in secrets.values()))
+        prepare = next(step for step in ai["steps"] if "HAS_MODEL_KEY" in step.get("env", {}))
+        self.assertEqual(prepare["env"]["HAS_MODEL_KEY"], "${{ secrets.MODEL_API_KEY != '' || secrets.OPENAI_API_KEY != '' }}")
+        self.assertIn("A model API key is required; review fails closed", prepare["run"])
+        self.assertNotIn("OPENAI_API_KEY is required", prepare["run"])
         reviews = [step for step in ai["steps"] if step.get("uses", "").startswith("openai/codex-action@")]
         self.assertEqual(len(reviews), 1)
         inputs = reviews[0]["with"]
+        self.assertEqual(reviews[0]["name"], "Independent automated review")
+        self.assertEqual(inputs["openai-api-key"], "${{ secrets.MODEL_API_KEY || secrets.OPENAI_API_KEY }}")
         self.assertEqual(inputs["model"], "gpt-6.1-sol")
         self.assertEqual(inputs["effort"], "medium")
         self.assertEqual(inputs["working-directory"], "reviewer")
@@ -340,7 +352,7 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertNotIn("select-harness", draft["steps"][1]["run"].splitlines()[0])
 
     def test_embedded_expressions_survive_as_literal_python_data(self):
-        literal = "${{ inputs.commit }} / ${{ secrets.OPENAI_API_KEY }}"
+        literal = "${{ inputs.commit }} / ${{ secrets.MODEL_API_KEY }}"
         source = "import sys\nprint(" + repr(literal) + ")\nprint(sys.argv[1])\n"
         script = workflows.python(source, "fixture")
         self.assertNotIn("${{", script)

@@ -6,6 +6,12 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Added
 
+- Govern `ejm-chess` as a public repository profile. Its version source is
+  `VERSION`, its contributor guide is `README.md#development`, and its quality
+  gate is a no-op until application code exists.
+- Pass the pull-request model key as `MODEL_API_KEY`. Generated callers use
+  that name. Callers that still forward the previous secret name keep working
+  after their pin moves to this revision.
 - Optional public UI source assembly from protected-main commit pins, with
   static reviewer source and credential-free consumer installation.
 - Shared repository standards, explicit human admission, protected merge gates, two-pass Codex review, and a draft source release pipeline.
