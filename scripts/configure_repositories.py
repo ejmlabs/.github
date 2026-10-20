@@ -8,7 +8,7 @@ import subprocess
 
 
 NAMES = (".github", "ejmlabs", "ejm-cli", "ejm-harness", "ejm-ide")
-SUPPORTED_NAMES = (*NAMES, "ejm-ui")
+SUPPORTED_NAMES = (*NAMES, "ejm-ui", "ejm-chess")
 CONTEXTS = ("Human readiness", "Maintainer approval", "Quality", "Repository standards", "AI review")
 
 

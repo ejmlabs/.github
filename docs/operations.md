@@ -62,6 +62,20 @@ cannot be inferred from a successful job or from prose. A model can still
 misstate completion, so human review and the other gates remain necessary.
 Older pinned revisions do not gain new validation automatically.
 
+Each pass validates its exact head, pass number, completion, schema, size and
+key-like text before upload. Validation checks decoded JSON too, so JSON escapes
+cannot hide the rejected `sk-` marker. Duplicate JSON fields are rejected.
+Invalid, incomplete, oversized or key-like output fails without a review
+artifact. This check does not detect every secret format; keep credentials and
+private data out of review input.
+
+A valid report is retained for seven days even when its findings block merge.
+The workflow rechecks live human admission before upload, then fails the AI
+pass for critical, high or medium findings. Low findings remain advisory.
+Revoked or cancelled work does not gain an unconditional upload path. To inspect
+a blocking review, open that pass's `review-1` or `review-2` run artifact. Address
+the findings in a new commit and obtain fresh admission for the new head.
+
 Builds receive no model key, source-read secret, deployment credential or
 write token. Never reuse a cache produced by PR code in a privileged job.
 The Codex step clears inherited `GH_TOKEN` and `GITHUB_TOKEN`. The pinned action
@@ -300,6 +314,34 @@ registry sources. The separate registry gate checks native, WebAssembly,
 schema, auth and build behavior. Keep the product guide and its check script
 in sync when those prerequisites change.
 
+## ejm-chess profile
+
+`ejm-chess` is part of the governed public set, with the same human admission,
+required statuses, and caller rules as ejm-cli and ejm-harness. It is a
+Cloudflare Workers TypeScript application. The repository has no application
+code yet; the current work is an OpenSpec plan. The contributor guide is
+`README.md#development`. The canonical version is `VERSION` (0.1.0). Package
+manifests are not version sources until the application exists, because there
+is no package to keep in lockstep.
+
+Quality uses the default Ubuntu 24.04 job. It does not install the Rust
+toolchain or Cargo audit tools used by the Rust profiles. While the tree has
+neither `package.json` nor `src`, the project command succeeds without running
+a package, test, or Workers build. The job still runs the shared Node and uv
+setup steps. If either `package.json` or `src` is present, Quality fails
+closed and reports that the recipe must be added in ejmlabs/.github. A
+`wrangler.jsonc` file alone does not count as that application code.
+
+The profile does not select private harness source. It is not part of the
+default settings rollout (`.github`, `ejmlabs`, `ejm-cli`, `ejm-harness`, and
+`ejm-ide`). `configure_repositories.py` accepts `--repository ejm-chess` as an
+explicit opt-in. Apply that settings baseline and read it back before any
+`pr.yml` is installed and before `MODEL_API_KEY` is made visible to the
+repository. The baseline is selected actions with SHA pinning required, a
+read-only default workflow token, fork pull-request approval for all external
+contributors, and `main` protected with the five required statuses and strict
+checks.
+
 ## Missing model key acceptance staging
 
 The shared-only caller supports label `acceptance:missing-model-key`. The
@@ -324,10 +366,33 @@ hold was active.
 
 ## Credentials
 
-Store `OPENAI_API_KEY` as a selected organization secret or scoped repository
-secret. Use a dedicated OpenAI project with spending controls. Missing keys
-fail closed. Rotate a leaked key at the provider, remove its stored value,
-audit affected runs and readmit work only after containment.
+Create a new model key in a dedicated provider project. Give that project a
+hard monthly spend cap, model-only scope, and no other projects. Store the new
+key as the organization secret `MODEL_API_KEY`, scoped to selected
+repositories only. Do not copy the previous key value into the new secret.
+Missing keys fail closed. Rotate a leaked key at the provider, remove its
+stored value, audit affected runs and readmit work only after containment.
+
+Generated callers pass `MODEL_API_KEY`. The reusable workflow still accepts
+`OPENAI_API_KEY` when an already-installed caller forwards only that name.
+That acceptance is limited to `.github`, `ejmlabs`, `ejm-cli`, `ejm-harness`,
+`ejm-ide`, and `ejm-ui`. `ejm-chess` and any profile added from now on must
+pass `MODEL_API_KEY`. `MODEL_API_KEY` is used when both are present. Keep the
+previous organization secret until every existing caller pin and secret
+mapping has moved; an empty key fails review closed. Creating the new key,
+storing it as `MODEL_API_KEY`, and updating each repository caller pin are
+manual owner steps after this change is on main. This repository's installed
+caller keeps the previous secret and its current pin so existing admissions
+still resolve. Do not point that caller at `MODEL_API_KEY` until its pin is a
+revision that declares the new secret.
+
+Once every caller passes `MODEL_API_KEY`, delete the `OPENAI_API_KEY`
+organization secret and revoke the old key at the provider, then audit recent
+usage. Deleting the GitHub secret alone leaves the old key usable. Remove
+`|| secrets.OPENAI_API_KEY`, the `OPENAI_API_KEY` workflow_call secret,
+`legacy_model_secret_workflows`, `LEGACY_PROFILES`, and the legacy fixture in
+the first release after all five installed callers pin this revision and pass
+`MODEL_API_KEY`, and no later than 2026-11-16.
 
 Public harness source needs no private checkout token. Pin its exact revision
 in `.github/harness-revision`; trusted preparation archives it for the

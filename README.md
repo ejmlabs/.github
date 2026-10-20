@@ -2,9 +2,12 @@
 
 ## Overview
 
-Shared repository policy and reusable GitHub workflows for ejm-cli,
+Shared repository policy and reusable GitHub workflows for ejm-chess, ejm-cli,
 ejm-harness, ejm-ide and the ejmlabs studio. Consumers pin reviewed full
 commit SHAs. Each repository keeps its own semantic version.
+
+`ejm-chess` is a Workers TypeScript repository with no application code yet.
+Its profile is described in [ejm-chess profile](docs/operations.md#ejm-chess-profile).
 
 The source also supports an explicit `ejm-ui` owner profile. Its gate and
 metadata rules are described in [UI owner support](docs/operations.md#ui-owner-profile).
