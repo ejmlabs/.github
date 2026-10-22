@@ -180,6 +180,7 @@ class WorkflowSecurityTests(unittest.TestCase):
 
     def test_privileged_jobs_run_only_trusted_scripts_and_actions(self):
         trusted_sources = {workflows.source(name) for name in ("governance.py", "prepare.py", "review_result.py")}
+        trusted_sources.add(workflows.source("governance.py", True) + "\n" + workflows.source("pr_guidance.py").replace("from governance import GitHub\n", ""))
         trusted_sources.add("\n".join([
             workflows.source("governance.py", True), workflows.source("standards.py", True),
             workflows.source("prepare.py", True), workflows.source("release.py"),

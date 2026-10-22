@@ -238,6 +238,16 @@ jobs:
     }.items()}
 
 
+def guided_consumer_workflows(revision):
+    """Opt-in caller after this validator has been adopted through protected pins."""
+    docs = consumer_workflows(revision)
+    docs["pr.yml"] = docs["pr.yml"].replace(
+        "on:\n  issue_comment:",
+        "on:\n  pull_request_target:\n    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, edited, closed]\n  issue_comment:",
+    ).replace("github.event.issue.pull_request }}", "github.event.issue.pull_request || github.event_name == 'pull_request_target' }}")
+    return docs
+
+
 def missing_model_key_workflows(revision):
     """Return the exact shared-only caller for staged missing-key acceptance."""
     documents = consumer_workflows(revision)
@@ -370,6 +380,9 @@ def workflows(root, profile):
     if not pin:
         raise ValueError("PR workflow must pin governance.yml to a full commit SHA")
     consumers = consumer_workflows(pin[1])
+    guided = guided_consumer_workflows(pin[1])
+    if pr == guided["pr.yml"]:
+        consumers = guided
     if profile == ".github":
         fixture = missing_model_key_workflows(pin[1])
         if pr == fixture["pr.yml"]:
