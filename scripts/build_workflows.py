@@ -193,7 +193,19 @@ PY
               "permissions": {"contents": "read", "pull-requests": "write", "statuses": "write"},
               "env": {**ENV, "JOB_RESULTS": "${{ toJSON(needs) }}"},
               "steps": [run("Publish required results only after live admission validation", python(source("governance.py"), "finish"))]}
-    return {"name": "Human-admitted PR checks", "on": {"workflow_call": {"secrets": {"OPENAI_API_KEY": {"required": False}, "EJM_HARNESS_TOKEN": {"required": False}}}}, "permissions": {}, "jobs": {"admission": admission, "prepare": prepare, "quality": quality, "registry": registry, "standards": standards, "ai": ai, "finish": finish}}
+    guidance_code = source("governance.py", True) + "\n" + source("pr_guidance.py").replace("from governance import GitHub\n", "")
+    event_filter = "(github.event_name == 'pull_request_target' && github.event.sender.type != 'Bot') || (github.event_name == 'issue_comment' && (startsWith(github.event.comment.body, '/ready ') || startsWith(github.event.comment.body, '/approve ') || startsWith(github.event.comment.body, '/revoke ') || startsWith(github.event.changes.body.from, '/ready ') || startsWith(github.event.changes.body.from, '/approve ')))"
+    guidance = {
+        "needs": ["admission"],
+        "if": "${{ github.run_attempt == 1 && always() && (" + event_filter + ") }}",
+        "runs-on": "ubuntu-24.04", "timeout-minutes": 2,
+        "permissions": {"contents": "read", "pull-requests": "write", "statuses": "read"},
+        "concurrency": {"group": "pr-guidance-${{ github.repository }}-${{ github.event.number || github.event.issue.number }}", "cancel-in-progress": False},
+        "steps": [run("Refresh advisory PR next action from live metadata", python(guidance_code), env={"GH_TOKEN": "${{ github.token }}"})],
+    }
+    guidance_finish = {**guidance, "needs": ["admission", "finish"],
+                       "if": "${{ github.run_attempt == 1 && always() && needs.admission.outputs.run == 'true' }}"}
+    return {"name": "Human-admitted PR checks", "on": {"workflow_call": {"secrets": {"OPENAI_API_KEY": {"required": False}, "EJM_HARNESS_TOKEN": {"required": False}}}}, "permissions": {}, "jobs": {"admission": admission, "prepare": prepare, "quality": quality, "registry": registry, "standards": standards, "ai": ai, "finish": finish, "guidance": guidance, "guidance_finish": guidance_finish}}
 
 
 def release_workflow():

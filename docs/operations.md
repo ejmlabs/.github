@@ -492,3 +492,35 @@ Roll back a failed shared revision through an ordinary reviewed PR restoring
 the previous full SHA. Do not move a revision or release tag. Keep budget
 notifications enabled. Source-release jobs make drafts and do not deploy or
 publish packages.
+
+## Generated PR next action
+
+The shared governance implementation maintains a bounded block between
+`<!-- ejm-next-action:start -->` and `<!-- ejm-next-action:end -->` in the PR
+body. It reads the live head, base, draft state and required statuses. The block
+shows admission, waiting, failure/retry, approval or protected merge guidance.
+Commands always name the full current head. A draft or stacked PR gets its
+prerequisite instead of an unusable admission command. Text outside the block
+is retained, and unchanged updates make no write. Duplicate or broken markers
+fail without rewriting the author's text.
+
+Guidance runs after command processing and after check finalization. The opt-in
+`guided_consumer_workflows` caller also refreshes on PR creation, pushes, edits,
+draft changes, reopening and closing using `pull_request_target`. These jobs
+use only the embedded trusted metadata renderer: no checkout, project code,
+model key, status mutation or command submission. They have PR-body write and
+status-read permission. Human admission and approval remain unchanged.
+
+Updates share a per-PR concurrency group and re-read the body and head before
+writing, retrying observed races at most three times. GitHub has no atomic
+compare-and-swap for PR bodies; a concurrent external edit after that read can
+still race. The next PR event reconciles guidance. It is advisory, never proof
+of admission, approval or release. GitHub's protected merge checks remain final.
+
+Adopt in stages: merge this implementation and validator under the existing
+caller, retain its reviewed source context, update consumer pins to that exact
+commit, then install the generated guided caller under the now-capable trusted
+validator. Existing pinned callers do not gain creation/push refresh until
+that adoption is complete. The shared missing-model-key acceptance caller is
+unchanged; remove that fixture through its own reviewed change before adopting
+the guided shared caller. No additional model runs are started by guidance.
