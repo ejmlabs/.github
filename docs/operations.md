@@ -79,6 +79,7 @@ high findings, and credential-like text is redacted. Missing material context
 must be reported as a finding. These checks
 cannot prove correctness, so human review and the other gates remain necessary.
 Older pinned revisions do not gain new validation automatically.
+Metadata-only PRs remain fail-closed and require a human review.
 
 Builds receive no model key, source-read secret, deployment credential or
 write token. Never reuse a cache produced by PR code in a privileged job.

@@ -100,29 +100,59 @@ class ReviewerResultTests(unittest.TestCase):
         self.assertEqual(result["findings"], [{"severity": "medium", "file": "src/main.py", "line": 7,
                                               "title": "Missing return value", "reason": "The caller receives None and crashes."}])
 
-    def test_real_block_scalar_output_has_one_normalized_medium_finding(self):
+    def test_real_block_scalar_path_fails_without_an_exact_manifest_match(self):
         fixtures = Path(__file__).parent / "fixtures"
         self.review.write_bytes((fixtures / "real-0.48-review.json").read_bytes())
         self.markdown.write_bytes((fixtures / "real-0.48-review.md").read_bytes())
+        self.manifest(self.file("src/app.py"))
+        self.patch.write_text(self.patch.read_text().replace("src/main.py", "src/app.py"))
         result, _ = self.run_adapter(write_review=False)
+        self.incomplete(result)
+        # A synthetic exact path keeps block-scalar prose handling compatible.
+        self.payload = json.loads(self.review.read_text())
+        self.payload["review"]["key_issues_to_review"][0]["relevant_file"] = "src/app.py"
+        result, _ = self.run_adapter()
         self.assertTrue(self.complete(result))
         self.assertEqual(result["findings"], [{
             "severity": "medium", "file": "src/app.py", "line": 3, "title": "Possible Bug",
             "reason": "LEAKMARKER-7Q3Z the loop never terminates when n is negative",
         }])
 
-    def test_model_strings_are_stripped_before_path_checks_and_severity_matching(self):
+    def test_prose_is_stripped_before_severity_matching_but_paths_must_match(self):
         self.payload["review"]["key_issues_to_review"] = [self.issue(
-            relevant_file=" \tsrc/main.py\n", issue_header=" \nSQL injection\n", issue_content=" \tA query uses raw input.\n")]
+            issue_header=" \nSQL injection\n", issue_content=" \tA query uses raw input.\n")]
         result, _ = self.run_adapter()
         self.complete(result)
         self.assertEqual(result["findings"], [{"severity": "high", "file": "src/main.py", "line": 7,
                                               "title": "SQL injection", "reason": "A query uses raw input."}])
-        for file in (" /etc/passwd\n", " ../outside\n"):
+        for file in (" \tsrc/main.py\n", " /etc/passwd\n", " ../outside\n", "src/./main.py", "src\\main.py"):
             with self.subTest(file=file):
                 self.payload["review"]["key_issues_to_review"] = [self.issue(relevant_file=file)]
                 result, _ = self.run_adapter()
                 self.incomplete(result)
+
+    def test_finding_paths_preserve_exact_manifest_identity(self):
+        for name in ("pkg/v1.2/module.py", "v1.2/module.py", "src/Kelvin.py", "src/Ａpp.py", " src/space.py "):
+            with self.subTest(name=name):
+                self.manifest(self.file(name))
+                quoted = lambda prefix: json.dumps(prefix + name, ensure_ascii=False)
+                self.patch.write_text(f"diff --git {quoted('a/')} {quoted('b/')}\n"
+                                      f"--- {quoted('a/')}\n+++ {quoted('b/')}\n@@ -1 +1 @@\n-old\n+new\n")
+                self.payload["review"]["key_issues_to_review"] = [self.issue(relevant_file=name)]
+                result, _ = self.run_adapter()
+                self.complete(result)
+                self.assertEqual(result["findings"][0]["file"].encode(), name.encode())
+                self.payload["review"]["key_issues_to_review"] = []
+                self.payload["review"]["security_concerns"] = "A security concern."
+                result, _ = self.run_adapter()
+                self.complete(result)
+                self.assertEqual(result["findings"][0]["file"].encode(), name.encode())
+                self.payload["review"]["security_concerns"] = "No"
+                for unmatched in ("unmatched.py", name.replace("K", "K").replace("Ａ", "A").strip()):
+                    if unmatched == name:
+                        continue
+                    self.payload["review"]["key_issues_to_review"] = [self.issue(relevant_file=unmatched)]
+                    self.incomplete(self.run_adapter()[0])
 
     def test_whitespace_only_required_model_strings_fail_closed(self):
         for field in ("relevant_file", "issue_header", "issue_content"):
@@ -456,15 +486,15 @@ class ReviewerResultTests(unittest.TestCase):
 
     def test_text_fields_are_truncated_and_large_results_fail_closed(self):
         self.payload["review"]["key_issues_to_review"] = [self.issue(
-            relevant_file="src/" + "f" * 4000, issue_header="t" * 4001, issue_content="r" * 4001)]
+            issue_header="t" * 4001, issue_content="r" * 4001)]
         result, _ = self.run_adapter()
         self.complete(result)
-        self.assertEqual([len(result["findings"][0][key]) for key in ("file", "title", "reason")], [4000] * 3)
+        self.assertEqual([len(result["findings"][0][key]) for key in ("title", "reason")], [4000] * 2)
         self.payload["review"]["key_issues_to_review"] *= 50
         result, _ = self.run_adapter()
         self.incomplete(result)
 
-    def test_key_like_strings_are_redacted_in_all_model_text(self):
+    def test_key_like_strings_are_redacted_in_prose(self):
         keys = [prefix + "Example1234567890" for prefix in ("sk" + "-", "sk" + "-ant-", "ghp" + "_", "gho" + "_",
                                                          "ghu" + "_", "ghs" + "_", "ghr" + "_",
                                                          "github" + "_pat_", "xox" + "b-")]
@@ -473,14 +503,14 @@ class ReviewerResultTests(unittest.TestCase):
             keys.append("-----BE" + "GIN " + kind + "PRIVATE KEY-----\nExampleBase64Data\n-----EN" + "D " + kind + "PRIVATE KEY-----")
         secret_text = " ".join(keys)
         self.payload["review"]["key_issues_to_review"] = [self.issue(
-            relevant_file="src/" + keys[0], issue_header=secret_text, issue_content=secret_text)]
+            issue_header=secret_text, issue_content=secret_text)]
         result, stdout = self.run_adapter()
         self.complete(result)
         serialized = self.output.read_text()
         for key in keys:
             self.assertNotIn(key, serialized + stdout)
         finding = result["findings"][0]
-        for field in ("file", "title", "reason"):
+        for field in ("title", "reason"):
             self.assertIn("[redacted]", finding[field])
         self.payload["review"]["key_issues_to_review"] = []
         self.payload["review"]["security_concerns"] = secret_text
@@ -489,6 +519,8 @@ class ReviewerResultTests(unittest.TestCase):
         self.assertEqual(result["findings"][0]["reason"], " ".join(["[redacted]"] * len(keys)))
 
     def test_ordinary_words_containing_sk_are_not_redacted(self):
+        self.manifest(self.file("src/task-runner.ts"))
+        self.patch.write_text(self.patch.read_text().replace("src/main.py", "src/task-runner.ts"))
         self.payload["review"]["key_issues_to_review"] = [self.issue(
             relevant_file="src/task-runner.ts", issue_header="task-runner failure", issue_content="The task-runner crashes.")]
         result, _ = self.run_adapter()
@@ -525,14 +557,14 @@ class ReviewerResultTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertEqual(sanitize(value), expected)
 
-    def test_all_finding_fields_and_summary_are_sanitized_before_output(self):
+    def test_finding_prose_and_summary_are_sanitized_before_output(self):
         self.payload["summary"] = "https://example.invalid/summary @user <b>bad</b>"
         self.payload["review"]["key_issues_to_review"] = [self.issue(
-            relevant_file="src/@team/<b>app</b>.py", issue_header="Fix [visible](javascript:alert(1)) @@user",
+            issue_header="Fix [visible](javascript:alert(1)) @@user",
             issue_content="Details <b>bold</b> HTTPS://example.invalid/path <img src=ftp://example.invalid/image> @org/team")]
         result, _ = self.run_adapter()
         self.complete(result)
-        self.assertEqual(result["findings"][0]["file"], "src/team/app.py")
+        self.assertEqual(result["findings"][0]["file"], "src/main.py")
         self.assertEqual(result["findings"][0]["title"], "Fix visible user")
         self.assertNotRegex(self.output.read_text(), r"(?i)[a-z][a-z0-9+.-]*://|www\.|@|<|>|&(?:#|[a-z])")
 
