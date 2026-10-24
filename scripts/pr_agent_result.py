@@ -166,15 +166,14 @@ def read_json(file, limit=4_000_000):
     return json.loads(read(file, limit), object_pairs_hook=json_object, parse_constant=invalid_constant)
 
 
-def path(value):
-    value = model_string(value)
-    sanitized = text(value)
-    for candidate in (value, sanitized):
-        if (not candidate or ".." in re.split(r"[/\\]", candidate)
-                or Path(candidate).is_absolute() or PureWindowsPath(candidate).drive
-                or PureWindowsPath(candidate).root or "\x00" in candidate):
-            raise Incomplete("unsafe finding path")
-    return sanitized
+def path(value, manifest):
+    # File identity is never prose: do not strip, normalize, redact or truncate it.
+    if isinstance(value, str) and 1 <= len(value) <= 4000:
+        for item in manifest:
+            for name in (item["source"], item["target"]):
+                if value == name:
+                    return safe_patch_path(name)
+    raise Incomplete("finding path does not exactly match the changed-file manifest")
 
 
 def git_path(value):
@@ -372,11 +371,11 @@ def check_skipped(patch, skipped_file):
         raise Incomplete("skipped-file list does not match the change")
 
 
-def first_changed_file(patch):
+def first_changed_file(patch, manifest):
     header = re.search(r'(?m)^diff --git ("(?:[^"\\]|\\.)*"|a/.*?) ("(?:[^"\\]|\\.)*"|b/.*)$', patch)
     if not header:
         raise Incomplete("missing or unsupported change header")
-    return path(patch_path(header[2], "b/"))
+    return path(patch_path(header[2], "b/"), manifest)
 
 
 def exit_code(value):
@@ -428,7 +427,7 @@ def adapt(review_json, review_markdown, reviewer_exit, context, patch, skipped_f
             line = issue.get("start_line")
             findings.append({
                 "severity": "high" if SECURITY.search(header + " " + content) else "medium",
-                "file": path(issue.get("relevant_file")),
+                "file": path(issue.get("relevant_file"), identity["files"]),
                 "line": line if type(line) is int and line >= 1 else 1,
                 "title": title, "reason": reason,
             })
@@ -437,7 +436,7 @@ def adapt(review_json, review_markdown, reviewer_exit, context, patch, skipped_f
             raise Incomplete("unexpected security concern shape")
         concern = model_string(concern)
         if concern and not re.fullmatch(r"no\.?", concern, re.I) and not any(item["severity"] == "high" for item in findings):
-            findings.append({"severity": "high", "file": first_changed_file(patch), "line": 1,
+            findings.append({"severity": "high", "file": first_changed_file(patch, identity["files"]), "line": 1,
                              "title": "Security concern", "reason": text(concern)})
         if len(findings) > 50:
             raise Incomplete("more than 50 findings including the security concern")
