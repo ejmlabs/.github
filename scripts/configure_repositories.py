@@ -73,7 +73,7 @@ def configure(name, protect, hold, revision=None):
         api(root + "/actions/permissions", "PUT", {"enabled": True, "allowed_actions": "selected", "sha_pinning_required": True})
         api(root + "/actions/permissions/selected-actions", "PUT", {
             "github_owned_allowed": False, "verified_allowed": False,
-            "patterns_allowed": ["actions/*@*", "astral-sh/setup-uv@*", "openai/codex-action@*", "ejmlabs/.github/*@*"],
+            "patterns_allowed": ["actions/*@*", "astral-sh/setup-uv@*", "ejmlabs/.github/*@*"],
         })
     workflow_update = api(root + "/actions/permissions/workflow", "PUT", {
         "default_workflow_permissions": "read", "can_approve_pull_request_reviews": True,

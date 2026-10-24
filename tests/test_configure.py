@@ -20,6 +20,14 @@ class SettingsSafetyTests(unittest.TestCase):
         self.assertEqual(action_permissions, [{"enabled": False}])
         self.assertFalse(any(call.args[0].endswith("/selected-actions") for call in writes))
 
+    def test_activation_allows_only_current_workflow_sources(self):
+        with patch.object(settings, "api", return_value={}) as api, patch.object(settings, "installed_consumers"):
+            settings.configure("ejm-cli", protect=False, hold=False, revision="a" * 40)
+        allowed = [call.args[2] for call in api.call_args_list if len(call.args) > 1
+                   and call.args[1] == "PUT" and call.args[0].endswith("/selected-actions")]
+        self.assertEqual(allowed, [{"github_owned_allowed": False, "verified_allowed": False,
+                                   "patterns_allowed": ["actions/*@*", "astral-sh/setup-uv@*", "ejmlabs/.github/*@*"]}])
+
     def test_workflow_writer_must_be_a_human_maintainer(self):
         for role, kind in (("write", "User"), ("admin", "Bot")):
             with self.subTest(role=role, kind=kind), patch.object(settings, "api", return_value=[

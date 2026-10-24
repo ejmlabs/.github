@@ -10,9 +10,9 @@ dismissal. Enforce administrators. Block force pushes and branch deletion. Use
 squash merges and delete merged branches.
 
 Default workflow tokens are read-only. Allow only full-SHA actions from the
-selected sources: `actions/*`, `astral-sh/setup-uv`, `openai/codex-action` and
-this shared repository. Enable bot review recording so an explicit human
-approval can be represented as a native review, including self approval.
+selected core and dependency setup sources and this shared repository. Enable
+bot review recording so an explicit human approval can be represented as a
+native review, including self approval.
 
 Every account with write access must be a human with maintain or admin
 permission. The settings tool rejects ordinary writers and bots. GitHub
@@ -33,6 +33,8 @@ filtered before a runner starts. Admission checks the human's current
 maintain/admin role, full current head, non-draft PR, main target and original
 command. Decisions must be separate, unedited comments. New commits require
 new decisions.
+The head repository must match the base repository. Fork PRs and deleted-fork
+heads require manual review instead of automated admission.
 
 Admission is serialized per PR. Replayed events and Actions reruns are
 rejected; each command is consumed once. A commit can be readmitted only after
@@ -47,29 +49,68 @@ explicit revocation and a new human command.
 | Quality | 45 minutes |
 | Separate registry gate | 25 minutes |
 | Each AI review | 9 minutes within a 12-minute job |
-| Model output | 64 KB and 50 findings |
-| Review artifacts | 7 days |
+| Reviewer command | 480 seconds |
+| Forced termination after timeout | 15 seconds |
+| Each model call | 120 seconds |
+| Model token cap | 160,000; never above 180,000 |
+| Model output token cap | 16,000 |
+| Validated result | 64 KB and 50 findings |
 | Source handoff artifacts | 3 days |
 
-Two independent Codex `gpt-6.1-sol` reviews run serially at medium effort,
-without automatic model retries. Critical, high and medium findings block;
-low findings are advisory. A failed required check blocks merge.
+Two independent automated reviews run serially through a pinned open-source
+reviewer at high reasoning effort, with no fallback model. The owner accepted
+diff-only review as an owner decision, not a pilot
+result. Available extracted head sources provide static context.
+The installer creates a fresh virtual environment in runner temp and uses an
+isolated package installer with a hash-locked file covering every dependency, wheels
+only, and no cache or dependency resolution. Critical, high and medium findings
+block; low findings are advisory.
+A failed required check blocks merge.
 
 Revisions with the completion guard require `complete` as a JSON boolean and
 accept only `true`. Missing, nonboolean or false values fail, even with no
-findings. Missing review source must produce an incomplete result. Completion
-cannot be inferred from a successful job or from prose. A model can still
-misstate completion, so human review and the other gates remain necessary.
+findings. A trusted adapter binds the result to the admitted head and pass and
+fails closed on a missing or failed reviewer exit, malformed output, unsafe
+paths, coverage warnings, clipped patches, failed chunks, or exceeded result
+limits. A precheck records files excluded by the reviewer's file filter; any
+excluded text hunks make the review incomplete, while binary-only exclusions
+are allowed. The security-concerns field is required. Security concerns produce
+high findings, and credential-like text is redacted. Missing material context
+must be reported as a finding. These checks
+cannot prove correctness, so human review and the other gates remain necessary.
 Older pinned revisions do not gain new validation automatically.
+Metadata-only PRs remain fail-closed and require a human review.
 
 Builds receive no model key, source-read secret, deployment credential or
 write token. Never reuse a cache produced by PR code in a privileged job.
-The Codex step clears inherited `GH_TOKEN` and `GITHUB_TOKEN`. The pinned action
-performs its internal permission check and supplies the OpenAI key through an
-isolated proxy. Read-only execution limits writes, not filesystem reads;
-keep unrelated credentials out of the job.
+The review step clears inherited repository token variables. Only that step
+receives the model key, through its environment. Installation has no model key.
+The reviewer uses extracted head sources for static context, with repository
+and global settings disabled. Preparation removes links and special files from
+the head sources. Ignore patterns are cleared, workflow output is disabled, and
+the model cost map uses the installed local data. Isolated module loading
+prevents those sources from shadowing installed modules. No PR code runs in the review
+job. Keep unrelated
+credentials out of the job.
 
-Set a dedicated OpenAI project spending limit and GitHub Actions budget and
+Reviewer stdout and stderr stay in runner-local files and are never printed or
+uploaded. Review-result artifact upload is removed. Local findings are bounded,
+redacted, and sanitized to remove links, images, HTML, and mention markers.
+Adapter and validation logs contain counts and status. Use INFO logging, zero
+verbosity, and disabled message logging only.
+Never enable step or runner debug logging on this path. Preparation and review
+jobs reject runner debug mode before processing sources or using the model key.
+
+Use only provider prepaid credits on a dedicated account, invoiced billing limit $0,
+automatic top-up off, and an ACL-restricted key limited to the configured model and chat
+endpoint, with request and token rate limits. Review provider audit logs weekly.
+The service sends alerts at 50% and 80% of the credit balance. Hostile diffs
+reaching the provider are an accepted defensive-use risk. These provider-side
+controls are REQUIRED. The token cap is 160,000 and must never exceed 180,000;
+oversized or clipped changes fail closed and require a human review or a split.
+Caps by tier are T0 32,000, T1 64,000, T2 128,000, T3 160,000; all PRs are T3 for now.
+The prepaid balance is raised by stage and is currently $50.
+Set a separate workflow execution budget and
 alerts. Per-run limits do not cap aggregate spending. Restrict repository
 roles and permitted dispatches; organization owners retain control of policy.
 
@@ -79,8 +120,8 @@ The explicit `ejm-ui` profile defines the requirements for a future adoption
 by the owner of the `@ejm/*` UI contracts, tokens, themes, and shared site tools.
 It requires `README.md#development` as the contributor guide and uses the same
 five required statuses, human maintainer decisions, exact-commit approval and
-revocation rules, two serial `gpt-6.1-sol` medium
-reviews, spending bounds, replay rejection, and source-release checks as the
+revocation rules, two serial independent automated reviews, spending bounds,
+replay rejection, and source-release checks as the
 other profiles. It needs no private harness source or cross-repository token.
 
 This is shared policy support, not evidence that a current UI checkout meets
@@ -311,7 +352,7 @@ do not accept this fixture form.
 
 Use a dedicated, unmerged acceptance PR with fresh exact-head human readiness
 and approval. Verify that both model jobs stop at the missing-key guard before
-Codex runs. Inspect step states, all five statuses and the native review.
+the reviewer runs. Inspect step states, all five statuses and the native review.
 Keep the fixture unmerged and remove its label when closing it.
 
 For active revocation, put a bounded hold in credential-free Quality and
@@ -324,9 +365,10 @@ hold was active.
 
 ## Credentials
 
-Store `OPENAI_API_KEY` as a selected organization secret or scoped repository
-secret. Use a dedicated OpenAI project with spending controls. Missing keys
-fail closed. Rotate a leaked key at the provider, remove its stored value,
+Store the review model key only as an environment secret of `legacy-review`.
+Restrict that environment's deployment branches to main only. Never store the
+review model key as a repository or organization secret. Enforce the required
+prepaid-credit controls. Missing keys fail closed. Rotate a leaked key at the provider, remove its stored value,
 audit affected runs and readmit work only after containment.
 
 Public harness source needs no private checkout token. Pin its exact revision
@@ -392,8 +434,8 @@ Adopt the corrected caller pin through review; preserve the original notices.
 
 The coupled PR caller update also adopts the reviewed CLI harness selector,
 optional public UI source handoff, and UI owner profile. Shared checks retain
-their human admission, completion guard, two medium Sol reviews, required
-statuses, and separate missing-model-key route. Studio keeps its public
+their human admission, completion guard, two independent automated reviews,
+required statuses, and separate missing-model-key route. Studio keeps its public
 `scripts/check.mjs` quality entry and bounded consumer source context. This
 change adds no UI source pin and updates no product caller. It does not prove a first draft release or
 duplicate-tag refusal; those paths still require separate authorized runs.
@@ -488,7 +530,7 @@ only to its reviewed commit. Keep caller pins and main protection unchanged;
 verify resolution through fresh human admission.
 
 Revoke a suspect head, cancel admitted work and inspect its isolated artifacts.
-Roll back a failed shared revision through an ordinary reviewed PR restoring
-the previous full SHA. Do not move a revision or release tag. Keep budget
-notifications enabled. Source-release jobs make drafts and do not deploy or
+For a failed shared revision, re-pin callers to the previous shared revision
+through an ordinary reviewed PR. Do not move a revision or release tag. Keep
+budget notifications enabled. Source-release jobs make drafts and do not deploy or
 publish packages.

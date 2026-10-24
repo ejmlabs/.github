@@ -98,6 +98,7 @@ class StandardTests(unittest.TestCase):
 class WorkflowTests(unittest.TestCase):
     revision = "0123456789abcdef0123456789abcdef01234567"
     other_revision = "a" * 40
+    old_model_key = "OPENAI" + "_API_KEY"
 
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -116,13 +117,13 @@ class WorkflowTests(unittest.TestCase):
         (self.directory / name).write_text(text)
         return text
 
-    def reusable(self, *, model_key="OPENAI_API_KEY"):
+    def reusable(self, *, model_key="XAI_API_KEY"):
         data = governance()
         data["on"]["workflow_call"]["secrets"] = {
-            model_key if key == "OPENAI_API_KEY" else key: value
+            model_key if key == "XAI_API_KEY" else key: value
             for key, value in data["on"]["workflow_call"]["secrets"].items()
         }
-        data["jobs"] = {"check": {"runs-on": "ubuntu-24.04", "steps": [{"uses": "actions/checkout@" + self.revision}]}}
+        data["jobs"] = {"ai": {"runs-on": "ubuntu-24.04", "environment": "legacy-review", "steps": [{"uses": "actions/checkout@" + self.revision}]}}
         return self.add_reusable("governance.yml", data)
 
     def test_exact_callers_accept_one_immutable_revision(self):
@@ -137,13 +138,13 @@ class WorkflowTests(unittest.TestCase):
                 with self.subTest(caller=caller.__name__, revision=revision), self.assertRaises(ValueError):
                     caller(revision)
 
-    def test_callers_and_shared_scaffold_accept_either_model_key(self):
-        for model_key in ("OPENAI_API_KEY", "XAI_API_KEY"):
+    def test_callers_and_shared_scaffold_accept_only_xai_model_key(self):
+        for options in ({}, {"model_key": "XAI_API_KEY"}):
             for caller in (consumer_workflows, missing_model_key_workflows):
-                with self.subTest(model_key=model_key, caller=caller.__name__):
-                    for name, text in caller(self.revision, model_key=model_key).items():
+                with self.subTest(options=options, caller=caller.__name__):
+                    for name, text in caller(self.revision, **options).items():
                         (self.directory / name).write_text(text)
-                    self.reusable(model_key=model_key)
+                    self.reusable(**options)
                     workflows(self.root, ".github")
                     (self.directory / "governance.yml").unlink()
                     if caller is consumer_workflows:
@@ -154,20 +155,22 @@ class WorkflowTests(unittest.TestCase):
 
     def test_callers_cannot_render_unsupported_model_keys(self):
         for caller in (consumer_workflows, missing_model_key_workflows):
-            for model_key in ("MODEL_API_KEY", "", None, "OPENAI_API_KEY || XAI_API_KEY"):
+            for model_key in (self.old_model_key, "MODEL_API_KEY", "", None, self.old_model_key + " || XAI_API_KEY", "XAI_API_KEY || " + self.old_model_key):
                 with self.subTest(caller=caller.__name__, model_key=model_key), self.assertRaises(ValueError):
                     caller(self.revision, model_key=model_key)
 
     def test_callers_reject_extra_unknown_and_indirect_model_keys(self):
-        for model_key, other_key in (("OPENAI_API_KEY", "XAI_API_KEY"), ("XAI_API_KEY", "OPENAI_API_KEY")):
+        for model_key, other_key in (("XAI_API_KEY", self.old_model_key),):
             for caller in (consumer_workflows, missing_model_key_workflows):
                 original = caller(self.revision, model_key=model_key)["pr.yml"]
                 line = "      " + model_key + ": ${{ secrets." + model_key + " }}\n"
                 extra = "      " + other_key + ": ${{ secrets." + other_key + " }}\n"
                 mutations = {
                     "both model keys": original.replace(line, line + extra),
+                    "old model key": original.replace(model_key, other_key),
                     "unknown model key": original.replace(model_key, "MODEL_API_KEY"),
                     "fallback expression": original.replace("secrets." + model_key, "secrets." + model_key + " || secrets." + other_key),
+                    "reversed fallback expression": original.replace("secrets." + model_key, "secrets." + other_key + " || secrets." + model_key),
                     "different source key": original.replace("secrets." + model_key, "secrets." + other_key),
                     "missing model key": original.replace(line, ""),
                     "missing harness token": original.replace("      EJM_HARNESS_TOKEN: ${{ secrets.EJM_HARNESS_TOKEN }}\n", ""),
@@ -179,7 +182,7 @@ class WorkflowTests(unittest.TestCase):
                             workflows(self.root, ".github")
 
     def test_shared_scaffold_rejects_extra_unknown_and_missing_model_keys(self):
-        for model_key, other_key in (("OPENAI_API_KEY", "XAI_API_KEY"), ("XAI_API_KEY", "OPENAI_API_KEY")):
+        for model_key, other_key in (("XAI_API_KEY", self.old_model_key),):
             for name, text in consumer_workflows(self.revision, model_key=model_key).items():
                 (self.directory / name).write_text(text)
             original = self.reusable(model_key=model_key)
@@ -187,6 +190,7 @@ class WorkflowTests(unittest.TestCase):
             extra = '      "' + other_key + '":\n        "required": false\n'
             mutations = {
                 "both model keys": original.replace(declaration, declaration + extra),
+                "old model key": original.replace(model_key, other_key),
                 "unknown model key": original.replace(model_key, "MODEL_API_KEY"),
                 "missing model key": original.replace(declaration, ""),
                 "missing harness token": original.replace('      "EJM_HARNESS_TOKEN":\n        "required": false\n', ""),
@@ -198,12 +202,12 @@ class WorkflowTests(unittest.TestCase):
                         workflows(self.root, ".github")
 
     def test_shared_scaffold_and_own_callers_must_use_the_same_model_key(self):
-        for model_key, other_key in (("OPENAI_API_KEY", "XAI_API_KEY"), ("XAI_API_KEY", "OPENAI_API_KEY")):
+        for model_key, other_key in ((self.old_model_key, "XAI_API_KEY"), ("XAI_API_KEY", self.old_model_key)):
             self.reusable(model_key=model_key)
             for caller in (consumer_workflows, missing_model_key_workflows):
                 with self.subTest(model_key=model_key, caller=caller.__name__):
-                    for name, text in caller(self.revision, model_key=other_key).items():
-                        (self.directory / name).write_text(text)
+                    for name, text in caller(self.revision).items():
+                        (self.directory / name).write_text(text.replace("XAI_API_KEY", other_key))
                     with self.assertRaises(ValueError):
                         workflows(self.root, ".github")
 
@@ -244,9 +248,9 @@ class WorkflowTests(unittest.TestCase):
             "repository guard removed": original["pr.yml"].replace(" && github.repository == 'ejmlabs/.github'", ""),
             "routes overlap": original["pr.yml"].replace(" && !contains(", " && contains("),
             "automatic event": original["pr.yml"].replace("on:\n", "on:\n  push:\n"),
-            "fixture receives key": original["pr.yml"] + "    secrets:\n      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}\n",
+            "fixture receives key": original["pr.yml"] + "    secrets:\n      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}\n",
             "fixture inherits secrets": original["pr.yml"] + "    secrets: inherit\n",
-            "normal key omitted": original["pr.yml"].replace("      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}\n", ""),
+            "normal key omitted": original["pr.yml"].replace("      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}\n", ""),
             "fixture can write source": normal_job + "  missing_model_key:\n" + missing_job.replace("contents: read", "contents: write"),
             "root write permissions": original["pr.yml"].replace("permissions: {}", "permissions:\n  contents: write"),
             "fixture uses another pin": normal_job + "  missing_model_key:\n" + missing_job.replace(self.revision, self.other_revision),
@@ -321,6 +325,56 @@ class WorkflowTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             workflows(self.root, "ejm-cli")
 
+    def test_review_job_requires_its_exclusive_protected_environment(self):
+        for case in ("valid", "step input", "missing", "wrong name", "other job", "indented other job", "moved", "mapping", "literal lookalike", "duplicate job", "duplicate environment"):
+            with self.subTest(case=case):
+                data = governance()
+                review = data["jobs"]["ai"]
+                review["environment"] = "legacy-review"
+                if case in ("missing", "moved", "literal lookalike", "duplicate job"):
+                    del review["environment"]
+                if case == "wrong name":
+                    review["environment"] = "unprotected"
+                elif case in ("other job", "moved"):
+                    data["jobs"]["quality"]["environment"] = "legacy-review"
+                elif case == "mapping":
+                    review["environment"] = {"name": "unprotected"}
+                elif case == "literal lookalike":
+                    review["steps"].append({"run": '  "ai":\n    "environment": "legacy-review"\n'})
+                elif case == "duplicate job":
+                    data["jobs"]["shadow"] = {**review, "environment": "legacy-review"}
+                elif case == "indented other job":
+                    data["jobs"]["shadow"] = {"runs-on": "ubuntu-24.04", "environment": "unprotected", "steps": [{"run": "true"}]}
+                elif case == "step input":
+                    review["steps"].append({"uses": "actions/example@" + self.revision, "with": {"environment": "value"}})
+                text = self.add_reusable("governance.yml", data)
+                if case == "duplicate job":
+                    text = text.replace('  "shadow":\n', '  "ai":\n')
+                elif case == "duplicate environment":
+                    text = text.replace('    "environment": "legacy-review"\n', '    "environment": "legacy-review"\n' * 2)
+                elif case == "indented other job":
+                    prefix, body = text.split('  "shadow":\n')
+                    text = prefix + '  "shadow":\n' + "\n".join("  " + line for line in body.splitlines()) + "\n"
+                (self.directory / "governance.yml").write_text(text)
+                if case in ("valid", "step input"):
+                    workflows(self.root, ".github")
+                else:
+                    with self.assertRaisesRegex(ValueError, "environment"):
+                        workflows(self.root, ".github")
+
+    def test_release_jobs_cannot_declare_an_environment(self):
+        for extra_indent in (0, 2):
+            with self.subTest(extra_indent=extra_indent):
+                data = release_workflow()
+                data["jobs"]["draft"]["environment"] = "legacy-review"
+                text = self.add_reusable("draft-release.yml", data)
+                if extra_indent:
+                    prefix, body = text.split('  "draft":\n')
+                    text = prefix + '  "draft":\n' + "\n".join(" " * extra_indent + line for line in body.splitlines()) + "\n"
+                    (self.directory / "draft-release.yml").write_text(text)
+                with self.assertRaisesRegex(ValueError, "environment"):
+                    workflows(self.root, ".github")
+
     def test_reusable_trigger_bypasses_are_rejected(self):
         original = self.reusable()
         mutations = {
@@ -354,7 +408,8 @@ class WorkflowTests(unittest.TestCase):
 
     def test_workflow_lookalikes_inside_literal_script_are_data(self):
         data = governance()
-        data["jobs"] = {"check": {"runs-on": "ubuntu-24.04", "steps": [{"run": 'on: [push]\n"uses": "actions/checkout@main"\n---\n'}]}}
+        data["jobs"] = {"ai": {"runs-on": "ubuntu-24.04", "environment": "legacy-review",
+                               "steps": [{"run": 'on: [push]\n"uses": "actions/checkout@main"\n  "ai":\n    "environment": "unprotected"\n---\n'}]}}
         self.add_reusable("governance.yml", data)
         workflows(self.root, ".github")
 
