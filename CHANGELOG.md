@@ -4,6 +4,9 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ## [Unreleased]
 
+- Generate current-head PR next-action guidance from live metadata. Add opt-in caller support; consumer adoption remains separate.
+
+
 ### Added
 
 - Optional public UI source assembly from protected-main commit pins, with

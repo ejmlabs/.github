@@ -238,6 +238,23 @@ jobs:
     }.items()}
 
 
+def guided_consumer_workflows(revision):
+    """Opt-in caller after this validator has been adopted through protected pins."""
+    docs = consumer_workflows(revision)
+    header, job = docs["pr.yml"].split("  governance:\n", 1)
+    header = header.replace(
+        "on:\n  issue_comment:",
+        "on:\n  pull_request_target:\n    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, edited, closed]\n  issue_comment:",
+    )
+    original = "    if: ${{ github.event.issue.pull_request }}\n"
+    governance = job.replace(original, "    if: ${{ github.event_name == 'issue_comment' && github.event.issue.pull_request }}\n")
+    # Fork-triggered runs get no secrets and no status or actions writes.
+    guidance = job.split("    secrets:\n", 1)[0].replace(original, "    if: ${{ github.event_name == 'pull_request_target' }}\n").replace(
+        "      statuses: write\n      actions: write\n", "      statuses: read\n")
+    docs["pr.yml"] = header + "  governance:\n" + governance + "  guidance:\n" + guidance
+    return docs
+
+
 def missing_model_key_workflows(revision):
     """Return the exact shared-only caller for staged missing-key acceptance."""
     documents = consumer_workflows(revision)
@@ -370,6 +387,9 @@ def workflows(root, profile):
     if not pin:
         raise ValueError("PR workflow must pin governance.yml to a full commit SHA")
     consumers = consumer_workflows(pin[1])
+    guided = guided_consumer_workflows(pin[1])
+    if pr == guided["pr.yml"]:
+        consumers = guided
     if profile == ".github":
         fixture = missing_model_key_workflows(pin[1])
         if pr == fixture["pr.yml"]:
