@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from build_workflows import python, source
 from review_result import validate
-from pr_agent_result import Incomplete, check_sanitized, sanitize
+from pr_agent_result import Incomplete, check_sanitized, path, sanitize
 
 
 class ReviewerResultTests(unittest.TestCase):
@@ -100,23 +100,40 @@ class ReviewerResultTests(unittest.TestCase):
         self.assertEqual(result["findings"], [{"severity": "medium", "file": "src/main.py", "line": 7,
                                               "title": "Missing return value", "reason": "The caller receives None and crashes."}])
 
-    def test_real_block_scalar_path_fails_without_an_exact_manifest_match(self):
+    def test_real_block_scalar_path_completes_with_the_manifest_path(self):
         fixtures = Path(__file__).parent / "fixtures"
         self.review.write_bytes((fixtures / "real-0.48-review.json").read_bytes())
         self.markdown.write_bytes((fixtures / "real-0.48-review.md").read_bytes())
         self.manifest(self.file("src/app.py"))
         self.patch.write_text(self.patch.read_text().replace("src/main.py", "src/app.py"))
         result, _ = self.run_adapter(write_review=False)
-        self.incomplete(result)
-        # A synthetic exact path keeps block-scalar prose handling compatible.
-        self.payload = json.loads(self.review.read_text())
-        self.payload["review"]["key_issues_to_review"][0]["relevant_file"] = "src/app.py"
-        result, _ = self.run_adapter()
         self.assertTrue(self.complete(result))
         self.assertEqual(result["findings"], [{
             "severity": "medium", "file": "src/app.py", "line": 3, "title": "Possible Bug",
             "reason": "LEAKMARKER-7Q3Z the loop never terminates when n is negative",
         }])
+
+    def test_block_and_folded_scalar_paths_accept_only_trailing_line_breaks(self):
+        self.manifest(self.file("app.py"))
+        self.patch.write_text(self.patch.read_text().replace("src/main.py", "app.py"))
+        # Single-line literal (|) and folded (>) scalars both parse to "app.py\n".
+        for ending in ("\n", "\r\n", "\n\n", "\r\n\r\n"):
+            with self.subTest(ending=ending):
+                self.payload["review"]["key_issues_to_review"] = [self.issue(relevant_file="app.py" + ending)]
+                result, _ = self.run_adapter()
+                self.assertTrue(self.complete(result))
+                self.assertEqual(result["findings"][0]["file"], "app.py")
+        for unmatched in (" app.py", "app.py ", "app.py \n", "app.py\t\n", "app.py\r", "app.py\v",
+                          "app.py\u2028", "app.\npy\n", "App.py\n", "ａｐｐ.py\n"):
+            with self.subTest(unmatched=unmatched):
+                self.payload["review"]["key_issues_to_review"] = [self.issue(relevant_file=unmatched)]
+                self.incomplete(self.run_adapter()[0])
+
+    def test_exact_newline_filename_precedes_serialization_fallback(self):
+        for ending in ("\n", "\r\n"):
+            with self.subTest(ending=ending):
+                name = "app.py" + ending
+                self.assertEqual(path(name, [self.file("app.py"), self.file(name)]), name)
 
     def test_prose_is_stripped_before_severity_matching_but_paths_must_match(self):
         self.payload["review"]["key_issues_to_review"] = [self.issue(
@@ -132,7 +149,8 @@ class ReviewerResultTests(unittest.TestCase):
                 self.incomplete(result)
 
     def test_finding_paths_preserve_exact_manifest_identity(self):
-        for name in ("pkg/v1.2/module.py", "v1.2/module.py", "src/Kelvin.py", "src/Ａpp.py", " src/space.py "):
+        for name in ("pkg/v1.2/module.py", "v1.2/module.py", "src/Kelvin.py", "src/Ａpp.py", " src/space.py ",
+                     "app.py\n", "app.py\r\n"):
             with self.subTest(name=name):
                 self.manifest(self.file(name))
                 quoted = lambda prefix: json.dumps(prefix + name, ensure_ascii=False)
