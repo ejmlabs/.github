@@ -51,7 +51,7 @@ explicit revocation and a new human command.
 | Review artifacts | 7 days |
 | Source handoff artifacts | 3 days |
 
-Two independent Codex `gpt-6.1-sol` reviews run serially at medium effort,
+Two independent automated review steps run serially at medium effort,
 without automatic model retries. Critical, high and medium findings block;
 low findings are advisory. A failed required check blocks merge.
 
@@ -64,12 +64,12 @@ Older pinned revisions do not gain new validation automatically.
 
 Builds receive no model key, source-read secret, deployment credential or
 write token. Never reuse a cache produced by PR code in a privileged job.
-The Codex step clears inherited `GH_TOKEN` and `GITHUB_TOKEN`. The pinned action
-performs its internal permission check and supplies the OpenAI key through an
+The automated review step clears inherited `GH_TOKEN` and `GITHUB_TOKEN`. The pinned action
+performs its internal permission check and supplies the model key through an
 isolated proxy. Read-only execution limits writes, not filesystem reads;
 keep unrelated credentials out of the job.
 
-Set a dedicated OpenAI project spending limit and GitHub Actions budget and
+Set a dedicated provider project spending limit and GitHub Actions budget and
 alerts. Per-run limits do not cap aggregate spending. Restrict repository
 roles and permitted dispatches; organization owners retain control of policy.
 
@@ -79,8 +79,8 @@ The explicit `ejm-ui` profile defines the requirements for a future adoption
 by the owner of the `@ejm/*` UI contracts, tokens, themes, and shared site tools.
 It requires `README.md#development` as the contributor guide and uses the same
 five required statuses, human maintainer decisions, exact-commit approval and
-revocation rules, two serial `gpt-6.1-sol` medium
-reviews, spending bounds, replay rejection, and source-release checks as the
+revocation rules, two serial automated review steps at medium
+effort, spending bounds, replay rejection, and source-release checks as the
 other profiles. It needs no private harness source or cross-repository token.
 
 This is shared policy support, not evidence that a current UI checkout meets
@@ -311,7 +311,7 @@ do not accept this fixture form.
 
 Use a dedicated, unmerged acceptance PR with fresh exact-head human readiness
 and approval. Verify that both model jobs stop at the missing-key guard before
-Codex runs. Inspect step states, all five statuses and the native review.
+the automated review runs. Inspect step states, all five statuses and the native review.
 Keep the fixture unmerged and remove its label when closing it.
 
 For active revocation, put a bounded hold in credential-free Quality and
@@ -325,7 +325,7 @@ hold was active.
 ## Credentials
 
 Store `OPENAI_API_KEY` as a selected organization secret or scoped repository
-secret. Use a dedicated OpenAI project with spending controls. Missing keys
+secret. Use a dedicated provider project with spending controls. Missing keys
 fail closed. Rotate a leaked key at the provider, remove its stored value,
 audit affected runs and readmit work only after containment.
 
@@ -392,7 +392,7 @@ Adopt the corrected caller pin through review; preserve the original notices.
 
 The coupled PR caller update also adopts the reviewed CLI harness selector,
 optional public UI source handoff, and UI owner profile. Shared checks retain
-their human admission, completion guard, two medium Sol reviews, required
+their human admission, completion guard, two medium automated reviews, required
 statuses, and separate missing-model-key route. Studio keeps its public
 `scripts/check.mjs` quality entry and bounded consumer source context. This
 change adds no UI source pin and updates no product caller. It does not prove a first draft release or
