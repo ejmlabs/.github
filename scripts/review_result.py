@@ -17,6 +17,16 @@ def unique_fields(pairs):
 KEY = rb"(?<![A-Za-z0-9])sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}"
 
 
+def contains_key(value):
+    if isinstance(value, str):
+        return re.search(KEY.decode(), value) is not None
+    if isinstance(value, dict):
+        return any(contains_key(key) or contains_key(item) for key, item in value.items())
+    if isinstance(value, list):
+        return any(contains_key(item) for item in value)
+    return False
+
+
 def validate(file, head, number):
     if file.is_symlink() or not file.is_file() or file.stat().st_size > 64_000:
         raise ValueError("Missing, unsafe, or oversized review output")
@@ -25,7 +35,7 @@ def validate(file, head, number):
     if re.search(KEY, raw):
         raise ValueError("Review output matches a key-like pattern")
     result = json.loads(raw, object_pairs_hook=unique_fields)
-    if re.search(KEY.decode(), json.dumps(result, ensure_ascii=False)):
+    if contains_key(result):
         raise ValueError("Review output matches a key-like pattern")
     if set(result) != {"head", "pass", "complete", "summary", "findings"}:
         raise ValueError("Invalid review fields")

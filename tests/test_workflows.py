@@ -370,6 +370,14 @@ class WorkflowSecurityTests(unittest.TestCase):
             payload = json.dumps({**base, "summary": prefix + secret})
             cases.append(("key after " + repr(prefix), payload, False, False))
             cases.append(("escaped key after " + repr(prefix), payload.replace("sk-", "s\\u006b-"), False, False))
+        for prefix in ("line\n", "\t"):
+            cases.append(("decoded key after " + repr(prefix), json.dumps({**base, "summary": prefix + secret}), False, False))
+        finding = {"severity": "low", "file": "src/auth.rs", "line": 3,
+                   "title": "Authorization check", "reason": "line\n" + secret}
+        cases.extend([
+            ("decoded key in finding", json.dumps({**base, "findings": [finding]}), False, False),
+            ("decoded key in field name", json.dumps({**base, "\n" + secret: "hidden"}), False, False),
+        ])
         body = "Ab1x" * 10
         for key in ("sk" + "-" + body, "sk" + "-proj-" + body, "sk" + "-svcacct-" + body, "sk" + "-admin-" + body,
                     "gh" + "p_" + body, "gh" + "s_" + body, "github" + "_pat_" + body):
@@ -388,6 +396,8 @@ class WorkflowSecurityTests(unittest.TestCase):
                 expected = f"safe=true\nblocked={str(blocked).lower()}\n" if safe else ""
                 self.assertEqual(output.read_text(), expected)
                 self.assertNotIn(secret, result.stdout + result.stderr)
+                if name.startswith("decoded key"):
+                    self.assertIn("Review output matches a key-like pattern", result.stderr)
                 if safe:
                     default = workflows.python(workflows.source("review_result.py"), 'review-result.json "$PR_HEAD" "$REVIEW_PASS"')
                     gate = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", default],
