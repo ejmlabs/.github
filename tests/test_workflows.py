@@ -69,6 +69,44 @@ class WorkflowSecurityTests(unittest.TestCase):
         cls.governance = generated_yaml((workflows.ROOT / ".github/workflows/governance.yml").read_text())
         cls.release = workflows.release_workflow()
 
+    def test_own_callers_match_the_secrets_declared_at_their_pinned_revisions(self):
+        for filename in ("pr.yml", "release.yml"):
+            caller = (workflows.ROOT / ".github/workflows" / filename).read_text()
+            jobs = dict(re.findall(r"(?ms)^  ([\w-]+):\n(.*?)(?=^  \S|\Z)", caller.split("\njobs:\n", 1)[1]))
+            self.assertTrue(jobs)
+            for name, job in jobs.items():
+                with self.subTest(caller=filename, job=name):
+                    reference = re.search(r"(?m)^    uses: ejmlabs/\.github/(\.github/workflows/[\w-]+\.yml)@([0-9a-f]{40})$", job)
+                    self.assertIsNotNone(reference)
+                    path, revision = reference.groups()
+                    kind = subprocess.check_output(
+                        ["git", "cat-file", "--batch-check=%(objecttype)"], input=revision + "\n",
+                        cwd=workflows.ROOT, text=True).strip()
+                    if kind == revision + " missing":
+                        self.skipTest(f"Pinned workflow commit {revision} is absent from the local Git object store")
+                    self.assertEqual(kind, "commit")
+                    pinned = subprocess.check_output(["git", "show", f"{revision}:{path}"], cwd=workflows.ROOT, text=True)
+                    declared = generated_yaml(pinned)["on"]["workflow_call"].get("secrets", {})
+                    forwarded = {}
+                    if "    secrets:" in job:
+                        self.assertIn("    secrets:\n", job)
+                        section = re.search(r"(?ms)^    secrets:\n(.*?)(?=^    \S|\Z)", job)[1]
+                        for line in section.splitlines():
+                            secret = re.fullmatch(r"      (\w+): \$\{\{ secrets\.(\w+) \}\}", line)
+                            self.assertIsNotNone(secret)
+                            key, source = secret.groups()
+                            self.assertNotIn(key, forwarded)
+                            self.assertEqual(key, source)
+                            forwarded[key] = source
+                    if filename == "pr.yml" and name == "missing_model_key":
+                        # This acceptance fixture deliberately omits every optional secret.
+                        self.assertNotIn("    secrets:", job)
+                        self.assertIn(reference[0], jobs["governance"])
+                        self.assertTrue(declared)
+                        self.assertTrue(all(secret.get("required") is False for secret in declared.values()))
+                    else:
+                        self.assertEqual(set(declared), set(forwarded))
+
     def test_every_source_consumer_uses_the_preparation_artifact_id(self):
         jobs = self.governance["jobs"]
         prepare = jobs["prepare"]

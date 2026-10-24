@@ -365,8 +365,8 @@ hold was active.
 
 ## Credentials
 
-Store the review model key as the `XAI_API_KEY` secret, scoped to the repository
-or selected repositories in the organization. Enforce the required prepaid-credit
+Store the review model key in the secret named in the trusted workflow, scoped to
+the repository or selected repositories in the organization. Enforce the required prepaid-credit
 controls. Missing keys fail closed. Rotate a leaked key at the provider, remove its stored value,
 audit affected runs and readmit work only after containment.
 
