@@ -135,11 +135,12 @@ class GuidanceTests(unittest.TestCase):
             self.assertEqual(job['steps'], original['steps'])
             self.assertEqual(job['concurrency'], original['concurrency'])
 
-    def test_guided_callers_grant_every_permission_requested_by_their_reusables(self):
-        jobs = workflow_jobs(standards.guided_consumer_workflows(SHA)['pr.yml'])
+    def permission_violations(self, text):
+        jobs = workflow_jobs(text)
         self.assertEqual(set(jobs), {'governance', 'guidance'})
         levels = {'none': 0, 'read': 1, 'write': 2}
         root = Path(__file__).resolve().parents[1]
+        violations = []
         for caller_name, caller in jobs.items():
             target, revision = caller['uses'].split('@')
             self.assertEqual(revision, SHA)
@@ -147,9 +148,24 @@ class GuidanceTests(unittest.TestCase):
             self.assertTrue(called)
             for name, job in called.items():
                 for permission, requested in job.get('permissions', {}).items():
-                    with self.subTest(caller=caller_name, job=name, permission=permission):
-                        granted = caller.get('permissions', {}).get(permission, 'none')
-                        self.assertLessEqual(levels[requested], levels[granted])
+                    granted = caller.get('permissions', {}).get(permission, 'none')
+                    if levels[requested] > levels[granted]:
+                        violations.append((caller_name, name, permission, requested, granted))
+        return violations
+
+    def test_guided_callers_grant_every_permission_requested_by_their_reusables(self):
+        self.assertEqual(self.permission_violations(standards.guided_consumer_workflows(SHA)['pr.yml']), [])
+
+    def test_permission_check_detects_the_original_guidance_caller_bug(self):
+        root = Path(__file__).resolve().parents[1]
+        jobs = workflow_jobs((root / '.github/workflows/governance.yml').read_text())
+        self.assertEqual(jobs['admission']['permissions']['statuses'], 'write')
+        self.assertEqual(jobs['admission']['permissions']['actions'], 'write')
+        self.assertEqual(jobs['finish']['permissions']['statuses'], 'write')
+        caller = standards.guided_consumer_workflows(SHA)['pr.yml'].replace('/pr-guidance.yml@', '/governance.yml@')
+        violations = self.permission_violations(caller)
+        self.assertIn(('guidance', 'admission', 'statuses', 'write', 'read'), violations)
+        self.assertIn(('guidance', 'admission', 'actions', 'write', 'none'), violations)
 
     def test_guided_caller_is_opt_in_and_pinned(self):
         old = standards.consumer_workflows(SHA)
