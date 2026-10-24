@@ -22,6 +22,7 @@ class WorkflowSecurityTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.governance = workflows.governance()
+        cls.guidance = workflows.guidance_workflow()
         cls.release = workflows.release_workflow()
 
     def test_every_source_consumer_uses_the_preparation_artifact_id(self):
@@ -186,7 +187,7 @@ class WorkflowSecurityTests(unittest.TestCase):
             workflows.source("prepare.py", True), workflows.source("release.py"),
         ]))
         trusted_actions = {"actions/checkout", "actions/download-artifact", "actions/upload-artifact", "openai/codex-action"}
-        for document in (self.governance, self.release):
+        for document in (self.governance, self.guidance, self.release):
             self.assertNotIn("defaults", document)
             for name, job in document["jobs"].items():
                 if not job["permissions"] and "secrets." not in json.dumps(job):

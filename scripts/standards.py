@@ -250,7 +250,7 @@ def guided_consumer_workflows(revision):
     governance = job.replace(original, "    if: ${{ github.event_name == 'issue_comment' && github.event.issue.pull_request }}\n")
     # Fork-triggered runs get no secrets and no status or actions writes.
     guidance = job.split("    secrets:\n", 1)[0].replace(original, "    if: ${{ github.event_name == 'pull_request_target' }}\n").replace(
-        "      statuses: write\n      actions: write\n", "      statuses: read\n")
+        "      statuses: write\n      actions: write\n", "      statuses: read\n").replace("/governance.yml@", "/pr-guidance.yml@")
     docs["pr.yml"] = header + "  governance:\n" + governance + "  guidance:\n" + guidance
     return docs
 
@@ -280,6 +280,13 @@ def _reusable_workflow(text, name):
         "required": false
       "EJM_HARNESS_TOKEN":
         "required": false
+"permissions": {}
+'''
+        roots = ['"jobs":']
+    elif name == "pr-guidance.yml":
+        header += '''"name": "Advisory PR guidance"
+"on":
+  "workflow_call": {}
 "permissions": {}
 '''
         roots = ['"jobs":']
@@ -377,7 +384,7 @@ def workflows(root, profile):
         raise ValueError("Missing or unsafe workflows directory")
     allowed = {"pr.yml", "release.yml"}
     if profile == ".github":
-        allowed.update(("governance.yml", "draft-release.yml"))
+        allowed.update(("governance.yml", "pr-guidance.yml", "draft-release.yml"))
     if any(file.name not in allowed for file in directory.iterdir()):
         raise ValueError("Unexpected workflow; use only the canonical consumers and shared reusables")
     pr = read(root, ".github/workflows/pr.yml")
@@ -398,7 +405,7 @@ def workflows(root, profile):
         if read(root, ".github/workflows/" + name) != expected:
             raise ValueError("Workflow differs from the canonical consumer: " + name)
     if profile == ".github":
-        for name in ("governance.yml", "draft-release.yml"):
+        for name in ("governance.yml", "pr-guidance.yml", "draft-release.yml"):
             if (directory / name).exists() or (directory / name).is_symlink():
                 _reusable_workflow(read(root, ".github/workflows/" + name), name)
 

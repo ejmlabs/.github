@@ -509,9 +509,9 @@ Guidance runs after command processing and after check finalization. The opt-in
 draft changes, reopening and closing using `pull_request_target`. These jobs
 use only the embedded trusted metadata renderer: no checkout, project code,
 model key, status mutation or command submission. They have PR-body write and
-status-read permission. The guided caller uses a separate `guidance` job for
-`pull_request_target` that passes no secrets and grants no status or actions
-write. Comment-triggered guidance runs only for owners, members and
+status-read permission. The guided caller uses a separate `guidance` job calling
+`pr-guidance.yml` for `pull_request_target` that passes no secrets and grants no
+status or actions write. Comment-triggered guidance runs only for owners, members and
 collaborators. Human admission and approval remain unchanged.
 
 Updates share a per-PR concurrency group and re-read the body and head before

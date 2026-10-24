@@ -1,4 +1,5 @@
 import copy
+import json
 import sys
 import tempfile
 import unittest
@@ -10,6 +11,33 @@ import build_workflows
 import standards
 
 SHA = 'a' * 40
+
+
+def workflow_jobs(text):
+    """Read job mappings and permissions from the generated YAML subset."""
+    jobs = {}
+    in_jobs, in_permissions = False, False
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith('#'):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent > 6:
+            continue
+        key, _, value = line.strip().partition(':')
+        key = json.loads(key) if key.startswith('"') else key
+        value = value.strip()
+        if indent == 0:
+            in_jobs = key == 'jobs'
+        elif in_jobs and indent == 2:
+            job = jobs[key] = {}
+            in_permissions = False
+        elif in_jobs and indent == 4:
+            in_permissions = key == 'permissions'
+            if key in ('permissions', 'uses'):
+                job[key] = json.loads(value) if value.startswith(('"', '{')) else value or {}
+        elif in_jobs and indent == 6 and in_permissions:
+            job['permissions'][key] = json.loads(value) if value.startswith('"') else value
+    return jobs
 
 
 def pr():
@@ -89,6 +117,40 @@ class GuidanceTests(unittest.TestCase):
             self.assertIn('prepare', jobs[name]['needs'])
             self.assertNotIn('always()', jobs[name]['if'])
 
+    def test_pr_guidance_reusable_has_only_the_minimal_trusted_job(self):
+        document = build_workflows.guidance_workflow()
+        self.assertEqual(document['on'], {'workflow_call': {}})
+        self.assertNotIn('secrets', document['on']['workflow_call'])
+        self.assertEqual(document['permissions'], {})
+        self.assertEqual(set(document['jobs']), {'guidance'})
+        self.assertNotIn('"uses":', json.dumps(document))
+        self.assertNotIn('secrets.', json.dumps(document))
+        job = document['jobs']['guidance']
+        self.assertEqual(job['permissions'], {'contents': 'read', 'pull-requests': 'write', 'statuses': 'read'})
+        self.assertEqual(job['if'], "${{ github.run_attempt == 1 && github.event_name == 'pull_request_target' && github.event.sender.type != 'Bot' }}")
+        self.assertEqual(job['timeout-minutes'], 2)
+        self.assertNotIn('needs', job)
+        for name in ('guidance', 'guidance_finish'):
+            original = build_workflows.governance()['jobs'][name]
+            self.assertEqual(job['steps'], original['steps'])
+            self.assertEqual(job['concurrency'], original['concurrency'])
+
+    def test_guided_callers_grant_every_permission_requested_by_their_reusables(self):
+        jobs = workflow_jobs(standards.guided_consumer_workflows(SHA)['pr.yml'])
+        self.assertEqual(set(jobs), {'governance', 'guidance'})
+        levels = {'none': 0, 'read': 1, 'write': 2}
+        root = Path(__file__).resolve().parents[1]
+        for caller_name, caller in jobs.items():
+            target, revision = caller['uses'].split('@')
+            self.assertEqual(revision, SHA)
+            called = workflow_jobs((root / target.removeprefix('ejmlabs/.github/')).read_text())
+            self.assertTrue(called)
+            for name, job in called.items():
+                for permission, requested in job.get('permissions', {}).items():
+                    with self.subTest(caller=caller_name, job=name, permission=permission):
+                        granted = caller.get('permissions', {}).get(permission, 'none')
+                        self.assertLessEqual(levels[requested], levels[granted])
+
     def test_guided_caller_is_opt_in_and_pinned(self):
         old = standards.consumer_workflows(SHA)
         new = standards.guided_consumer_workflows(SHA)
@@ -99,8 +161,9 @@ class GuidanceTests(unittest.TestCase):
         governance, guided = new['pr.yml'].split('\n  governance:\n', 1)[1].split('\n  guidance:\n', 1)
         self.assertIn("if: ${{ github.event_name == 'issue_comment' && github.event.issue.pull_request }}", governance)
         self.assertIn('    secrets:\n', governance)
+        self.assertEqual(governance.replace("github.event_name == 'issue_comment' && ", '') + '\n', old['pr.yml'].split('  governance:\n', 1)[1])
         self.assertIn("if: ${{ github.event_name == 'pull_request_target' }}", guided)
-        self.assertIn('governance.yml@' + SHA, guided)
+        self.assertIn('pr-guidance.yml@' + SHA, guided)
         self.assertNotIn('secrets', guided)
         self.assertNotIn('actions:', guided)
         self.assertNotIn('statuses: write', guided)
@@ -117,12 +180,16 @@ class GuidanceTests(unittest.TestCase):
             standards.workflows(root, 'ejm-cli')
             leaked = docs['pr.yml'] + '    secrets:\n      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}\n'
             widened = docs['pr.yml'].replace('      statuses: read\n', '      statuses: write\n      actions: write\n')
-            for text in (leaked, widened):
+            old_target = docs['pr.yml'].replace('/pr-guidance.yml@', '/governance.yml@')
+            different_pin = docs['pr.yml'].replace('pr-guidance.yml@' + SHA, 'pr-guidance.yml@' + 'b' * 40)
+            mutable_pin = docs['pr.yml'].replace('pr-guidance.yml@' + SHA, 'pr-guidance.yml@main')
+            for text in (leaked, widened, old_target, different_pin, mutable_pin):
                 (directory / 'pr.yml').write_text(text)
                 with self.assertRaises(ValueError):
                     standards.workflows(root, 'ejm-cli')
 
     def test_comment_guidance_is_limited_to_maintainers(self):
         condition = build_workflows.governance()['jobs']['guidance']['if']
+        self.assertNotIn('pull_request_target', condition)
         comment = condition.split("github.event_name == 'issue_comment'", 1)[1]
         self.assertTrue(comment.startswith(" && contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association) && "))
