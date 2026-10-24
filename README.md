@@ -25,7 +25,7 @@ neither a published artifact nor a deployed site. See the
 
 - Python 3.11 or newer for policy checks and workflow generation.
 - GitHub Actions and a plan that supports the required repository protections.
-- A review model key stored as the `XAI_API_KEY` secret for the two review passes.
+- The review model key secret named in the trusted workflow for the two review passes.
 - The pinned tools required by the selected product's Quality gate.
 
 Public dependencies need no private repository token. Keep dependency source
