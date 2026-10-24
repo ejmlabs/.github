@@ -306,6 +306,8 @@ def _reusable_workflow(text, name, *, model_key="XAI_API_KEY"):
 '''
     structural = []
     local_uses = []
+    parents = []
+    environments = []
     block = None
     for number, line in enumerate(text.splitlines()):
         structural.append("")
@@ -316,6 +318,8 @@ def _reusable_workflow(text, name, *, model_key="XAI_API_KEY"):
         if block is not None and indent > block:
             continue
         block = None
+        while parents and indent <= parents[-1][0]:
+            parents.pop()
         structural[-1] = line
         if stripped == "-":
             continue
@@ -328,7 +332,10 @@ def _reusable_workflow(text, name, *, model_key="XAI_API_KEY"):
             key, value = json.loads(field[1]), field[2]
             if json.dumps(key) != field[1]:
                 raise ValueError("Reusable workflow has a noncanonical key: " + name)
+        if key == "environment" and len(parents) == 2 and parents[0][1] == "jobs":
+            environments.append(line)
         if value is None:
+            parents.append((indent, key))
             continue
         if value == "|":
             block = indent
@@ -342,10 +349,18 @@ def _reusable_workflow(text, name, *, model_key="XAI_API_KEY"):
             elif not isinstance(scalar, str) or not re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", scalar):
                 raise ValueError("Reusable workflow action must use an immutable SHA or the scoped CLI setup hook: " + name)
 
+    visible = "\n".join(structural) + "\n"
+    if name == "governance.yml":
+        review = re.findall(r'(?ms)^  "ai":\n(.*?)(?=^  "[^\"]+":|\Z)', visible)
+        expected = '    "environment": "legacy-review"'
+        if len(review) != 1 or environments != [expected] or expected not in review[0].splitlines():
+            raise ValueError("Only the review job must declare the legacy-review environment: " + name)
+    elif environments:
+        raise ValueError("Only the governance review job may declare an environment: " + name)
+
     if local_uses:
         # Comments and literal block contents are data. Bind the exception to
         # the actual quality.steps entry and its uses line, never a lookalike.
-        visible = "\n".join(structural) + "\n"
         quality = re.search(r'(?ms)^  "quality":\n(.*?)(?=^  "[^\"]+":|\Z)', visible)
         steps = re.search(r'(?ms)^    "steps":\n(.*?)(?=^    "[^\"]+":|\Z)', quality[1]) if quality else None
         hook = re.search(r'(?m)^' + re.escape(cli_setup) + r'(?=^      -\n|\Z)', steps[1]) if steps else None

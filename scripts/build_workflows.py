@@ -227,6 +227,7 @@ exit 0
 """
     ai = {
         "needs": ["admission", "prepare"], "if": "${{ github.run_attempt == 1 && needs.admission.outputs.run == 'true' }}", "runs-on": "ubuntu-24.04", "timeout-minutes": REVIEWER_JOB_TIMEOUT_MINUTES,
+        "environment": "legacy-review",
         "permissions": {"contents": "read", "pull-requests": "read", "statuses": "read"}, "env": ENV,
         "strategy": {"fail-fast": False, "max-parallel": 1, "matrix": {"pass": [1, 2]}},
         "steps": [REJECT_DEBUG, VERIFY, ARTIFACT,
