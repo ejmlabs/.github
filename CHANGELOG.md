@@ -6,6 +6,7 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Added
 
+- Accept exactly one supported review model key name in canonical workflows; reject extra, unknown or fallback key forwarding.
 - Optional public UI source assembly from protected-main commit pins, with
   static reviewer source and credential-free consumer installation.
 - Shared repository standards, explicit human admission, protected merge gates, two-pass Codex review, and a draft source release pipeline.

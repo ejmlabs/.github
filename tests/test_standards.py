@@ -116,8 +116,12 @@ class WorkflowTests(unittest.TestCase):
         (self.directory / name).write_text(text)
         return text
 
-    def reusable(self):
+    def reusable(self, *, model_key="OPENAI_API_KEY"):
         data = governance()
+        data["on"]["workflow_call"]["secrets"] = {
+            model_key if key == "OPENAI_API_KEY" else key: value
+            for key, value in data["on"]["workflow_call"]["secrets"].items()
+        }
         data["jobs"] = {"check": {"runs-on": "ubuntu-24.04", "steps": [{"uses": "actions/checkout@" + self.revision}]}}
         return self.add_reusable("governance.yml", data)
 
@@ -132,6 +136,76 @@ class WorkflowTests(unittest.TestCase):
             for revision in (None, 1, "a" * 39, "a" * 41, "A" * 40, "a" * 40 + "\n", "main"):
                 with self.subTest(caller=caller.__name__, revision=revision), self.assertRaises(ValueError):
                     caller(revision)
+
+    def test_callers_and_shared_scaffold_accept_either_model_key(self):
+        for model_key in ("OPENAI_API_KEY", "XAI_API_KEY"):
+            for caller in (consumer_workflows, missing_model_key_workflows):
+                with self.subTest(model_key=model_key, caller=caller.__name__):
+                    for name, text in caller(self.revision, model_key=model_key).items():
+                        (self.directory / name).write_text(text)
+                    self.reusable(model_key=model_key)
+                    workflows(self.root, ".github")
+                    (self.directory / "governance.yml").unlink()
+                    if caller is consumer_workflows:
+                        workflows(self.root, "ejm-cli")
+                    else:
+                        with self.assertRaises(ValueError):
+                            workflows(self.root, "ejm-cli")
+
+    def test_callers_cannot_render_unsupported_model_keys(self):
+        for caller in (consumer_workflows, missing_model_key_workflows):
+            for model_key in ("MODEL_API_KEY", "", None, "OPENAI_API_KEY || XAI_API_KEY"):
+                with self.subTest(caller=caller.__name__, model_key=model_key), self.assertRaises(ValueError):
+                    caller(self.revision, model_key=model_key)
+
+    def test_callers_reject_extra_unknown_and_indirect_model_keys(self):
+        for model_key, other_key in (("OPENAI_API_KEY", "XAI_API_KEY"), ("XAI_API_KEY", "OPENAI_API_KEY")):
+            for caller in (consumer_workflows, missing_model_key_workflows):
+                original = caller(self.revision, model_key=model_key)["pr.yml"]
+                line = "      " + model_key + ": ${{ secrets." + model_key + " }}\n"
+                extra = "      " + other_key + ": ${{ secrets." + other_key + " }}\n"
+                mutations = {
+                    "both model keys": original.replace(line, line + extra),
+                    "unknown model key": original.replace(model_key, "MODEL_API_KEY"),
+                    "fallback expression": original.replace("secrets." + model_key, "secrets." + model_key + " || secrets." + other_key),
+                    "different source key": original.replace("secrets." + model_key, "secrets." + other_key),
+                    "missing model key": original.replace(line, ""),
+                    "missing harness token": original.replace("      EJM_HARNESS_TOKEN: ${{ secrets.EJM_HARNESS_TOKEN }}\n", ""),
+                }
+                for case, text in mutations.items():
+                    with self.subTest(model_key=model_key, caller=caller.__name__, case=case):
+                        (self.directory / "pr.yml").write_text(text)
+                        with self.assertRaises(ValueError):
+                            workflows(self.root, ".github")
+
+    def test_shared_scaffold_rejects_extra_unknown_and_missing_model_keys(self):
+        for model_key, other_key in (("OPENAI_API_KEY", "XAI_API_KEY"), ("XAI_API_KEY", "OPENAI_API_KEY")):
+            for name, text in consumer_workflows(self.revision, model_key=model_key).items():
+                (self.directory / name).write_text(text)
+            original = self.reusable(model_key=model_key)
+            declaration = '      "' + model_key + '":\n        "required": false\n'
+            extra = '      "' + other_key + '":\n        "required": false\n'
+            mutations = {
+                "both model keys": original.replace(declaration, declaration + extra),
+                "unknown model key": original.replace(model_key, "MODEL_API_KEY"),
+                "missing model key": original.replace(declaration, ""),
+                "missing harness token": original.replace('      "EJM_HARNESS_TOKEN":\n        "required": false\n', ""),
+            }
+            for case, text in mutations.items():
+                with self.subTest(model_key=model_key, case=case):
+                    (self.directory / "governance.yml").write_text(text)
+                    with self.assertRaises(ValueError):
+                        workflows(self.root, ".github")
+
+    def test_shared_scaffold_and_own_callers_must_use_the_same_model_key(self):
+        for model_key, other_key in (("OPENAI_API_KEY", "XAI_API_KEY"), ("XAI_API_KEY", "OPENAI_API_KEY")):
+            self.reusable(model_key=model_key)
+            for caller in (consumer_workflows, missing_model_key_workflows):
+                with self.subTest(model_key=model_key, caller=caller.__name__):
+                    for name, text in caller(self.revision, model_key=other_key).items():
+                        (self.directory / name).write_text(text)
+                    with self.assertRaises(ValueError):
+                        workflows(self.root, ".github")
 
     def test_missing_model_key_caller_is_accepted_only_for_the_shared_profile(self):
         profiles = (".github", "ejm-cli", "ejm-harness", "ejm-ide", "ejmlabs")
