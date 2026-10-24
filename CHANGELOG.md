@@ -4,7 +4,7 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ## [Unreleased]
 
-- Generate current-head PR next-action guidance from live metadata. Add opt-in caller support; consumer adoption remains separate.
+- Generate current-head PR next-action guidance from live metadata. After merge and validator pin adoption, a follow-up PR generates and adds `pr-guidance.yml`; consumers adopt the opt-in guided caller only at a pin containing that file.
 
 
 ### Added

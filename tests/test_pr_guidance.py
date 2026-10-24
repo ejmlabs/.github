@@ -139,12 +139,12 @@ class GuidanceTests(unittest.TestCase):
         jobs = workflow_jobs(text)
         self.assertEqual(set(jobs), {'governance', 'guidance'})
         levels = {'none': 0, 'read': 1, 'write': 2}
-        root = Path(__file__).resolve().parents[1]
+        rendered = build_workflows.render_workflows()
         violations = []
         for caller_name, caller in jobs.items():
             target, revision = caller['uses'].split('@')
             self.assertEqual(revision, SHA)
-            called = workflow_jobs((root / target.removeprefix('ejmlabs/.github/')).read_text())
+            called = workflow_jobs(rendered[target.rsplit('/', 1)[1]])
             self.assertTrue(called)
             for name, job in called.items():
                 for permission, requested in job.get('permissions', {}).items():
@@ -171,6 +171,7 @@ class GuidanceTests(unittest.TestCase):
         old = standards.consumer_workflows(SHA)
         new = standards.guided_consumer_workflows(SHA)
         self.assertNotIn('pull_request_target', old['pr.yml'])
+        self.assertNotIn('pr-guidance.yml', old['pr.yml'])
         self.assertIn('pull_request_target', new['pr.yml'])
         self.assertIn('governance.yml@' + SHA, new['pr.yml'])
         self.assertEqual(new['release.yml'], old['release.yml'])

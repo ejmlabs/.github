@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import build_workflows as workflows
@@ -16,6 +17,24 @@ import build_workflows as workflows
 def embedded_source(script):
     match = re.search(r"base64\.b64decode\('([A-Za-z0-9+/=]+)'\)", script)
     return base64.b64decode(match[1], validate=True).decode() if match else None
+
+
+class WorkflowGenerationTests(unittest.TestCase):
+    def test_staged_workflows_are_rendered_but_not_published_or_required_by_check(self):
+        rendered = workflows.render_workflows()
+        self.assertEqual(workflows.STAGED_WORKFLOWS, {"pr-guidance.yml"})
+        self.assertIn(workflows.yaml(workflows.guidance_workflow()), rendered["pr-guidance.yml"])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(workflows, "ROOT", root), patch.object(workflows, "render_workflows", return_value=rendered):
+                with patch.object(sys, "argv", ["build_workflows.py"]):
+                    workflows.main()
+                published = root / ".github/workflows"
+                self.assertEqual({path.name for path in published.iterdir()}, set(rendered) - workflows.STAGED_WORKFLOWS)
+                for name in set(rendered) - workflows.STAGED_WORKFLOWS:
+                    self.assertEqual((published / name).read_text(), rendered[name])
+                with patch.object(sys, "argv", ["build_workflows.py", "--check"]):
+                    workflows.main()
 
 
 class WorkflowSecurityTests(unittest.TestCase):

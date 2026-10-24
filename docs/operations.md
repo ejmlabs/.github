@@ -521,9 +521,11 @@ still race. The next PR event reconciles guidance. It is advisory, never proof
 of admission, approval or release. GitHub's protected merge checks remain final.
 
 Adopt in stages: merge this implementation and validator under the existing
-caller, retain its reviewed source context, update consumer pins to that exact
-commit, then install the generated guided caller under the now-capable trusted
-validator. Existing pinned callers do not gain creation/push refresh until
-that adoption is complete. The shared missing-model-key acceptance caller is
+caller, retain its reviewed source context, then move the trusted validator pin
+to that exact commit. A follow-up PR removes `pr-guidance.yml` from
+`STAGED_WORKFLOWS` in `scripts/build_workflows.py`, generates and adds the file.
+Consumers adopt the generated guided caller only after moving to a pin that
+contains `pr-guidance.yml`. Existing pinned callers do not gain creation/push
+refresh until that adoption is complete. The shared missing-model-key acceptance caller is
 unchanged; remove that fixture through its own reviewed change before adopting
 the guided shared caller. No additional model runs are started by guidance.
