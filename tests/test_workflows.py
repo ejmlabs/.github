@@ -175,6 +175,8 @@ class WorkflowSecurityTests(unittest.TestCase):
             "docs worker": ({"docs/app/worker.ts": "export {}\n"}, 1),
             "docs wrangler": ({"docs/wrangler.jsonc": "{}\n"}, 1),
             "github source": ({".github/src/main.rs": "fn main() {}\n"}, 1),
+            "nested issue template source": ({".github/ISSUE_TEMPLATE/app/worker.ts": "export {}\n"}, 1),
+            "nested workflow": ({".github/workflows/sub/x.yml": "name: PR\n"}, 1),
             "docs source": ({"docs/x.ts": "export {}\n"}, 1),
             "github script": ({".github/x.js": "export {}\n"}, 1),
             "openspec source": ({"openspec/x.py": "pass\n"}, 1),
