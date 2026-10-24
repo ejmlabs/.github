@@ -10,9 +10,11 @@ from urllib.parse import unquote
 
 HEADINGS = ("Overview", "Status", "Requirements", "Quick start", "Usage", "Development", "Documentation", "Contributing", "Security", "Support", "License")
 DOCS = ("README.md", "CONTRIBUTING.md", "SECURITY.md", "SUPPORT.md", "CODE_OF_CONDUCT.md", "RELEASING.md", "THIRD_PARTY_NOTICES.md", "CHANGELOG.md", "LICENSE")
-COMMUNITY_GUIDES = {"ejm-cli": "docs/contributing.md", "ejm-harness": "docs/contributing.md", "ejm-ide": "docs/development.md", "ejmlabs": "site/README.md", ".github": "docs/operations.md", "ejm-ui": "README.md#development"}
+COMMUNITY_GUIDES = {"ejm-chess": "README.md#development", "ejm-cli": "docs/contributing.md", "ejm-harness": "docs/contributing.md", "ejm-ide": "docs/development.md", "ejmlabs": "site/README.md", ".github": "docs/operations.md", "ejm-ui": "README.md#development"}
 UI_PACKAGES = tuple("packages/" + name for name in ("core", "demos", "ink", "shots", "site", "ssg", "tokens", "ui"))
 VERSIONS = {
+    # No package manifest until the Workers application has code. VERSION is canonical.
+    "ejm-chess": (),
     "ejm-cli": (("Cargo.toml", "workspace.package.version"),),
     "ejm-harness": (("Cargo.toml", "workspace.package.version"), ("sdk/typescript/package.json", "version"), ("sdk/python/pyproject.toml", "project.version"), ("registry/Cargo.toml", "package.version")),
     "ejm-ide": (("package.json", "version"), ("package-lock.json", "version"), ("src-tauri/Cargo.toml", "package.version"), ("src-tauri/tauri.conf.json", "version")),

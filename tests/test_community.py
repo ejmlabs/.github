@@ -19,6 +19,16 @@ class CommunityPolicyTests(unittest.TestCase):
             support = (Path(directory) / "SUPPORT.md").read_text()
             self.assertIn("https://github.com/ejmlabs/ejm-ui/issues", support)
 
+    def test_chess_sync_targets_its_readme_development_guide(self):
+        script = Path(__file__).resolve().parents[1] / "scripts/sync_community.py"
+        with tempfile.TemporaryDirectory() as directory:
+            subprocess.run([sys.executable, str(script), directory, "ejm-chess"], check=True, capture_output=True)
+            subprocess.run([sys.executable, str(script), directory, "ejm-chess", "--check"], check=True, capture_output=True)
+            text = (Path(directory) / "CONTRIBUTING.md").read_text()
+            self.assertIn("README.md#development", text)
+            support = (Path(directory) / "SUPPORT.md").read_text()
+            self.assertIn("https://github.com/ejmlabs/ejm-chess/issues", support)
+
     def test_rendered_guidance_accepts_only_the_pinned_policy(self):
         template = "See {{development_guide}} in {{repository}}.\nHuman approval is required.\n"
         with tempfile.TemporaryDirectory() as directory:

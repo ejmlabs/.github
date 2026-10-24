@@ -325,7 +325,7 @@ class HarnessSelectionTests(unittest.TestCase):
             base_pin.symlink_to("../../product/.github/harness-revision")
             with self.assertRaises(ValueError):
                 prepare.select_harness("ejm-ide", self.HEAD, self.BASE, "unused")
-            for profile in ("ejm-harness", "ejmlabs", "ejm-ui"):
+            for profile in ("ejm-chess", "ejm-harness", "ejmlabs", "ejm-ui"):
                 self.assertIsNone(prepare.select_harness(profile, self.HEAD, self.BASE, "unused"))
             api.assert_not_called()
 

@@ -7,6 +7,13 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 ### Added
 
 - Accept exactly one supported review model key name in canonical workflows; reject extra, unknown or fallback key forwarding.
+- Govern `ejm-chess` as a public repository profile. Its version source is
+  `VERSION`, its contributor guide is `README.md#development`, and its quality
+  gate succeeds only while the tree holds documentation alone. Any other
+  file makes Quality fail closed until a real recipe is added here.
+  `configure_repositories.py` can select the repository without adding it to
+  the default settings rollout. Apply and read back its settings baseline
+  before installing callers or exposing the review model key.
 - Optional public UI source assembly from protected-main commit pins, with
   static reviewer source and credential-free consumer installation.
 - Shared repository standards, explicit human admission, protected merge gates, two-pass independent automated review, and a draft source release pipeline.
@@ -30,6 +37,10 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 ### Fixed
 
 - Confine the review model key to a protected environment restricted to main.
+- Reject duplicate review fields and key-like text in raw and decoded JSON,
+  including escaped markers, strings, and field names. Reports remain local.
+- Allow exact-head human revocation after a PR head repository is deleted or
+  becomes a fork; automated admission and finalization still reject those PRs.
 - Keep debug guards in the first workflow steps with valid job conditions.
   Isolate reviewer installation from caches and workspace configuration, remove
   linked source entries, reject silently excluded text changes, and tighten

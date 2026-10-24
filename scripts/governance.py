@@ -8,7 +8,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-REPOS = {"ejmlabs/" + name for name in (".github", "ejmlabs", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui")}
+REPOS = {"ejmlabs/" + name for name in (".github", "ejmlabs", "ejm-chess", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui")}
 CONTEXTS = ("Human readiness", "Maintainer approval", "Quality", "Repository standards", "AI review")
 COMMAND = re.compile(r"^/(ready|approve|revoke) ([0-9a-f]{40})$")
 
@@ -24,9 +24,16 @@ def human(user, permission):
     return user.get("type") == "User" and permission in {"admin", "maintain"}
 
 
+def same_repository(pr):
+    return (pr["head"].get("repo") or {}).get("full_name") == pr["base"]["repo"]["full_name"]
+
+
+def current_head(pr, sha):
+    return pr["state"] == "open" and not pr.get("draft") and pr["base"]["ref"] == "main" and pr["head"]["sha"] == sha
+
+
 def current_pr(pr, sha):
-    return (pr["state"] == "open" and not pr.get("draft") and pr["base"]["ref"] == "main" and pr["head"]["sha"] == sha
-            and pr["head"].get("repo") is not None and pr["head"]["repo"]["full_name"] == pr["base"]["repo"]["full_name"])
+    return current_head(pr, sha) and same_repository(pr)
 
 
 class GitHub:
@@ -101,7 +108,7 @@ def live_ready(api, number, sha, comment_id):
     first_attempt()
     pr = api.request(f"/pulls/{number}")
     if not current_pr(pr, sha):
-        raise ValueError("PR head changed, PR is a draft, or PR no longer targets main")
+        raise ValueError("PR head changed, PR is a draft, PR no longer targets main, or PR is not a same-repository branch")
     live_decision(api, number, sha, comment_id, "ready")
     status = api.statuses(sha).get("Human readiness", {})
     marker = f"[ready:{comment_id}]"
@@ -161,13 +168,13 @@ def admit(api, event):
     if sender["login"] != user["login"] or not human(user, api.permission(user["login"])):
         raise ValueError("A command must be posted by the human maintainer who authorizes it")
     action, requested = command(comment["body"])
-    if pr["head"].get("repo") is None or pr["head"]["repo"]["full_name"] != pr["base"]["repo"]["full_name"]:
-        raise ValueError("Fork PRs require manual review instead of automated admission")
-    if not current_pr(pr, requested):
+    if not current_head(pr, requested):
         raise ValueError("Command must name the current non-draft PR head targeting main")
     if action == "revoke":
         invalidate(api, number, sha, "Revoked by a current human maintainer")
         return
+    if not same_repository(pr):
+        raise ValueError("Fork PRs require manual review; Fork PRs cannot be admitted automatically")
     if action == "approve":
         ready = api.statuses(sha).get("Human readiness", {})
         ready_id = re.search(r"\[ready:(\d+)\]", ready.get("description", ""))

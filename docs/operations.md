@@ -81,6 +81,13 @@ cannot prove correctness, so human review and the other gates remain necessary.
 Older pinned revisions do not gain new validation automatically.
 Metadata-only PRs remain fail-closed and require a human review.
 
+Each pass validates its exact head, pass number, completion, schema, size and
+key-like text. The scan checks decoded JSON strings and field names as well as
+the raw bytes, so escapes cannot hide key-like text. Duplicate JSON fields are
+rejected. Invalid, incomplete, oversized or key-like output fails the review.
+This check does not detect every secret format; keep credentials and private
+data out of review input.
+
 Builds receive no model key, source-read secret, deployment credential or
 write token. Never reuse a cache produced by PR code in a privileged job.
 The review step clears inherited repository token variables. Only that step
@@ -340,6 +347,43 @@ lifecycle scripts disabled before `./scripts/check`. Root ESLint includes
 registry sources. The separate registry gate checks native, WebAssembly,
 schema, auth and build behavior. Keep the product guide and its check script
 in sync when those prerequisites change.
+
+## ejm-chess profile
+
+`ejm-chess` is part of the governed public set, with the same human admission,
+required statuses, and caller rules as ejm-cli and ejm-harness. It is a
+Cloudflare Workers TypeScript application. The repository has no application
+code yet; the current work is an OpenSpec plan. The contributor guide is
+`README.md#development`. The canonical version is `VERSION` (0.1.0). Package
+manifests are not version sources until the application exists, because there
+is no package to keep in lockstep.
+
+Quality uses the default Ubuntu 24.04 job. It does not install the Rust
+toolchain or Cargo audit tools used by the Rust profiles. While the tree holds
+only documentation (`.github/`, `openspec/`, `docs/`, Markdown files, root
+`VERSION`, `LICENSE`, `.gitignore` and `.gitattributes`), the project command
+succeeds without running a package, test, or Workers build. The job still runs
+the shared Node and uv setup steps. Any other file, `wrangler.jsonc` included,
+makes Quality fail closed and report that the recipe must be added in
+ejmlabs/.github.
+
+The profile does not select private harness source. It is not part of the
+default settings rollout (`.github`, `ejmlabs`, `ejm-cli`, `ejm-harness`, and
+`ejm-ide`). `configure_repositories.py` accepts `--repository ejm-chess` as an
+explicit opt-in. Apply that settings baseline and read it back before any
+`pr.yml` is installed and before `XAI_API_KEY` is made visible to the
+repository. The baseline is selected actions with SHA pinning required, a
+read-only default workflow token, fork pull-request approval for all external
+contributors, and `main` protected with the five required statuses and strict
+checks.
+
+## Community policy adoption
+
+The proposed contributor wording and repository-specific private reporting
+routes are staged in `templates/community-next/`. The current caller pin still
+embeds the existing community templates and requires an exact match, so the
+canonical templates and installed guides retain that policy. Activate the
+staged policies through a separate reviewed caller and policy adoption.
 
 ## Missing model key acceptance staging
 
