@@ -70,6 +70,9 @@ class WorkflowSecurityTests(unittest.TestCase):
         cls.release = workflows.release_workflow()
 
     def test_own_callers_match_the_secrets_declared_at_their_pinned_revisions(self):
+        repository = subprocess.run(["git", "rev-parse", "--git-dir"], cwd=workflows.ROOT, capture_output=True)
+        if repository.returncode:
+            self.skipTest("Pinned caller secrets require Git metadata; this source extract is not a Git repository")
         for filename in ("pr.yml", "release.yml"):
             caller = (workflows.ROOT / ".github/workflows" / filename).read_text()
             jobs = dict(re.findall(r"(?ms)^  ([\w-]+):\n(.*?)(?=^  \S|\Z)", caller.split("\njobs:\n", 1)[1]))
@@ -439,12 +442,15 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertNotRegex(caller, r"(?m)^\s+(?:pull_request|pull_request_target):")
 
     def test_tracked_sources_exclude_retired_review_configuration(self):
-        files = subprocess.run(["git", "ls-files", "-z"], cwd=workflows.ROOT, check=True, capture_output=True).stdout
+        repository = subprocess.run(["git", "rev-parse", "--git-dir"], cwd=workflows.ROOT, capture_output=True)
+        if repository.returncode:
+            files = [path.relative_to(workflows.ROOT).as_posix() for path in workflows.ROOT.rglob("*")
+                     if path.is_file() and "__pycache__" not in path.relative_to(workflows.ROOT).parts]
+        else:
+            tracked = subprocess.run(["git", "ls-files", "-z"], cwd=workflows.ROOT, check=True, capture_output=True).stdout
+            files = [os.fsdecode(raw) for raw in tracked.split(b"\0") if raw]
         retired = ("codex" + "-action", "OPENAI" + "_API_KEY", "OPENAI" + "__")
-        for raw in files.split(b"\0"):
-            if not raw:
-                continue
-            name = os.fsdecode(raw)
+        for name in files:
             if name.startswith(".github/review-context/") or name == "review/reviewer-requirements.txt":
                 continue
             content = (workflows.ROOT / name).read_bytes()
@@ -490,6 +496,12 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertEqual(self.governance["on"]["workflow_call"]["secrets"]["XAI_API_KEY"], {"required": False})
         self.assertNotIn("OPENAI" + "_API_KEY", json.dumps(self.governance))
         self.assertIn("if os.environ['HAS_MODEL_KEY'] != 'true': raise ValueError", guard["run"])
+
+    def test_only_the_review_job_declares_the_protected_environment(self):
+        environments = [(document["name"], name, job["environment"])
+                        for document in (self.governance, self.release)
+                        for name, job in document["jobs"].items() if "environment" in job]
+        self.assertEqual(environments, [(self.governance["name"], "ai", "legacy-review")])
 
     def test_review_settings_keep_coverage_spending_and_log_limits(self):
         self.assertEqual(workflows.REVIEW_TOKEN_CAPS, {"T0": 32000, "T1": 64000, "T2": 128000, "T3": 160000})

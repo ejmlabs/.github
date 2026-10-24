@@ -29,6 +29,7 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Fixed
 
+- Confine the review model key to a protected environment restricted to main.
 - Keep debug guards in the first workflow steps with valid job conditions.
   Isolate reviewer installation from caches and workspace configuration, remove
   linked source entries, reject silently excluded text changes, and tighten
