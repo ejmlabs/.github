@@ -1,4 +1,5 @@
 import copy
+import json
 import os
 import sys
 import tempfile
@@ -17,7 +18,7 @@ TIMESTAMP = "2026-10-19T00:00:00Z"
 class API:
     def __init__(self):
         self.repo = "ejmlabs/ejm-cli"
-        self.pr = {"state": "open", "draft": False, "head": {"sha": SHA}, "base": {"ref": "main", "sha": "b" * 40}, "changed_files": 5, "additions": 20, "deletions": 4}
+        self.pr = {"state": "open", "draft": False, "head": {"sha": SHA, "repo": {"full_name": self.repo}}, "base": {"ref": "main", "sha": "b" * 40, "repo": {"full_name": self.repo}}, "changed_files": 5, "additions": 20, "deletions": 4}
         self.comments = {7: {"user": copy.deepcopy(USER), "body": "/ready " + SHA, "issue_url": "https://api.github.com/repos/ejmlabs/ejm-cli/issues/1", "html_url": "https://github.com/ejmlabs/ejm-cli/issues/1#issuecomment-7", "created_at": TIMESTAMP, "updated_at": TIMESTAMP}}
         self.log = []
         self.role = "maintain"
@@ -113,6 +114,89 @@ class AdmissionTests(unittest.TestCase):
         os.environ["GITHUB_RUN_ATTEMPT"] = "2"
         with self.assertRaises(ValueError): admit(API(), self.event)
 
+    def test_same_repo_pr_is_admitted_and_verified(self):
+        self.assertTrue(current_pr(self.api.pr, SHA))
+        admit(self.api, self.event)
+        self.assertEqual(self.api.statuses(SHA)["Human readiness"]["state"], "success")
+        self.assertIn("run=true", Path(os.environ["GITHUB_OUTPUT"]).read_text())
+        self.assertEqual(live_ready(self.api, 1, SHA, 7), self.api.pr)
+
+    def test_automated_results_never_approve_and_only_ai_success_passes_its_gate(self):
+        for state in ("success", "failure", "cancelled", "skipped", None):
+            with self.subTest(state=state):
+                self.api = API()
+                admit(self.api, self.event)
+                self.assertEqual(self.api.statuses(SHA)["AI review"]["state"], "pending")
+                self.finish_environment()
+                results = json.loads(os.environ["JOB_RESULTS"])
+                if state is None:
+                    results.pop("ai")
+                else:
+                    results["ai"]["result"] = state
+                os.environ["JOB_RESULTS"] = json.dumps(results)
+                finish(self.api)
+                statuses = self.api.statuses(SHA)
+                self.assertEqual(statuses["AI review"]["state"], "success" if state == "success" else "failure")
+                terminal = [status for status in self.api.log if status["context"] == "AI review"
+                            and status["state"] in ("success", "failure")]
+                self.assertEqual(len(terminal), 1)
+                self.assertEqual(statuses["Maintainer approval"]["state"], "pending")
+                self.assertFalse(self.api.reviews)
+
+    def test_finish_replaces_an_old_review_before_publishing_other_successes(self):
+        self.api.status(SHA, "AI review", "success", "Previous admitted review")
+        admit(self.api, self.event)
+        self.finish_environment()
+        results = json.loads(os.environ["JOB_RESULTS"])
+        results["ai"]["result"] = "failure"
+        os.environ["JOB_RESULTS"] = json.dumps(results)
+        status = self.api.status
+
+        def publish(sha, context, state, description):
+            if context in ("Quality", "Repository standards") and state == "success":
+                self.assertEqual(self.api.statuses(sha)["AI review"]["state"], "failure")
+            status(sha, context, state, description)
+
+        self.api.status = publish
+        finish(self.api)
+
+    def test_readmission_resets_old_successes_before_a_run_can_be_cancelled(self):
+        admit(self.api, self.event)
+        self.finish_environment()
+        finish(self.api)
+        self.assertEqual(self.api.statuses(SHA)["AI review"]["state"], "success")
+        revoke = copy.deepcopy(self.event)
+        revoke["comment"].update(id=9, body="/revoke " + SHA)
+        admit(self.api, revoke)
+        readmit = copy.deepcopy(self.event)
+        readmit["comment"].update(id=10, html_url="https://github.com/ejmlabs/ejm-cli/issues/1#issuecomment-10")
+        self.api.comments[10] = copy.deepcopy(readmit["comment"])
+        admit(self.api, readmit)
+        # A cancelled run may never call finish; its old review must stay blocked.
+        for context in ("Maintainer approval", "Quality", "Repository standards", "AI review"):
+            self.assertEqual(self.api.statuses(SHA)[context]["state"], "pending")
+
+    def test_admit_rejects_fork_and_deleted_fork_heads_with_manual_review_message(self):
+        for repo in ({"full_name": "outside/ejm-cli"}, None):
+            with self.subTest(repo=repo):
+                api = API()
+                api.pr["head"]["repo"] = repo
+                with self.assertRaisesRegex(ValueError, "Fork PRs require manual review"):
+                    admit(api, self.event)
+                self.assertFalse(api.log)
+        self.assertNotIn("run=true", Path(os.environ["GITHUB_OUTPUT"]).read_text())
+
+    def test_verify_rejects_fork_and_deleted_fork_heads_after_admission(self):
+        admit(self.api, self.event)
+        before = copy.deepcopy(self.api.log)
+        for repo in ({"full_name": "outside/ejm-cli"}, None):
+            with self.subTest(repo=repo):
+                self.api.pr["head"]["repo"] = repo
+                self.assertFalse(current_pr(self.api.pr, SHA))
+                with self.assertRaises(ValueError):
+                    live_ready(self.api, 1, SHA, 7)
+                self.assertEqual(self.api.log, before)
+
     def test_replayed_jobs_cannot_verify_or_overwrite_completed_results(self):
         admit(self.api, self.event)
         admit(self.api, self.approval())
@@ -128,7 +212,7 @@ class AdmissionTests(unittest.TestCase):
         self.assertEqual(self.api.reviews[0]["state"], "APPROVED")
 
     def test_stale_heads_drafts_and_large_prs_cannot_admit(self):
-        for key, value in (("head", {"sha": "c" * 40}), ("draft", True), ("changed_files", 201), ("additions", 12001)):
+        for key, value in (("head", {"sha": "c" * 40, "repo": {"full_name": self.api.repo}}), ("draft", True), ("changed_files", 201), ("additions", 12001)):
             api = API()
             api.pr[key] = value
             with self.assertRaises(ValueError): admit(api, self.event)

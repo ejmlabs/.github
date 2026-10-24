@@ -25,7 +25,8 @@ def human(user, permission):
 
 
 def current_pr(pr, sha):
-    return pr["state"] == "open" and not pr.get("draft") and pr["base"]["ref"] == "main" and pr["head"]["sha"] == sha
+    return (pr["state"] == "open" and not pr.get("draft") and pr["base"]["ref"] == "main" and pr["head"]["sha"] == sha
+            and pr["head"].get("repo") is not None and pr["head"]["repo"]["full_name"] == pr["base"]["repo"]["full_name"])
 
 
 class GitHub:
@@ -160,6 +161,8 @@ def admit(api, event):
     if sender["login"] != user["login"] or not human(user, api.permission(user["login"])):
         raise ValueError("A command must be posted by the human maintainer who authorizes it")
     action, requested = command(comment["body"])
+    if pr["head"].get("repo") is None or pr["head"]["repo"]["full_name"] != pr["base"]["repo"]["full_name"]:
+        raise ValueError("Fork PRs require manual review instead of automated admission")
     if not current_pr(pr, requested):
         raise ValueError("Command must name the current non-draft PR head targeting main")
     if action == "revoke":
@@ -196,6 +199,7 @@ def admit(api, event):
         raise ValueError("This commit is already admitted; revoke before an explicit fresh run")
     if pr["changed_files"] > 200 or pr["additions"] + pr["deletions"] > 12000:
         raise ValueError("PR exceeds review limits; split it before admission")
+    # Clear old successes even when a readmitted run never reaches finish.
     for context in CONTEXTS[1:]:
         api.status(sha, context, "pending", "Waiting for current human approval" if context == "Maintainer approval" else "Admitted checks queued")
     api.status(sha, "Human readiness", "success", f"[ready:{comment_id}] [run:{os.environ['GITHUB_RUN_ID']}] Human admitted this commit")
@@ -230,7 +234,8 @@ def finish(api):
     quality = all(results.get(job, {}).get("result") == "success" for job in ("quality", "registry"))
     standards = results.get("standards", {}).get("result") == "success"
     reviews = results.get("ai", {}).get("result") == "success"
-    for context, ok in (("Quality", quality), ("Repository standards", standards), ("AI review", reviews)):
+    # Publish the model job result before the other terminal check results.
+    for context, ok in (("AI review", reviews), ("Quality", quality), ("Repository standards", standards)):
         api.status(sha, context, "success" if ok else "failure", "Passed for admitted commit" if ok else "Failed, cancelled, missing, or incomplete")
 
 
