@@ -285,6 +285,9 @@ require only Contents read access. See GitHub's
 [branch API](https://docs.github.com/en/rest/branches/branches#get-a-branch) and
 [comparison API](https://docs.github.com/en/rest/commits/commits#compare-two-commits).
 
+This repository's root community files follow its pinned standard and are
+re-synced with `scripts/sync_community.py` in the pin adoption PR.
+
 ## Harness Linux keyring prerequisites
 
 The harness Quality profile installs `pkg-config` and `libdbus-1-dev` on Linux
