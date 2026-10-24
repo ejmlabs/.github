@@ -98,7 +98,7 @@ def governance():
                   run("Install Linux harness keyring build prerequisites", """sudo apt-get update
 sudo apt-get install --yes --no-install-recommends pkg-config libdbus-1-dev
 """, **{"if": "${{ needs.admission.outputs.profile == 'ejm-harness' && runner.os == 'Linux' }}"}),
-                  run("Install pinned Rust tools", """if [[ "$PROFILE" == ejm-* ]]; then
+                  run("Install pinned Rust tools", """if [[ "$PROFILE" == ejm-cli || "$PROFILE" == ejm-harness || "$PROFILE" == ejm-ide || "$PROFILE" == ejm-ui ]]; then
   rustup toolchain install 1.99.1 --profile minimal --component clippy,rustfmt
   rustup default 1.99.1
   if [[ "$PROFILE" != ejm-ui ]]; then
@@ -113,6 +113,7 @@ if [[ -d ../ejm-ui ]]; then
   npm --prefix ../ejm-ui ci --ignore-scripts
 fi
 case "$PROFILE" in
+  ejm-chess) if find . ! -type d ! -path './docs/*.md' ! -path './docs/*.yaml' ! -path './docs/*.yml' ! -path './openspec/*.md' ! -path './openspec/*.yaml' ! -path './openspec/*.yml' ! -path './.github/workflows/*.yml' ! -path './.github/ISSUE_TEMPLATE/*' ! -path ./.github/CODEOWNERS ! -path './.github/*.md' ! -name '*.md' ! -path ./VERSION ! -path ./LICENSE ! -path ./.gitignore ! -path ./.gitattributes | grep -q .; then echo "ejm-chess has application code; add its quality recipe in ejmlabs/.github" >&2; exit 1; fi ;;
   ejm-cli) ./scripts/check ;;
   ejm-harness) npm ci --ignore-scripts; npm --prefix registry ci --ignore-scripts; ./scripts/check ;;
   ejm-ide) npm ci --ignore-scripts; npm run verify; npm run site:check; npm run site:build ;;
@@ -178,22 +179,28 @@ context = json.loads((root / 'context.json').read_text())
 context['pass'] = int(os.environ['REVIEW_PASS'])
 (root / 'context.json').write_text(json.dumps(context))
 Path(os.environ['RUNNER_TEMP'], 'review-home').mkdir()
-if os.environ['HAS_MODEL_KEY'] != 'true': raise ValueError('OPENAI_API_KEY is required; review fails closed')
+if os.environ['HAS_MODEL_KEY'] != 'true': raise ValueError('A model API key is required; review fails closed')
 PY
-""", env={"REVIEW_PASS": "${{ matrix.pass }}", "HAS_MODEL_KEY": "${{ secrets.OPENAI_API_KEY != '' }}"}),
-                  {"name": "Independent Codex review", "uses": CODEX, "timeout-minutes": 9, "env": {"GH_TOKEN": "", "GITHUB_TOKEN": ""}, "with": {
-                      "openai-api-key": "${{ secrets.OPENAI_API_KEY }}", "model": "gpt-6.1-sol", "effort": "medium", "codex-version": "0.163.0",
+""", env={"REVIEW_PASS": "${{ matrix.pass }}", "HAS_MODEL_KEY": "${{ secrets.MODEL_API_KEY != '' || secrets.OPENAI_API_KEY != '' }}"}),
+                  {"name": "Independent automated review", "uses": CODEX, "timeout-minutes": 9, "env": {"GH_TOKEN": "", "GITHUB_TOKEN": ""}, "with": {
+                      "openai-api-key": "${{ secrets.MODEL_API_KEY || secrets.OPENAI_API_KEY }}", "model": "gpt-6.1-sol", "effort": "medium", "codex-version": "0.163.0",
                       "working-directory": "reviewer", "codex-home": "${{ runner.temp }}/review-home", "permission-profile": ":read-only", "safety-strategy": "drop-sudo",
                       "output-file": "${{ github.workspace }}/review-result.json", "output-schema": schema, "prompt": prompt}},
-                  run("Validate the exact head, pass, and bounded review output", python(source("review_result.py"), 'review-result.json "$PR_HEAD" "$REVIEW_PASS"'), env={"PR_HEAD": "${{ needs.admission.outputs.head }}", "REVIEW_PASS": "${{ matrix.pass }}"}),
-                  {"uses": UPLOAD, "if": "${{ always() }}", "with": {"name": "review-${{ matrix.pass }}", "path": "review-result.json", "if-no-files-found": "ignore", "retention-days": 7}}, VERIFY],
+                  run("Validate the exact head, pass, and bounded review output", python(source("review_result.py"), 'review-result.json "$PR_HEAD" "$REVIEW_PASS" --github-output "$GITHUB_OUTPUT"'), id="review", env={"PR_HEAD": "${{ needs.admission.outputs.head }}", "REVIEW_PASS": "${{ matrix.pass }}"}),
+                  VERIFY,
+                  {"uses": UPLOAD, "if": "${{ steps.review.outputs.safe == 'true' }}", "with": {"name": "review-${{ matrix.pass }}", "path": "review-result.json", "if-no-files-found": "error", "retention-days": 7}},
+                  run("Block merge for review findings", """python3 - <<'PY'
+raise SystemExit('Review has blocking findings; see the retained review artifact')
+PY
+""", **{"if": "${{ steps.review.outputs.blocked == 'true' }}"})],
     }
     finish = {"needs": ["admission", "prepare", "quality", "registry", "standards", "ai"],
               "if": "${{ github.run_attempt == 1 && always() && needs.admission.outputs.run == 'true' }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
               "permissions": {"contents": "read", "pull-requests": "write", "statuses": "write"},
               "env": {**ENV, "JOB_RESULTS": "${{ toJSON(needs) }}"},
               "steps": [run("Publish required results only after live admission validation", python(source("governance.py"), "finish"))]}
-    return {"name": "Human-admitted PR checks", "on": {"workflow_call": {"secrets": {"OPENAI_API_KEY": {"required": False}, "EJM_HARNESS_TOKEN": {"required": False}}}}, "permissions": {}, "jobs": {"admission": admission, "prepare": prepare, "quality": quality, "registry": registry, "standards": standards, "ai": ai, "finish": finish}}
+    secrets = {"MODEL_API_KEY": {"required": False}, "OPENAI_API_KEY": {"required": False}, "EJM_HARNESS_TOKEN": {"required": False}}
+    return {"name": "Human-admitted PR checks", "on": {"workflow_call": {"secrets": secrets}}, "permissions": {}, "jobs": {"admission": admission, "prepare": prepare, "quality": quality, "registry": registry, "standards": standards, "ai": ai, "finish": finish}}
 
 
 def release_workflow():

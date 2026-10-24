@@ -5,7 +5,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from standards import MIT_TERMS, consumer_workflows, licenses, missing_model_key_workflows, read, semver, versions, workflows
+from governance import REPOS
+from standards import COMMUNITY_GUIDES, LEGACY_PROFILES, MIT_TERMS, VERSIONS, consumer_workflows, legacy_model_secret_workflows, licenses, missing_model_key_workflows, read, semver, versions, workflows
 from build_workflows import governance, release_workflow, yaml
 from review_result import validate
 
@@ -29,6 +30,19 @@ class StandardTests(unittest.TestCase):
             self.assertEqual(versions(root, "ejmlabs"), "0.1.0")
             (root / "CHANGELOG.md").write_text("## Unreleased\n")
             with self.assertRaises(ValueError): versions(root, "ejmlabs")
+
+    def test_chess_profile_uses_the_version_file_and_development_guide(self):
+        self.assertIn("ejmlabs/ejm-chess", REPOS)
+        self.assertEqual(COMMUNITY_GUIDES["ejm-chess"], "README.md#development")
+        self.assertEqual(VERSIONS["ejm-chess"], ())
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "VERSION").write_text("0.1.0\n")
+            (root / "CHANGELOG.md").write_text("## [0.1.0] - 2026-10-20\n")
+            (root / "LICENSE").write_text("MIT License\n\nCopyright (c) 2026 Example\n\n" + MIT_TERMS + "\n")
+            self.assertEqual(versions(root, "ejm-chess"), "0.1.0")
+            with self.assertRaisesRegex(ValueError, "Unknown repository profile"):
+                versions(root, "ejm-unknown")
 
     def test_symlinked_policy_cannot_read_outside_checkout(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -64,6 +78,15 @@ class StandardTests(unittest.TestCase):
             with self.assertRaises(ValueError): validate(file, "a" * 40, 1)
             file.write_text("x" * 64001)
             with self.assertRaises(ValueError): validate(file, "a" * 40, 1)
+            secret = "sk-" + ("a" * 24)
+            encoded = json.dumps({"head": "a" * 40, "pass": 1, "complete": True, "summary": secret, "findings": []})
+            for payload in (encoded, encoded.replace("sk-", "s\\u006b-")):
+                with self.subTest(escaped=payload != encoded):
+                    file.write_text(payload)
+                    with self.assertRaises(ValueError) as caught:
+                        validate(file, "a" * 40, 1)
+                    self.assertNotIn(secret, str(caught.exception))
+                    self.assertIn("key-like pattern", str(caught.exception))
 
     def test_ai_incomplete_review_cannot_pass_with_empty_findings(self):
         # Actual harness PR #12 pass 1 output, accepted by the old validator.
@@ -134,7 +157,7 @@ class WorkflowTests(unittest.TestCase):
                     caller(revision)
 
     def test_missing_model_key_caller_is_accepted_only_for_the_shared_profile(self):
-        profiles = (".github", "ejm-cli", "ejm-harness", "ejm-ide", "ejmlabs")
+        profiles = (".github", "ejm-chess", "ejm-cli", "ejm-harness", "ejm-ide", "ejmlabs")
         for profile in profiles:
             workflows(self.root, profile)
         for name, text in missing_model_key_workflows(self.revision).items():
@@ -170,9 +193,13 @@ class WorkflowTests(unittest.TestCase):
             "repository guard removed": original["pr.yml"].replace(" && github.repository == 'ejmlabs/.github'", ""),
             "routes overlap": original["pr.yml"].replace(" && !contains(", " && contains("),
             "automatic event": original["pr.yml"].replace("on:\n", "on:\n  push:\n"),
-            "fixture receives key": original["pr.yml"] + "    secrets:\n      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}\n",
+            "fixture receives key": original["pr.yml"] + "    secrets:\n      MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}\n",
             "fixture inherits secrets": original["pr.yml"] + "    secrets: inherit\n",
-            "normal key omitted": original["pr.yml"].replace("      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}\n", ""),
+            "normal key omitted": original["pr.yml"].replace("      MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}\n", ""),
+            "both secret names": original["pr.yml"].replace(
+                "      MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}\n",
+                "      MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}\n      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}\n",
+            ),
             "fixture can write source": normal_job + "  missing_model_key:\n" + missing_job.replace("contents: read", "contents: write"),
             "root write permissions": original["pr.yml"].replace("permissions: {}", "permissions:\n  contents: write"),
             "fixture uses another pin": normal_job + "  missing_model_key:\n" + missing_job.replace(self.revision, self.other_revision),
@@ -183,10 +210,27 @@ class WorkflowTests(unittest.TestCase):
                 (self.directory / "pr.yml").write_text(text)
                 with self.assertRaises(ValueError):
                     workflows(self.root, ".github")
+        legacy = legacy_model_secret_workflows(original)
+        self.assertNotIn("MODEL_API_KEY", legacy["pr.yml"])
+        self.assertIn("      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}\n", legacy["pr.yml"])
+        (self.directory / "pr.yml").write_text(legacy["pr.yml"])
+        workflows(self.root, ".github")
         (self.directory / "pr.yml").write_text(original["pr.yml"])
         (self.directory / "release.yml").write_text(consumer_workflows(self.other_revision)["release.yml"])
         with self.assertRaises(ValueError):
             workflows(self.root, ".github")
+
+    def test_generated_caller_uses_the_neutral_secret_and_accepts_the_previous_name(self):
+        caller = consumer_workflows(self.revision)["pr.yml"]
+        self.assertIn("      MODEL_API_KEY: ${{ secrets.MODEL_API_KEY }}\n", caller)
+        self.assertNotIn("OPENAI_API_KEY", caller)
+        self.assertEqual(LEGACY_PROFILES, frozenset({".github", "ejmlabs", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui"}))
+        legacy = legacy_model_secret_workflows(consumer_workflows(self.revision))
+        (self.directory / "pr.yml").write_text(legacy["pr.yml"])
+        with self.assertRaises(ValueError):
+            workflows(self.root, "ejm-chess")
+        workflows(self.root, "ejm-cli")
+        self.reset_callers()
 
     def test_consumer_trigger_and_yaml_bypasses_are_rejected(self):
         original = consumer_workflows(self.revision)["pr.yml"]
