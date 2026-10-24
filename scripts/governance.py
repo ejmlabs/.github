@@ -24,8 +24,16 @@ def human(user, permission):
     return user.get("type") == "User" and permission in {"admin", "maintain"}
 
 
-def current_pr(pr, sha):
+def same_repository(pr):
+    return (pr["head"].get("repo") or {}).get("full_name") == pr["base"]["repo"]["full_name"]
+
+
+def current_head(pr, sha):
     return pr["state"] == "open" and not pr.get("draft") and pr["base"]["ref"] == "main" and pr["head"]["sha"] == sha
+
+
+def current_pr(pr, sha):
+    return current_head(pr, sha) and same_repository(pr)
 
 
 class GitHub:
@@ -100,7 +108,7 @@ def live_ready(api, number, sha, comment_id):
     first_attempt()
     pr = api.request(f"/pulls/{number}")
     if not current_pr(pr, sha):
-        raise ValueError("PR head changed, PR is a draft, or PR no longer targets main")
+        raise ValueError("PR head changed, PR is a draft, PR no longer targets main, or PR is not a same-repository branch")
     live_decision(api, number, sha, comment_id, "ready")
     status = api.statuses(sha).get("Human readiness", {})
     marker = f"[ready:{comment_id}]"
@@ -160,11 +168,15 @@ def admit(api, event):
     if sender["login"] != user["login"] or not human(user, api.permission(user["login"])):
         raise ValueError("A command must be posted by the human maintainer who authorizes it")
     action, requested = command(comment["body"])
-    if not current_pr(pr, requested):
-        raise ValueError("Command must name the current non-draft PR head targeting main")
     if action == "revoke":
+        if not current_head(pr, requested):
+            raise ValueError("Command must name the current non-draft PR head targeting main")
         invalidate(api, number, sha, "Revoked by a current human maintainer")
         return
+    if not same_repository(pr):
+        raise ValueError("Fork PRs cannot be admitted; a maintainer must adopt the change")
+    if not current_pr(pr, requested):
+        raise ValueError("Command must name the current non-draft PR head targeting main, or PR is not a same-repository branch")
     if action == "approve":
         ready = api.statuses(sha).get("Human readiness", {})
         ready_id = re.search(r"\[ready:(\d+)\]", ready.get("description", ""))

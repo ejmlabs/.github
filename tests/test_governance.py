@@ -17,7 +17,7 @@ TIMESTAMP = "2026-10-19T00:00:00Z"
 class API:
     def __init__(self):
         self.repo = "ejmlabs/ejm-cli"
-        self.pr = {"state": "open", "draft": False, "head": {"sha": SHA}, "base": {"ref": "main", "sha": "b" * 40}, "changed_files": 5, "additions": 20, "deletions": 4}
+        self.pr = {"state": "open", "draft": False, "head": {"sha": SHA, "repo": {"full_name": "ejmlabs/ejm-cli"}}, "base": {"ref": "main", "sha": "b" * 40, "repo": {"full_name": "ejmlabs/ejm-cli"}}, "changed_files": 5, "additions": 20, "deletions": 4}
         self.comments = {7: {"user": copy.deepcopy(USER), "body": "/ready " + SHA, "issue_url": "https://api.github.com/repos/ejmlabs/ejm-cli/issues/1", "html_url": "https://github.com/ejmlabs/ejm-cli/issues/1#issuecomment-7", "created_at": TIMESTAMP, "updated_at": TIMESTAMP}}
         self.log = []
         self.role = "maintain"
@@ -128,11 +128,103 @@ class AdmissionTests(unittest.TestCase):
         self.assertEqual(self.api.reviews[0]["state"], "APPROVED")
 
     def test_stale_heads_drafts_and_large_prs_cannot_admit(self):
-        for key, value in (("head", {"sha": "c" * 40}), ("draft", True), ("changed_files", 201), ("additions", 12001)):
+        for key, value in (("head", {"sha": "c" * 40, "repo": {"full_name": "ejmlabs/ejm-cli"}}), ("draft", True), ("changed_files", 201), ("additions", 12001)):
             api = API()
             api.pr[key] = value
             with self.assertRaises(ValueError): admit(api, self.event)
             self.assertFalse(api.log)
+
+    def fork(self, api, repo):
+        api.pr["head"]["repo"] = None if repo is None else {"full_name": repo}
+
+    def test_current_pr_rejects_fork_and_deleted_head_repositories(self):
+        self.assertTrue(current_pr(self.api.pr, SHA))
+        for repo in ("outside/ejm-cli", None):
+            with self.subTest(repo=repo):
+                api = API()
+                self.fork(api, repo)
+                self.assertFalse(current_pr(api.pr, SHA))
+                del api.pr["head"]["repo"]
+                self.assertFalse(current_pr(api.pr, SHA))
+
+    def test_fork_and_deleted_head_repository_prs_cannot_be_admitted(self):
+        for repo in ("outside/ejm-cli", None):
+            for kind in ("ready", "approve"):
+                with self.subTest(repo=repo, kind=kind):
+                    self.api = API()
+                    if kind == "approve":
+                        admit(self.api, self.event)
+                    event = self.event if kind == "ready" else self.approval()
+                    before = copy.deepcopy(self.api.log)
+                    self.fork(self.api, repo)
+                    with self.assertRaisesRegex(ValueError, "Fork PRs cannot be admitted"):
+                        admit(self.api, event)
+                    self.assertEqual(self.api.log, before)
+                    self.assertFalse(self.api.reviews)
+                    self.assertIn("run=false", Path(os.environ["GITHUB_OUTPUT"]).read_text().splitlines()[-1])
+
+    def test_verify_and_finish_fail_closed_when_head_repository_becomes_a_fork(self):
+        for repo in ("outside/ejm-cli", None):
+            with self.subTest(repo=repo):
+                self.api = API()
+                admit(self.api, self.event)
+                admit(self.api, self.approval())
+                self.fork(self.api, repo)
+                with self.assertRaisesRegex(ValueError, "not a same-repository branch"):
+                    live_ready(self.api, 1, SHA, 7)
+                self.finish_environment()
+                with self.assertRaisesRegex(ValueError, "not a same-repository branch"):
+                    finish(self.api)
+                for context in ("Human readiness", "Maintainer approval"):
+                    self.assertEqual(self.api.statuses(SHA)[context]["state"], "failure")
+                self.assertNotIn("AI review", {k for k, v in self.api.statuses(SHA).items() if v["state"] == "success"})
+                self.assertEqual(self.api.reviews[0]["state"], "DISMISSED")
+
+    def test_edited_or_deleted_decisions_are_invalidated_on_fork_prs(self):
+        for repo in ("outside/ejm-cli", None):
+            for kind in ("ready", "approve"):
+                for action in ("edited", "deleted"):
+                    with self.subTest(repo=repo, kind=kind, action=action):
+                        self.api = API()
+                        admit(self.api, self.event)
+                        approve = self.approval()
+                        admit(self.api, approve)
+                        self.fork(self.api, repo)
+                        changed = copy.deepcopy(self.event if kind == "ready" else approve)
+                        changed["action"] = action
+                        admit(self.api, changed)
+                        for context in ("Human readiness", "Maintainer approval"):
+                            self.assertEqual(self.api.statuses(SHA)[context]["state"], "failure")
+                        self.assertEqual(self.api.reviews[0]["state"], "DISMISSED")
+
+    def revocation(self, user=USER):
+        event = copy.deepcopy(self.event)
+        event["comment"].update(id=9, body="/revoke " + SHA, user=user)
+        event["sender"] = user
+        return event
+
+    def test_maintainers_can_revoke_fork_and_deleted_head_repository_prs(self):
+        for repo in ("outside/ejm-cli", None):
+            with self.subTest(repo=repo):
+                self.api = API()
+                admit(self.api, self.event)
+                admit(self.api, self.approval())
+                self.fork(self.api, repo)
+                admit(self.api, self.revocation())
+                for context in ("Human readiness", "Maintainer approval"):
+                    self.assertEqual(self.api.statuses(SHA)[context]["state"], "failure")
+                self.assertEqual(self.api.reviews[0]["state"], "DISMISSED")
+
+    def test_non_maintainers_cannot_revoke_fork_prs(self):
+        admit(self.api, self.event)
+        admit(self.api, self.approval())
+        self.fork(self.api, "outside/ejm-cli")
+        before = copy.deepcopy(self.api.log)
+        self.api.roles["writer"] = "write"
+        with self.assertRaises(ValueError):
+            admit(self.api, self.revocation({"id": 4, "login": "writer", "type": "User"}))
+        self.assertEqual(self.api.log, before)
+        self.assertEqual(self.api.reviews[0]["state"], "APPROVED")
 
     def test_live_comment_and_permission_must_survive_until_result(self):
         admit(self.api, self.event)
