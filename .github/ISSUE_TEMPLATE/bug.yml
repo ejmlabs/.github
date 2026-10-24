@@ -12,4 +12,4 @@ body:
     id: evidence
     attributes:
       label: Relevant evidence
-      description: Include small, sanitized logs or screenshots. Report vulnerabilities privately.
+      description: Include small, sanitized logs or screenshots. Report vulnerabilities through GitHub private vulnerability reporting for the affected repository (see SECURITY.md). Do not include exploit details in this issue.

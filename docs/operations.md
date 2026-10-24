@@ -326,6 +326,10 @@ require only Contents read access. See GitHub's
 [branch API](https://docs.github.com/en/rest/branches/branches#get-a-branch) and
 [comparison API](https://docs.github.com/en/rest/commits/commits#compare-two-commits).
 
+The current caller pin still requires the previous root community files.
+Keep them until a reviewed caller pin includes the updated templates, then
+re-sync with `scripts/sync_community.py` in the pin adoption PR.
+
 ## Harness Linux keyring prerequisites
 
 The harness Quality profile installs `pkg-config` and `libdbus-1-dev` on Linux
