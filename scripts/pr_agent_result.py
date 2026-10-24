@@ -167,12 +167,13 @@ def read_json(file, limit=4_000_000):
 
 
 def path(value, manifest):
-    # File identity is never prose: do not strip, normalize, redact or truncate it.
+    # Preserve exact Git names first; retry only YAML block/folded scalar line breaks.
     if isinstance(value, str) and 1 <= len(value) <= 4000:
-        for item in manifest:
-            for name in (item["source"], item["target"]):
-                if value == name:
-                    return safe_patch_path(name)
+        for candidate in (value, re.sub(r"(?:\r?\n)+\Z", "", value)):
+            for item in manifest:
+                for name in (item["source"], item["target"]):
+                    if candidate == name:
+                        return safe_patch_path(name)
     raise Incomplete("finding path does not exactly match the changed-file manifest")
 
 
