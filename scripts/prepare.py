@@ -110,6 +110,45 @@ def review_diff(repository, base, head, token):
     return patch
 
 
+def changed_files(repository, base, head, token):
+    """Fetch file identities and line counts independently of the diff stream."""
+    request = urllib.request.Request(compare_url(repository, base, head), headers={
+        "Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
+    })
+    with urllib.request.urlopen(request, timeout=30) as response:
+        data = response.read(MAX_TREE_BYTES + 1)
+    if len(data) > MAX_TREE_BYTES:
+        raise ValueError("Oversized changed-file manifest")
+    comparison = json.loads(data)
+    files = comparison.get("files")
+    if not isinstance(files, list) or not 1 <= len(files) <= MAX_DIFF_FILES:
+        raise ValueError("Missing or oversized changed-file manifest")
+    modes = {}
+    for root, revision in (("base", base), ("product", head)):
+        tree = run("git", "-C", root, "ls-tree", "-r", "-z", full_sha(revision))
+        if len(tree) > MAX_TREE_BYTES:
+            raise ValueError("Oversized changed-file tree")
+        modes[root] = {entry.split(b"\t", 1)[1].decode("utf-8"): entry.split()[0].decode("ascii")
+                       for entry in tree.rstrip(b"\0").split(b"\0") if entry}
+    manifest = []
+    seen = set()
+    for item in files:
+        name, status = item["filename"], item["status"]
+        source = None if status == "added" else item["previous_filename"] if status == "renamed" else name
+        target = None if status == "removed" else name
+        if (not isinstance(name, str) or not name or name in seen
+                or status not in ("added", "removed", "modified", "renamed")
+                or any(type(item.get(key)) is not int or item[key] < 0 for key in ("additions", "deletions"))
+                or ("patch" in item and not isinstance(item["patch"], str))):
+            raise ValueError("Invalid changed-file manifest")
+        seen.add(name)
+        manifest.append({"source": source, "target": target, "status": status,
+                         "additions": item["additions"], "deletions": item["deletions"], "has_patch": "patch" in item,
+                         "old_mode": modes["base"].get(source),
+                         "new_mode": modes["product"].get(target)})
+    return manifest
+
+
 def harness_pin(root, revision):
     """Read a small ordinary pin blob, never a source-controlled filesystem path."""
     full_sha(revision)
@@ -260,6 +299,7 @@ def main():
         (out / "ui.tar").write_bytes(source_archive("ejm-ui", ui, "ejm-ui", "tar"))
         context["ui_source"] = {"repository": "ejmlabs/ejm-ui", "revision": ui}
     (out / "change.patch").write_bytes(review_diff(repository, base, head, os.environ["GH_TOKEN"]))
+    context["files"] = changed_files(repository, base, head, os.environ["GH_TOKEN"])
     (out / "context.json").write_text(json.dumps(context))
 
 

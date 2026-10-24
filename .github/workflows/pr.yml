@@ -13,7 +13,7 @@ jobs:
       actions: write
     uses: ejmlabs/.github/.github/workflows/governance.yml@17ba87d8d944dc3a24a3f1c5118c45144179eb8b
     secrets:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
       EJM_HARNESS_TOKEN: ${{ secrets.EJM_HARNESS_TOKEN }}
   missing_model_key:
     if: ${{ github.event.issue.pull_request && github.repository == 'ejmlabs/.github' && contains(github.event.issue.labels.*.name, 'acceptance:missing-model-key') }}
