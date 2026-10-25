@@ -18,6 +18,7 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Changed
 
+- Allow each automated review model call up to 225 seconds, so slow high-effort responses complete within the existing two-attempt and 480-second reviewer limits instead of failing as incomplete.
 - Removed the previous hosted review action, its key and its allowance.
 - Configure the pinned reviewer with a restricted provider key, prepaid credits,
   no automatic top-up or fallback model, and a 160,000-token cap.
