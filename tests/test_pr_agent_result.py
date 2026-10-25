@@ -826,7 +826,7 @@ class ReviewerResultTests(unittest.TestCase):
                 "--- a/edit.svg\n+++ b/edit.svg\n@@ -1 +1 @@\n-<svg/>\n+<svg><path/></svg>\n"
             ),
         }))
-        # Removal-only SVG (allowed)
+        # Deleted SVG (allowed)
         probes.append(("removal-svg", True, {
             "files": [self.file("gone.svg", target=None, status="removed", additions=0, deletions=1,
                                 has_patch=True, old_mode="100644")],
@@ -836,8 +836,8 @@ class ReviewerResultTests(unittest.TestCase):
                 "--- a/gone.svg\n+++ /dev/null\n@@ -1 +0,0 @@\n-<svg/>\n"
             ),
         }))
-        # Modified SVG with only '-' hunk lines (allowed)
-        probes.append(("modified-removal-only-svg", True, {
+        # Modified SVG with only '-' hunk lines (incomplete: M-G1)
+        probes.append(("modified-removal-only-svg", False, {
             "files": [self.file("trim.svg", additions=0, deletions=1, has_patch=True,
                                 old_mode="100644", new_mode="100644")],
             "skipped": ["trim.svg"],
@@ -846,7 +846,18 @@ class ReviewerResultTests(unittest.TestCase):
                 "--- a/trim.svg\n+++ b/trim.svg\n@@ -1,2 +1 @@\n <svg/>\n-<path/>\n"
             ),
         }))
-        # Delta F bypass probes (all incomplete under removal-only)
+        # M-G1: removing comment wrappers uncovers dormant script → incomplete
+        probes.append(("uncovered-comment", False, {
+            "files": [self.file("dormant.svg", additions=0, deletions=2, has_patch=True,
+                                old_mode="100644", new_mode="100644")],
+            "skipped": ["dormant.svg"],
+            "patch": (
+                "diff --git a/dormant.svg b/dormant.svg\n"
+                "--- a/dormant.svg\n+++ b/dormant.svg\n"
+                "@@ -1,3 +1 @@\n-<!--\n <script>alert(1)</script>\n--->\n"
+            ),
+        }))
+        # Delta F bypass probes (all incomplete under deleted-only)
         probes.append(("f-plusplus-script", False, {
             "files": [self.file("pp.svg", source=None, status="added", additions=1, deletions=0,
                                 has_patch=True, new_mode="100644")],

@@ -404,8 +404,8 @@ def check_termination(skipped_file):
 
 
 def svg_skip_allowed(lines, item):
-    """Allow skipped SVG text only for removal-only 100644 changes (no added hunk lines)."""
-    if not isinstance(item, dict) or item.get("status") not in ("modified", "removed"):
+    """Allow skipped SVG text only for deleted 100644 files (no rename/copy, no '+' hunk lines)."""
+    if not isinstance(item, dict) or item.get("status") != "removed":
         return False
     metadata, hunk_body = [], []
     in_hunk = False
@@ -419,22 +419,11 @@ def svg_skip_allowed(lines, item):
             metadata.append(line)
     if any(line.startswith(("rename from ", "rename to ", "copy from ", "copy to ")) for line in metadata):
         return False
-    # Any '+' hunk-body line means content was added; exemption is removal-only.
     # Count only hunk-body lines so '+++ ' file headers cannot be confused with content.
     if any(line.startswith("+") for line in hunk_body):
         return False
-    old_mode, new_mode = item.get("old_mode"), item.get("new_mode")
-    if item["status"] == "removed":
-        if old_mode != "100644" or f"deleted file mode {old_mode}" not in metadata:
-            return False
-    else:
-        if old_mode != "100644" or new_mode != "100644":
-            return False
-        if any(line.startswith(("old mode ", "new mode ", "new file mode ", "deleted file mode "))
-               for line in metadata):
-            modes = [line for line in metadata if re.fullmatch(r"(?:old|new) mode 100(?:644|755)", line)]
-            if modes and any(not line.endswith("100644") for line in modes):
-                return False
+    if item.get("old_mode") != "100644" or "deleted file mode 100644" not in metadata:
+        return False
     return True
 
 

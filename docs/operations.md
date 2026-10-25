@@ -74,11 +74,11 @@ fails closed on a missing or failed reviewer exit, malformed output, unsafe
 paths, coverage warnings, clipped patches, failed chunks, or exceeded result
 limits. A precheck records files excluded by the reviewer's file filter and,
 for ejmlabs/.github only, strips exact build-generated workflow paths
-verified by the workflow build check. Binary-only exclusions and removal-only
-SVG text (no added hunk lines, mode 100644) are listed as not model-reviewed
-and do not make the review incomplete. Added or modified SVG content, other
-skipped text hunks, renames into skipped or generated paths, coverage warnings,
-and clipped text stay fail-closed. The
+verified by the workflow build check. Binary-only exclusions and deleted SVG
+files (status removed, mode 100644) are listed as not model-reviewed and do
+not make the review incomplete. Added or modified SVG content, other skipped
+text hunks, renames into skipped or generated paths, coverage warnings, and
+clipped text stay fail-closed. The
 security-concerns field is required. Security concerns produce
 high findings, and credential-like text is redacted. Missing material context
 must be reported as a finding. These checks
