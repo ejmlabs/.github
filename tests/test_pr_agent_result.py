@@ -345,17 +345,32 @@ class ReviewerResultTests(unittest.TestCase):
         self.complete(result)
 
     def test_skipped_text_changes_fail_closed(self):
-        for name in ("Cargo.lock", "folder/uv.lock", "path with spaces/file.csv", "a..b.svg", "café.svg"):
+        for name in ("Cargo.lock", "folder/uv.lock", "path with spaces/file.csv"):
             with self.subTest(name=name):
                 self.manifest(self.file(name))
                 self.skipped.write_text(json.dumps([name]))
                 old, new = "a/" + name, "b/" + name
-                if name == "café.svg":
-                    old, new = '"a/caf\\303\\251.svg"', '"b/caf\\303\\251.svg"'
                 self.patch.write_text(f"diff --git {old} {new}\n--- {old}\n+++ {new}\n@@ -1 +1 @@\n-old\n+new\n")
                 result, _ = self.run_adapter()
                 self.incomplete(result)
                 self.assertIn("skipped changed text", result["summary"])
+
+    def test_skipped_asset_text_is_not_model_reviewed(self):
+        for name in ("a..b.svg", "café.svg", "icons/logo.png"):
+            with self.subTest(name=name):
+                binary = name.endswith(".png")
+                self.manifest(self.file(name, additions=0 if binary else 1, deletions=0 if binary else 1,
+                                        has_patch=not binary))
+                self.skipped.write_text(json.dumps([name]))
+                old, new = "a/" + name, "b/" + name
+                if name == "café.svg":
+                    old, new = '"a/caf\\303\\251.svg"', '"b/caf\\303\\251.svg"'
+                if binary:
+                    self.patch.write_text(f"diff --git {old} {new}\nBinary files {old} and {new} differ\n")
+                else:
+                    self.patch.write_text(f"diff --git {old} {new}\n--- {old}\n+++ {new}\n@@ -1 +1 @@\n-old\n+new\n")
+                result, _ = self.run_adapter()
+                self.complete(result)
 
     def test_skipped_deletions_and_renames_with_text_fail_closed(self):
         for target, name in (("/dev/null", "Cargo.lock"), ("b/renamed.lock", "renamed.lock")):
@@ -610,6 +625,80 @@ class ReviewerResultTests(unittest.TestCase):
     def test_script_is_self_contained_when_embedded_in_the_workflow(self):
         result, _ = self.run_adapter(embedded=True)
         self.assertFalse(self.complete(result))
+
+    def test_generated_workflow_paths_missing_from_patch_are_not_model_reviewed(self):
+        # Shape from ejmlabs/.github reviews: compare-diff text omitted from the
+        # model patch after precheck strip; manifest still lists the files.
+        text = self.file("scripts/governance.py")
+        generated = [
+            self.file(".github/workflows/governance.yml", additions=7, deletions=7, has_patch=False),
+            self.file(".github/workflows/draft-release.yml", additions=1, deletions=1, has_patch=False),
+        ]
+        self.manifest(text, *generated)
+        self.skipped.write_text(json.dumps([
+            ".github/workflows/governance.yml", ".github/workflows/draft-release.yml",
+        ]))
+        self.patch.write_text(
+            "diff --git a/scripts/governance.py b/scripts/governance.py\n"
+            "--- a/scripts/governance.py\n+++ b/scripts/governance.py\n"
+            "@@ -1 +1 @@\n-old\n+new\n"
+        )
+        result, _ = self.run_adapter()
+        self.complete(result)
+
+    def test_removed_and_added_binaries_without_text_patches_complete(self):
+        # Shapes from ejmlabs#13 (removed PNG) and ejm-ui#21 (added PNG/ICO).
+        removed = self.file("design-kit/motifs/grid-ink.png", target=None, status="removed",
+                            additions=0, deletions=0, has_patch=False, old_mode="100644")
+        added = self.file("packages/tokens/assets/icon.ico", source=None, status="added",
+                          additions=0, deletions=0, has_patch=False, new_mode="100644")
+        text = self.file("CHANGELOG.md", additions=1, deletions=0)
+        self.manifest(removed, added, text)
+        self.skipped.write_text(json.dumps([
+            "design-kit/motifs/grid-ink.png", "packages/tokens/assets/icon.ico",
+        ]))
+        self.patch.write_text(
+            "diff --git a/design-kit/motifs/grid-ink.png b/design-kit/motifs/grid-ink.png\n"
+            "deleted file mode 100644\n"
+            "Binary files a/design-kit/motifs/grid-ink.png and /dev/null differ\n"
+            "diff --git a/packages/tokens/assets/icon.ico b/packages/tokens/assets/icon.ico\n"
+            "new file mode 100644\n"
+            "Binary files /dev/null and b/packages/tokens/assets/icon.ico differ\n"
+            "diff --git a/CHANGELOG.md b/CHANGELOG.md\n"
+            "--- a/CHANGELOG.md\n+++ b/CHANGELOG.md\n"
+            "@@ -1,0 +1 @@\n+note\n"
+        )
+        result, _ = self.run_adapter()
+        self.complete(result)
+
+    def test_skipped_svg_assets_with_text_hunks_do_not_fail_closed(self):
+        # Shape from ejmlabs#13 / ejm-ui#21: language filter skips SVG text.
+        asset = self.file("design-kit/motifs/grid.svg", target=None, status="removed",
+                          additions=0, deletions=1, has_patch=True, old_mode="100644")
+        text = self.file("CHANGELOG.md", additions=1, deletions=0)
+        self.manifest(asset, text)
+        self.skipped.write_text(json.dumps(["design-kit/motifs/grid.svg"]))
+        self.patch.write_text(
+            "diff --git a/design-kit/motifs/grid.svg b/design-kit/motifs/grid.svg\n"
+            "deleted file mode 100644\n"
+            "--- a/design-kit/motifs/grid.svg\n+++ /dev/null\n"
+            "@@ -1 +0,0 @@\n-<svg/>\n"
+            "diff --git a/CHANGELOG.md b/CHANGELOG.md\n"
+            "--- a/CHANGELOG.md\n+++ b/CHANGELOG.md\n"
+            "@@ -1,0 +1 @@\n+note\n"
+        )
+        result, _ = self.run_adapter()
+        self.complete(result)
+
+    def test_coverage_footer_on_reviewable_text_still_fails_closed(self):
+        self.markdown.write_text(
+            "## Review\nNo issues found.\n\n"
+            "**Review coverage:** The following files were not included in this review "
+            "because of the token budget:\n- src/main.py\n"
+        )
+        result, _ = self.run_adapter()
+        self.incomplete(result)
+        self.assertIn("coverage", result["summary"])
 
 
 if __name__ == "__main__":

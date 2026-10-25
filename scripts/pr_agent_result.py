@@ -33,6 +33,46 @@ URL_TOKEN = re.compile(
     r"(?:(?<!\w)[a-z][a-z0-9+.-]*\s*:\s*[/\\]\s*[/\\]|(?<!\w)(?:https?|hxxps?|ftp|file|javascript|data|mailto)\s*:\s*|"
     r"(?<!\w)[a-z][a-z0-9+.-]*:(?=\S|$)|//|www\.|(?<!\w)(?:[\w-]+\.)+[\w-]+\.?(?::[0-9]+)?[/\\])[^\s<>]*", re.I
 )
+# Build-generated workflows verified by scripts/build_workflows.py --check.
+EXCLUDED_REVIEW_PATHS = frozenset({
+    ".github/workflows/governance.yml",
+    ".github/workflows/draft-release.yml",
+})
+# Language-filter asset types the model cannot usefully review. Lockfiles, csv,
+# and other text filters stay fail-closed when skipped with hunks.
+NOT_MODEL_REVIEWED_EXTENSIONS = frozenset({
+    "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "svg",
+    "woff", "woff2", "ttf", "otf", "eot",
+    "mp3", "mp4", "webm", "ogg",
+    "pdf", "zip", "gz", "tgz", "bz2", "xz", "zst", "tar",
+    "exe", "dll", "so", "dylib", "bin", "class", "jar", "war", "egg", "snap",
+})
+
+
+def not_model_reviewed_asset(name):
+    base = name.rsplit("/", 1)[-1]
+    if "." not in base:
+        return False
+    return base.rsplit(".", 1)[-1].lower() in NOT_MODEL_REVIEWED_EXTENSIONS
+
+
+def strip_excluded_review_paths(patch):
+    """Remove exact build-generated paths from the review patch."""
+    blocks = re.split(r"(?m)(?=^diff --git )", patch)
+    kept = [blocks[0]]
+    excluded = []
+    for block in blocks[1:]:
+        header = re.fullmatch(r'diff --git ("(?:[^"\\]|\\.)*"|a/.*?) ("(?:[^"\\]|\\.)*"|b/.*)',
+                              block.splitlines()[0])
+        if not header:
+            raise Incomplete("unsupported change header")
+        old, new = patch_path(header[1], "a/"), patch_path(header[2], "b/")
+        key = new if new is not None else old
+        if key in EXCLUDED_REVIEW_PATHS:
+            excluded.append(key)
+            continue
+        kept.append(block)
+    return "".join(kept), excluded
 
 
 def check_sanitized(value):
@@ -323,7 +363,9 @@ def check_patch(patch, manifest):
                               and f"deleted file mode {item['old_mode']}" in metadata))
             if item["additions"] or item["deletions"] or not (binary or renamed or mode_change or empty_file):
                 raise Incomplete("missing change hunks or verified metadata")
-    if seen != set(expected):
+    missing = set(expected) - seen
+    allowed_missing = {name for name in missing if name in EXCLUDED_REVIEW_PATHS}
+    if seen != set(expected) - allowed_missing:
         raise Incomplete("changed files are missing from the patch")
 
 
@@ -340,6 +382,10 @@ def check_skipped(patch, skipped_file):
     if not skipped:
         return
     unmatched = set(skipped)
+    # Exact build-generated paths are stripped from the patch before review.
+    for name in list(unmatched):
+        if name in EXCLUDED_REVIEW_PATHS:
+            unmatched.discard(name)
     for block in re.split(r"(?m)(?=^diff --git )", patch):
         if not block.startswith("diff --git "):
             continue
@@ -365,7 +411,9 @@ def check_skipped(patch, skipped_file):
             raise Incomplete("unsupported skipped-file path")
         name = name[2:]
         if name in skipped:
-            if hunks:
+            # Asset-filter exclusions are listed as not model-reviewed. Lockfiles
+            # and other filtered text with hunks stay fail-closed.
+            if hunks and not not_model_reviewed_asset(name):
                 raise Incomplete("reviewer skipped changed text files")
             unmatched.discard(name)
     if unmatched:

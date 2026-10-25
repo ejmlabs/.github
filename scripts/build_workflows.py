@@ -85,7 +85,11 @@ skipped_output = Path(sys.argv[2])
 skipped_output.write_text('[]')
 from unidiff import PatchSet
 from pr_agent.algo.language_handler import is_valid_file
-patch = read(sys.argv[1])
+change_path = Path(sys.argv[1])
+patch = read(change_path)
+patch, excluded = strip_excluded_review_paths(patch)
+if excluded:
+    change_path.write_text(patch)
 check_patch(patch, read_json(sys.argv[3], 1_000_000).get('files'))
 files = PatchSet(patch)
 if not files:
@@ -97,7 +101,7 @@ for file in files:
         name = name[2:]
     if not is_valid_file(name):
         skipped.append(name)
-skipped_output.write_text(json.dumps(skipped))
+skipped_output.write_text(json.dumps(skipped + excluded))
 """
 ARTIFACT = {"uses": DOWNLOAD, "with": {"artifact-ids": "${{ needs.prepare.outputs.artifact }}", "merge-multiple": True, "path": "prepared"}}
 EXTRACT = run("Extract source data safely", """python3 - <<'PY'
