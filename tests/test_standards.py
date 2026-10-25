@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from standards import MIT_TERMS, consumer_workflows, licenses, missing_model_key_workflows, read, semver, versions, workflows
-from build_workflows import governance, release_workflow, yaml
+from build_workflows import governance, guidance_workflow, release_workflow, yaml
 from review_result import validate
 
 
@@ -318,8 +318,9 @@ class WorkflowTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             workflows(self.root, "ejm-cli")
 
-    def test_shared_profile_accepts_both_full_generated_reusables(self):
+    def test_shared_profile_accepts_all_full_generated_reusables(self):
         self.add_reusable("governance.yml", governance())
+        self.add_reusable("pr-guidance.yml", guidance_workflow())
         self.add_reusable("draft-release.yml", release_workflow())
         workflows(self.root, ".github")
         with self.assertRaises(ValueError):
@@ -373,6 +374,21 @@ class WorkflowTests(unittest.TestCase):
                     text = prefix + '  "draft":\n' + "\n".join(" " * extra_indent + line for line in body.splitlines()) + "\n"
                     (self.directory / "draft-release.yml").write_text(text)
                 with self.assertRaisesRegex(ValueError, "environment"):
+                    workflows(self.root, ".github")
+
+    def test_guidance_reusable_requires_its_scaffold_and_immutable_actions(self):
+        original = self.add_reusable("pr-guidance.yml", guidance_workflow())
+        mutations = {
+            "automatic trigger": original.replace('"workflow_call": {}', '"pull_request_target": {}'),
+            "declared secrets": original.replace('"workflow_call": {}', '"workflow_call":\n    "secrets": {}'),
+            "root write permissions": original.replace('"permissions": {}', '"permissions": {"contents": "write"}'),
+            "duplicate trigger": original + '"on": ["push"]\n',
+            "mutable action": original.replace('    "steps":\n', '    "steps":\n      -\n        "uses": "actions/checkout@main"\n'),
+        }
+        for name, text in mutations.items():
+            with self.subTest(name=name):
+                (self.directory / "pr-guidance.yml").write_text(text)
+                with self.assertRaises(ValueError):
                     workflows(self.root, ".github")
 
     def test_reusable_trigger_bypasses_are_rejected(self):

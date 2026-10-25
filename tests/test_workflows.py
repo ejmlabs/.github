@@ -63,10 +63,29 @@ def generated_yaml(text):
     return result
 
 
+class WorkflowGenerationTests(unittest.TestCase):
+    def test_staged_workflows_are_rendered_but_not_published_or_required_by_check(self):
+        rendered = workflows.render_workflows()
+        self.assertEqual(workflows.STAGED_WORKFLOWS, {"pr-guidance.yml"})
+        self.assertIn(workflows.yaml(workflows.guidance_workflow()), rendered["pr-guidance.yml"])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with mock.patch.object(workflows, "ROOT", root), mock.patch.object(workflows, "render_workflows", return_value=rendered):
+                with mock.patch.object(sys, "argv", ["build_workflows.py"]):
+                    workflows.main()
+                published = root / ".github/workflows"
+                self.assertEqual({path.name for path in published.iterdir()}, set(rendered) - workflows.STAGED_WORKFLOWS)
+                for name in set(rendered) - workflows.STAGED_WORKFLOWS:
+                    self.assertEqual((published / name).read_text(), rendered[name])
+                with mock.patch.object(sys, "argv", ["build_workflows.py", "--check"]):
+                    workflows.main()
+
+
 class WorkflowSecurityTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.governance = generated_yaml((workflows.ROOT / ".github/workflows/governance.yml").read_text())
+        cls.guidance = workflows.guidance_workflow()
         cls.release = workflows.release_workflow()
 
     def test_own_callers_match_the_secrets_declared_at_their_pinned_revisions(self):
@@ -267,13 +286,14 @@ class WorkflowSecurityTests(unittest.TestCase):
     def test_privileged_jobs_run_only_trusted_scripts_and_actions(self):
         trusted_sources = {workflows.source(name) for name in ("governance.py", "prepare.py", "review_result.py", "pr_agent_result.py")}
         trusted_sources.add(embedded_source(workflows.REJECT_DEBUG["run"]))
+        trusted_sources.add(workflows.source("governance.py", True) + "\n" + workflows.source("pr_guidance.py").replace("from governance import GitHub\n", ""))
         trusted_sources.add("\n".join([
             workflows.source("governance.py", True), workflows.source("standards.py", True),
             workflows.source("prepare.py", True), workflows.source("release.py"),
         ]))
         trusted_sources.add(workflows.REVIEWER_COVERAGE_CHECK)
         trusted_actions = {"actions/checkout", "actions/download-artifact", "actions/upload-artifact"}
-        for document in (self.governance, self.release):
+        for document in (self.governance, self.guidance, self.release):
             self.assertNotIn("defaults", document)
             for name, job in document["jobs"].items():
                 if not job["permissions"] and "secrets." not in json.dumps(job):

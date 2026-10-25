@@ -7,6 +7,7 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 ### Added
 
 - Accept exactly one supported review model key name in canonical workflows; reject extra, unknown or fallback key forwarding.
+- Generate current-head PR next-action guidance from live metadata. After merge and validator pin adoption, a follow-up PR generates and adds `pr-guidance.yml`; consumers adopt the opt-in guided caller only at a pin containing that file.
 - Optional public UI source assembly from protected-main commit pins, with
   static reviewer source and credential-free consumer installation.
 - Shared repository standards, explicit human admission, protected merge gates, two-pass independent automated review, and a draft source release pipeline.
