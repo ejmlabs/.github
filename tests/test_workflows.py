@@ -827,6 +827,7 @@ sys.exit(int(os.environ['REVIEW_EXIT']))
         self.assertEqual(precheck["env"]["GITHUB_TOKEN"], "")
         source = embedded_source(precheck["run"])
         self.assertIn("from pr_agent.algo.language_handler import is_valid_file", source)
+        self.assertIn("strip_excluded_review_paths", source)
         for rejected in ([], ["Cargo.lock", "logo.png", "café.svg"]):
             with self.subTest(rejected=rejected), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -848,6 +849,75 @@ sys.exit(int(os.environ['REVIEW_EXIT']))
                     exec(compile(source, "trusted-precheck-test", "exec"), {})
                 self.assertEqual(json.loads(skipped.read_text()), rejected)
                 self.assertEqual([call.args[0] for call in valid.call_args_list], ["Cargo.lock", "logo.png", "src/app.py", "café.svg"])
+
+    def test_coverage_precheck_strips_exact_generated_workflow_paths(self):
+        precheck = next(step for step in self.governance["jobs"]["ai"]["steps"]
+                        if step.get("name") == "Check reviewer file coverage")
+        source = embedded_source(precheck["run"])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            patch = root / "change.patch"
+            names = (".github/workflows/governance.yml", ".github/workflows/draft-release.yml", "src/app.py")
+            patch.write_text("".join(
+                f"diff --git a/{name} b/{name}\n--- a/{name}\n+++ b/{name}\n@@ -1 +1 @@\n-old\n+new\n"
+                for name in names))
+            context = root / "context.json"
+            context.write_text(json.dumps({
+                "repository": "ejmlabs/.github",
+                "files": [
+                    {"source": name, "target": name, "status": "modified", "additions": 1, "deletions": 1,
+                     "has_patch": name == "src/app.py"} for name in names],
+            }))
+            skipped = root / "reviewer-skipped.txt"
+            files = [mock.Mock(source_file="a/src/app.py", target_file="b/src/app.py")]
+            parser = mock.Mock(return_value=files)
+            valid = mock.Mock(return_value=True)
+            modules = {"unidiff": mock.Mock(PatchSet=parser), "pr_agent": mock.Mock(), "pr_agent.algo": mock.Mock(),
+                       "pr_agent.algo.language_handler": mock.Mock(is_valid_file=valid)}
+            with mock.patch.dict(sys.modules, modules), mock.patch.object(sys, "argv", ["precheck", str(patch), str(skipped), str(context)]):
+                exec(compile(source, "trusted-precheck-strip-test", "exec"), {})
+            remaining = patch.read_text()
+            self.assertIn("src/app.py", remaining)
+            self.assertNotIn("governance.yml", remaining)
+            self.assertNotIn("draft-release.yml", remaining)
+            self.assertEqual(json.loads(skipped.read_text()), [
+                ".github/workflows/governance.yml", ".github/workflows/draft-release.yml",
+            ])
+        # Non-.github profiles must not strip generated paths.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            patch = root / "change.patch"
+            patch.write_text(
+                "diff --git a/.github/workflows/governance.yml b/.github/workflows/governance.yml\n"
+                "--- a/.github/workflows/governance.yml\n+++ b/.github/workflows/governance.yml\n"
+                "@@ -1 +1 @@\n-old\n+new\n"
+                "diff --git a/src/app.py b/src/app.py\n--- a/src/app.py\n+++ b/src/app.py\n"
+                "@@ -1 +1 @@\n-old\n+new\n"
+            )
+            context = root / "context.json"
+            context.write_text(json.dumps({
+                "repository": "ejmlabs/ejm-ui",
+                "files": [
+                    {"source": ".github/workflows/governance.yml", "target": ".github/workflows/governance.yml",
+                     "status": "modified", "additions": 1, "deletions": 1, "has_patch": True},
+                    {"source": "src/app.py", "target": "src/app.py", "status": "modified",
+                     "additions": 1, "deletions": 1, "has_patch": True},
+                ],
+            }))
+            skipped = root / "reviewer-skipped.txt"
+            files = [
+                mock.Mock(source_file="a/.github/workflows/governance.yml",
+                          target_file="b/.github/workflows/governance.yml"),
+                mock.Mock(source_file="a/src/app.py", target_file="b/src/app.py"),
+            ]
+            parser = mock.Mock(return_value=files)
+            valid = mock.Mock(return_value=True)
+            modules = {"unidiff": mock.Mock(PatchSet=parser), "pr_agent": mock.Mock(), "pr_agent.algo": mock.Mock(),
+                       "pr_agent.algo.language_handler": mock.Mock(is_valid_file=valid)}
+            with mock.patch.dict(sys.modules, modules), mock.patch.object(sys, "argv", ["precheck", str(patch), str(skipped), str(context)]):
+                exec(compile(source, "trusted-precheck-nostrip-test", "exec"), {})
+            self.assertIn("governance.yml", patch.read_text())
+            self.assertEqual(json.loads(skipped.read_text()), [])
 
     def test_generated_install_logs_are_private_on_success_and_failure(self):
         install = next(step for step in self.governance["jobs"]["ai"]["steps"] if step.get("name") == "Install the pinned reviewer")

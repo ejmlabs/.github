@@ -36,6 +36,8 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Fixed
 
+- Treat ejmlabs/.github build-generated workflow paths and deleted SVG files
+  as not model-reviewed so reviews complete when the remaining text is covered.
 - Confine the review model key to a protected environment restricted to main.
 - Reject duplicate review fields and key-like text in raw and decoded JSON,
   including escaped markers, strings, and field names. Reports remain local.
