@@ -25,7 +25,7 @@ neither a published artifact nor a deployed site. See the
 
 - Python 3.11 or newer for policy checks and workflow generation.
 - GitHub Actions and a plan that supports the required repository protections.
-- The review model key secret named in the trusted workflow for the two review passes.
+- The review model key secret named in the trusted workflow for the automated review.
 - The pinned tools required by the selected product's Quality gate.
 
 Public dependencies need no private repository token. Keep dependency source
@@ -55,7 +55,7 @@ maintainer posts these as separate, unedited comments:
 /approve FULL_HEAD_SHA
 ```
 
-Readiness admits bounded CI and two AI reviews. Approval records human review;
+Readiness admits bounded CI and one automated review. Approval records human review;
 maintainers may approve their own changes. `/revoke FULL_HEAD_SHA` blocks merge
 and cancels active admitted work. New commits require new decisions.
 
@@ -64,10 +64,6 @@ and cancels active admitted work. New commits require new decisions.
 Edit `scripts/` and `review/`, then regenerate workflows with
 `python3 scripts/build_workflows.py`. Review generated changes and validate them
 with actionlint. The policy checks use the Python standard library.
-
-For a caller pin change, export the exact old and new implementations with
-`scripts/export_review_context.py`. This applies to this repository's own
-callers too. See [static workflow review data](docs/operations.md#static-workflow-review-data).
 
 ## Documentation
 
@@ -84,8 +80,9 @@ changes in consumers through reviewed pin updates.
 ## Security
 
 Use [private reporting](SECURITY.md). Product builds receive no model key or
-write token. AI reviews inspect static source with trusted configuration in
-separate jobs. Result publication rechecks live human readiness.
+write token. The automated review reads the PR through the API with trusted
+configuration and never runs PR code. Its security label blocks merge until a
+maintainer removes it. Result publication rechecks live human readiness.
 
 ## Support
 

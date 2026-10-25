@@ -1,5 +1,4 @@
 import io
-import hashlib
 import json
 import os
 import subprocess
@@ -130,8 +129,8 @@ class SourceArchiveTests(GitRepositoryTests):
         subprocess.run(["git", "-C", str(product), "add", ".github/ui-source.json"], check=True, capture_output=True)
         subprocess.run(["git", "-C", str(product), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "proposed future pin"], check=True, capture_output=True)
         head = subprocess.run(["git", "-C", str(product), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
-        env = {"PR_HEAD": head, "PR_BASE": self.sha, "PR_NUMBER": "1", "GITHUB_REPOSITORY": "ejmlabs/ejmlabs", "GH_TOKEN": "fixture"}
-        with chdir(work), patch.dict(os.environ, env), patch.object(sys, "argv", ["prepare.py"]), patch.object(prepare, "review_diff", return_value=b"bounded fixture diff"), patch.object(prepare, "changed_files", return_value=[{"target": "fixture"}]):
+        env = {"PR_HEAD": head, "PR_BASE": self.sha, "GITHUB_REPOSITORY": "ejmlabs/ejmlabs"}
+        with chdir(work), patch.dict(os.environ, env), patch.object(sys, "argv", ["prepare.py"]):
             prepare.main()
         with tarfile.open(work / "prepared/ui.tar") as archive:
             self.assertEqual(archive.extractfile("ejm-ui/substituted.txt").read(), b"$Format:%H$\n")
@@ -139,8 +138,7 @@ class SourceArchiveTests(GitRepositoryTests):
             self.assertTrue(archive.getmember("ejm-ui/script.sh").mode & 0o111)
         with tarfile.open(work / "prepared/product.tar") as archive:
             self.assertEqual(json.load(archive.extractfile("product/.github/ui-source.json"))["revision"], "b" * 40)
-        context = json.loads((work / "prepared/context.json").read_text())
-        self.assertEqual(context["ui_source"], {"repository": "ejmlabs/ejm-ui", "revision": self.sha})
+        self.assertEqual(sorted(path.name for path in (work / "prepared").iterdir()), ["product.tar", "ui.tar"])
 
 
 class UIOwnerPinTests(unittest.TestCase):
@@ -389,18 +387,13 @@ class HarnessArchiveTests(GitRepositoryTests):
         self.file = self.workspace / "harness-selection.json"
         self.file.write_text(json.dumps(self.selection))
 
-    def test_preparation_binds_pin_checkout_archive_and_context_to_one_source(self):
-        env = {"PR_HEAD": self.head, "PR_BASE": self.revision, "GITHUB_REPOSITORY": "ejmlabs/ejm-cli", "PR_NUMBER": "7", "GH_TOKEN": "product-read"}
-        diff = b"diff --git a/pin b/pin\n"
-        with chdir(self.workspace), patch.dict(os.environ, env), patch.object(prepare.sys, "argv", ["prepare.py"]), patch.object(prepare, "review_diff", return_value=diff), patch.object(prepare, "changed_files", return_value=[{"target": "fixture"}]):
+    def test_preparation_binds_pin_checkout_and_archive_to_one_source(self):
+        env = {"PR_HEAD": self.head, "PR_BASE": self.revision, "GITHUB_REPOSITORY": "ejmlabs/ejm-cli"}
+        with chdir(self.workspace), patch.dict(os.environ, env), patch.object(prepare.sys, "argv", ["prepare.py"]):
             self.assertEqual(prepare.load_harness_selection("ejm-cli", self.head, self.revision), self.selection)
             prepare.main()
-        context = json.loads((self.workspace / "prepared/context.json").read_text())
         archive_bytes = (self.workspace / "prepared/harness.tar").read_bytes()
-        self.assertEqual(context, {"repository": "ejmlabs/ejm-cli", "pr": 7, "head": self.head, "base": self.revision,
-                                   "files": [{"target": "fixture"}],
-                                   "harness": {**self.selection, "archive_sha256": hashlib.sha256(archive_bytes).hexdigest()}})
-        self.assertEqual((self.workspace / "prepared/change.patch").read_bytes(), diff)
+        self.assertEqual(sorted(path.name for path in (self.workspace / "prepared").iterdir()), ["harness.tar", "product.tar"])
         with tarfile.open(fileobj=io.BytesIO(archive_bytes)) as archive:
             self.assertEqual(archive.extractfile("ejm-harness/source.txt").read(), b"reviewed harness source\n")
             self.assertNotIn("ejm-harness/.github/harness-revision", archive.getnames())
@@ -416,13 +409,10 @@ class HarnessArchiveTests(GitRepositoryTests):
         base = self.workspace / "base/.github"
         base.mkdir(parents=True)
         (base / "ui-source.json").write_text(json.dumps({"repository": "ejmlabs/ejm-ui", "revision": self.revision}))
-        env = {"PR_HEAD": self.head, "PR_BASE": self.revision, "GITHUB_REPOSITORY": "ejmlabs/ejm-cli", "PR_NUMBER": "7", "GH_TOKEN": "fixture"}
-        with chdir(self.workspace), patch.dict(os.environ, env), patch.object(prepare.sys, "argv", ["prepare.py"]), patch.object(prepare, "review_diff", return_value=b"fixture diff"), patch.object(prepare, "changed_files", return_value=[{"target": "fixture"}]):
+        env = {"PR_HEAD": self.head, "PR_BASE": self.revision, "GITHUB_REPOSITORY": "ejmlabs/ejm-cli"}
+        with chdir(self.workspace), patch.dict(os.environ, env), patch.object(prepare.sys, "argv", ["prepare.py"]):
             prepare.main()
-        context = json.loads((self.workspace / "prepared/context.json").read_text())
-        self.assertEqual(context["harness"]["pin_revision"], self.head)
-        self.assertEqual(context["harness"]["revision"], self.revision)
-        self.assertEqual(context["ui_source"], {"repository": "ejmlabs/ejm-ui", "revision": self.revision})
+        self.assertEqual(sorted(path.name for path in (self.workspace / "prepared").iterdir()), ["harness.tar", "product.tar", "ui.tar"])
         for name, prefix in (("harness", "ejm-harness"), ("ui", "ejm-ui")):
             with tarfile.open(self.workspace / ("prepared/" + name + ".tar")) as archive:
                 self.assertEqual(archive.extractfile(prefix + "/source.txt").read(), b"reviewed harness source\n")
@@ -470,54 +460,6 @@ class HarnessArchiveTests(GitRepositoryTests):
                 with self.assertRaises(ValueError):
                     prepare.main()
             self.assertEqual(select.call_count, 1)
-
-
-class ReviewDiffTests(unittest.TestCase):
-    BASE, HEAD = "a" * 40, "b" * 40
-
-    def test_comparison_is_bound_to_both_immutable_revisions(self):
-        expected = "https://api.github.com/repos/ejmlabs/ejm-cli/compare/" + self.BASE + "..." + self.HEAD
-        self.assertEqual(prepare.compare_url("ejmlabs/ejm-cli", self.BASE, self.HEAD), expected)
-        for base, head in (("main", self.HEAD), (self.BASE, "HEAD"), (self.BASE, "B" * 40)):
-            with self.assertRaises(ValueError): prepare.compare_url("ejmlabs/ejm-cli", base, head)
-
-    def test_diff_bytes_and_file_count_are_bounded(self):
-        valid = b"diff --git a/file b/file\n--- a/file\n+++ b/file\n"
-        for content, ok in ((valid, True), (b"", False), (b"x" * (prepare.MAX_DIFF_BYTES + 1), False), (valid * (prepare.MAX_DIFF_FILES + 1), False)):
-            with self.subTest(length=len(content)), patch.object(prepare.urllib.request, "urlopen") as request:
-                request.return_value.__enter__.return_value.read.return_value = content
-                if ok:
-                    self.assertEqual(prepare.review_diff("ejmlabs/ejm-cli", self.BASE, self.HEAD, "fixture"), valid)
-                    self.assertEqual(request.call_args.args[0].full_url, prepare.compare_url("ejmlabs/ejm-cli", self.BASE, self.HEAD))
-                else:
-                    with self.assertRaises(ValueError): prepare.review_diff("ejmlabs/ejm-cli", self.BASE, self.HEAD, "fixture")
-                request.return_value.__enter__.return_value.read.assert_called_once_with(prepare.MAX_DIFF_BYTES + 1)
-
-    def test_independent_file_manifest_binds_counts_renames_and_modes(self):
-        files = [{"filename": "new.py", "previous_filename": "old.py", "status": "renamed",
-                  "additions": 2, "deletions": 1, "patch": "@@ -1 +1,2 @@"},
-                 {"filename": "script", "status": "modified", "additions": 0, "deletions": 0}]
-        # Main can advance without changing the relevant old file modes.
-        comparison = {"files": files, "merge_base_commit": {"sha": "e" * 40}}
-        trees = [b"100644 blob " + b"c" * 40 + b"\told.py\0" + b"100644 blob " + b"c" * 40 + b"\tscript\0",
-                 b"100644 blob " + b"d" * 40 + b"\tnew.py\0" + b"100755 blob " + b"d" * 40 + b"\tscript\0"]
-        with patch.object(prepare.urllib.request, "urlopen") as request, patch.object(prepare, "run", side_effect=trees):
-            request.return_value.__enter__.return_value.read.return_value = json.dumps(comparison).encode()
-            manifest = prepare.changed_files("ejmlabs/ejm-cli", self.BASE, self.HEAD, "fixture")
-            self.assertEqual(request.call_args.args[0].get_header("Accept"), "application/vnd.github+json")
-            self.assertEqual(manifest[0], {"source": "old.py", "target": "new.py", "status": "renamed",
-                                          "additions": 2, "deletions": 1, "has_patch": True,
-                                          "old_mode": "100644", "new_mode": "100644"})
-            self.assertEqual((manifest[1]["old_mode"], manifest[1]["new_mode"]), ("100644", "100755"))
-
-    def test_invalid_and_oversized_manifests_fail_closed(self):
-        for data in (b"{}", b'{"files": []}', b"x" * (prepare.MAX_TREE_BYTES + 1),
-                     json.dumps({"files": [{"filename": "file", "status": "modified", "additions": True, "deletions": 0}]}).encode()):
-            with self.subTest(length=len(data)), patch.object(prepare.urllib.request, "urlopen") as request, \
-                    patch.object(prepare, "run", return_value=b""):
-                request.return_value.__enter__.return_value.read.return_value = data
-                with self.assertRaises(ValueError):
-                    prepare.changed_files("ejmlabs/ejm-cli", self.BASE, self.HEAD, "fixture")
 
 
 if __name__ == "__main__": unittest.main()

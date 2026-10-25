@@ -7,7 +7,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from standards import MIT_TERMS, consumer_workflows, licenses, missing_model_key_workflows, read, semver, versions, workflows
 from build_workflows import governance, release_workflow, yaml
-from review_result import validate
 
 
 class StandardTests(unittest.TestCase):
@@ -47,52 +46,6 @@ class StandardTests(unittest.TestCase):
             (root / "Cargo.toml").write_text('[workspace]\nmembers=[]\n[workspace.package]\nlicense="MIT"\n')
             (root / "LICENSE").write_text("MIT License\nCopyright (c) 2026 Example\nOnly a fragment.")
             with self.assertRaises(ValueError): licenses(root, "ejm-cli")
-
-    def test_ai_result_identity_limits_and_blocking_findings(self):
-        with tempfile.TemporaryDirectory() as directory:
-            file = Path(directory) / "result.json"
-            result = {"head": "a" * 40, "pass": 1, "complete": True, "summary": "Checked the complete diff.", "findings": []}
-            file.write_text(json.dumps(result))
-            self.assertFalse(validate(file, "a" * 40, 1)[1])
-            with self.assertRaises(ValueError): validate(file, "b" * 40, 1)
-            with self.assertRaises(ValueError): validate(file, "a" * 40, 2)
-            result["findings"] = [{"severity": "medium", "file": "src/auth.rs", "line": 3, "title": "Missing authorization", "reason": "A request skips the maintainer check."}]
-            file.write_text(json.dumps(result))
-            self.assertTrue(validate(file, "a" * 40, 1)[1])
-            result["findings"][0]["file"] = "../../etc/passwd"
-            file.write_text(json.dumps(result))
-            with self.assertRaises(ValueError): validate(file, "a" * 40, 1)
-            file.write_text("x" * 64001)
-            with self.assertRaises(ValueError): validate(file, "a" * 40, 1)
-
-    def test_ai_incomplete_review_cannot_pass_with_empty_findings(self):
-        # Actual harness PR #12 pass 1 output, accepted by the old validator.
-        result = {
-            "head": "7a409665b4259135c85ca55c83bc5815cba237aa",
-            "pass": 1,
-            "summary": "Incomplete review. Inspected all four changed files and local workflow callers. The shared workflow implementations at the old and new pins are absent from the archive, so their behavioral changes and trust boundaries could not be verified offline. No concrete defects established from the supplied source.",
-            "findings": [],
-        }
-        with tempfile.TemporaryDirectory() as directory:
-            file = Path(directory) / "result.json"
-            file.write_text(json.dumps(result))
-            with self.assertRaises(ValueError):
-                validate(file, result["head"], result["pass"])
-            result["complete"] = False
-            file.write_text(json.dumps(result))
-            with self.assertRaisesRegex(ValueError, "incomplete"):
-                validate(file, result["head"], result["pass"])
-
-    def test_ai_completion_requires_a_json_boolean(self):
-        with tempfile.TemporaryDirectory() as directory:
-            file = Path(directory) / "result.json"
-            result = {"head": "a" * 40, "pass": 1, "summary": "Checked the complete diff.", "findings": []}
-            for value in (None, 0, 1, "true", "false", [], {}):
-                with self.subTest(complete=value):
-                    result["complete"] = value
-                    file.write_text(json.dumps(result))
-                    with self.assertRaises(ValueError):
-                        validate(file, "a" * 40, 1)
 
 
 class WorkflowTests(unittest.TestCase):
@@ -230,9 +183,9 @@ class WorkflowTests(unittest.TestCase):
         header, jobs = fixture["pr.yml"].split("  governance:\n", 1)
         normal_job, missing_job = jobs.split("  missing_model_key:\n", 1)
         self.assertEqual(header, normal_header)
-        original = "    if: ${{ github.event.issue.pull_request }}\n"
-        normal_condition = "    if: ${{ github.event.issue.pull_request && github.repository == 'ejmlabs/.github' && !contains(github.event.issue.labels.*.name, 'acceptance:missing-model-key') }}\n"
-        missing_condition = "    if: ${{ github.event.issue.pull_request && github.repository == 'ejmlabs/.github' && contains(github.event.issue.labels.*.name, 'acceptance:missing-model-key') }}\n"
+        original = "    if: ${{ github.event.issue.pull_request || github.event_name == 'pull_request_target' }}\n"
+        normal_condition = "    if: ${{ (github.event.issue.pull_request || github.event_name == 'pull_request_target') && github.repository == 'ejmlabs/.github' && !contains(github.event.issue.labels.*.name, 'acceptance:missing-model-key') }}\n"
+        missing_condition = "    if: ${{ (github.event.issue.pull_request || github.event_name == 'pull_request_target') && github.repository == 'ejmlabs/.github' && contains(github.event.issue.labels.*.name, 'acceptance:missing-model-key') }}\n"
         self.assertTrue(normal_job.startswith(normal_condition))
         self.assertTrue(missing_job.startswith(missing_condition))
         self.assertEqual(normal_job.replace(normal_condition, original), original_job)

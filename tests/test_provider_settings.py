@@ -17,77 +17,21 @@ import build_workflows
 
 @unittest.skipUnless(importlib.util.find_spec("pr_agent"), "Pinned reviewer is not installed")
 class ProviderSettingsProof(unittest.TestCase):
-    def test_raw_xai_termination_survives_the_real_transform_and_handler(self):
-        self.assertEqual(version("litellm"), "1.105.0")
-        review = next(step for step in build_workflows.governance()["jobs"]["ai"]["steps"]
-                      if step.get("name") == "Independent automated review")
-        with tempfile.TemporaryDirectory() as directory:
-            env = {**review["env"], "HOME": directory, "RUNNER_TEMP": directory,
-                   "LITELLM_LOCAL_MODEL_COST_MAP": "True"}
-            with mock.patch.dict(os.environ, env, clear=True), \
-                    mock.patch("socket.socket.connect", side_effect=AssertionError("Network is forbidden")), \
-                    mock.patch("socket.create_connection", side_effect=AssertionError("Network is forbidden")), \
-                    mock.patch("socket.getaddrinfo", side_effect=AssertionError("Network is forbidden")), \
-                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                import httpx
-                import litellm
-                import reviewer_cli
-                from litellm.llms.xai.chat.transformation import XAIChatConfig
-                from pr_agent.config_loader import get_settings
-                from pr_agent.algo.ai_handlers import litellm_ai_handler
+    def test_label_gate_uses_the_reviewers_own_negative_answer_rule(self):
+        from pr_agent.algo.utils import is_value_no
+        import governance
+        for value in (None, "", "No", " no ", "NONE", "false", "False.", "No.", "Yes", "n/a", 0, 1, True, False, [], ["No"]):
+            with self.subTest(value=value):
+                self.assertEqual(governance.is_value_no(value), is_value_no(value))
 
-                get_settings().reload()
-                absent = object()
-                reasons = ("stop", None, absent, "", "error", "network_error", "unknown", "length", "content_filter")
-                pending = iter(reasons)
-                observed = []
-
-                async def completion(**kwargs):
-                    reason = next(pending)
-                    choice = {"index": 0, "message": {"role": "assistant", "content": "Synthetic review"}}
-                    if reason is not absent:
-                        choice["finish_reason"] = reason
-                    body = {"id": "offline", "model": "grok-4.5", "created": 1, "object": "chat.completion",
-                            "choices": [choice], "usage": {"completion_tokens": 1, "prompt_tokens": 1, "total_tokens": 2}}
-                    raw = httpx.Response(200, json=body, request=httpx.Request("POST", "https://example.invalid/offline"))
-                    response = XAIChatConfig().transform_response(
-                        model="grok-4.5", raw_response=raw, model_response=litellm.ModelResponse(),
-                        logging_obj=mock.Mock(), request_data={}, messages=[], optional_params={},
-                        litellm_params={}, encoding=mock.Mock())
-                    observed.append((response.choices[0].finish_reason, response.choices[0].provider_specific_fields))
-                    return response
-
-                def run():
-                    async def calls():
-                        handler = litellm_ai_handler.LiteLLMAIHandler()
-                        for _ in reasons:
-                            await handler._get_completion(model="xai/grok-4.5", messages=[])
-                    asyncio.run(calls())
-                    return 0
-
-                original_transform = XAIChatConfig.transform_response
-                original_completion = litellm_ai_handler.LiteLLMAIHandler._get_completion
-                with mock.patch.object(litellm_ai_handler, "acompletion", side_effect=completion), \
-                        mock.patch.object(reviewer_cli.cli, "run", side_effect=run):
-                    self.assertEqual(reviewer_cli.main(), 0)
-                self.assertIs(XAIChatConfig.transform_response, original_transform)
-                self.assertIs(litellm_ai_handler.LiteLLMAIHandler._get_completion, original_completion)
-                # Normal stop, null and absent are indistinguishable after the pinned
-                # transform; only the raw-response marker makes the latter two fail.
-                self.assertEqual(observed[:3], [("stop", {})] * 3)
-                self.assertEqual(Path(directory, "reviewer-finish-reasons.txt").read_text().splitlines(),
-                                 ["stop", "missing", "missing", "missing", "missing", "missing", "missing",
-                                  "length", "content_filter"])
-
-    def test_provider_reasoning_no_fallback_and_message_logging(self):
+    def test_provider_reasoning_and_no_fallback(self):
         self.assertEqual(version("pr-agent"), "0.48.0")
         self.assertEqual(version("litellm"), "1.105.0")
         review = next(step for step in build_workflows.governance()["jobs"]["ai"]["steps"]
-                      if step.get("name") == "Independent automated review")
-        self.assertEqual(review["env"]["LITELLM_MODE"], "PRODUCTION")
+                      if step.get("name") == "Automated review")
         with tempfile.TemporaryDirectory() as directory:
             dummy_key = "".join(chr(value) for value in (111, 102, 102, 108, 105, 110, 101, 45, 107, 101, 121))
-            env = {**review["env"], "XAI__KEY": dummy_key, "HOME": directory}
+            env = {**review["env"], "XAI__KEY": dummy_key, "HOME": directory, "LITELLM_LOCAL_MODEL_COST_MAP": "True"}
             with mock.patch.dict(os.environ, env, clear=True), \
                     mock.patch("socket.socket.connect", side_effect=AssertionError("Network is forbidden")), \
                     mock.patch("socket.create_connection", side_effect=AssertionError("Network is forbidden")), \
@@ -101,7 +45,6 @@ class ProviderSettingsProof(unittest.TestCase):
                 response = litellm.ModelResponse(choices=[{"message": {"content": "Offline response"}, "finish_reason": "stop"}])
                 with mock.patch.object(litellm_ai_handler, "acompletion", new_callable=mock.AsyncMock, return_value=response) as completion:
                     handler = litellm_ai_handler.LiteLLMAIHandler()
-                    self.assertIs(litellm.turn_off_message_logging, True)
                     self.assertEqual(get_settings().config.fallback_models, [])
                     result = asyncio.run(retry_with_fallback_models(
                         lambda model: handler.chat_completion(model, "Synthetic system", "Synthetic change")))

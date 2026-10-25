@@ -28,6 +28,13 @@ class SettingsSafetyTests(unittest.TestCase):
         self.assertEqual(allowed, [{"github_owned_allowed": False, "verified_allowed": False,
                                    "patterns_allowed": ["actions/*@*", "astral-sh/setup-uv@*", "ejmlabs/.github/*@*"]}])
 
+    def test_review_security_label_is_created_and_read_back(self):
+        with patch.object(settings, "api", return_value={}) as api:
+            settings.configure("ejm-cli", protect=False, hold=True)
+        posts = [call.args[2] for call in api.call_args_list if call.args[:2] == ("repos/ejmlabs/ejm-cli/labels", "POST")]
+        self.assertEqual([post["name"] for post in posts], ["Possible security concern"])
+        self.assertIn(("repos/ejmlabs/ejm-cli/labels/Possible%20security%20concern",), [call.args for call in api.call_args_list])
+
     def test_workflow_writer_must_be_a_human_maintainer(self):
         for role, kind in (("write", "User"), ("admin", "Bot")):
             with self.subTest(role=role, kind=kind), patch.object(settings, "api", return_value=[
