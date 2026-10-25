@@ -199,10 +199,12 @@ def consumer_workflows(revision, *, model_key="XAI_API_KEY"):
 on:
   issue_comment:
     types: [created, edited, deleted]
+  pull_request_target:
+    types: [unlabeled]
 permissions: {}
 jobs:
   governance:
-    if: ${{ github.event.issue.pull_request }}
+    if: ${{ github.event.issue.pull_request || github.event_name == 'pull_request_target' }}
     permissions:
       contents: read
       pull-requests: write
@@ -245,8 +247,8 @@ def missing_model_key_workflows(revision, *, model_key="XAI_API_KEY"):
     """Return the exact shared-only caller for staged missing-key acceptance."""
     documents = consumer_workflows(revision, model_key=model_key)
     header, job = documents["pr.yml"].split("  governance:\n", 1)
-    original = "    if: ${{ github.event.issue.pull_request }}\n"
-    scope = "github.event.issue.pull_request && github.repository == 'ejmlabs/.github'"
+    original = "    if: ${{ github.event.issue.pull_request || github.event_name == 'pull_request_target' }}\n"
+    scope = "(github.event.issue.pull_request || github.event_name == 'pull_request_target') && github.repository == 'ejmlabs/.github'"
     label = "contains(github.event.issue.labels.*.name, 'acceptance:missing-model-key')"
     normal = job.replace(original, "    if: ${{ " + scope + " && !" + label + " }}\n")
     missing = job.split("    secrets:\n", 1)[0].replace(original, "    if: ${{ " + scope + " && " + label + " }}\n")

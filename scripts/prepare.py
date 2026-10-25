@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Package admitted sources as data without running any project code."""
-import hashlib
 import json
 import os
 import re
@@ -12,8 +11,6 @@ from pathlib import Path
 MAX_SOURCE_FILES = 10_000
 MAX_SOURCE_BYTES = 128_000_000
 MAX_TREE_BYTES = 8_000_000
-MAX_DIFF_FILES = 200
-MAX_DIFF_BYTES = 1_000_000
 HARNESS_REPOSITORY = "ejmlabs/ejm-harness"
 HARNESS_PIN = ".github/harness-revision"
 MAX_HARNESS_METADATA_BYTES = 8_000_000
@@ -88,65 +85,6 @@ def source_archive(root, sha, prefix, format_):
             attributes.unlink(missing_ok=True)
         else:
             attributes.write_bytes(original)
-
-
-def compare_url(repository, base, head):
-    full_sha(base)
-    full_sha(head)
-    if not re.fullmatch(r"[A-Za-z0-9-]+/[A-Za-z0-9_.-]+", repository):
-        raise ValueError("Invalid GitHub repository")
-    return "https://api.github.com/repos/" + repository + "/compare/" + base + "..." + head
-
-
-def review_diff(repository, base, head, token):
-    request = urllib.request.Request(compare_url(repository, base, head), headers={
-        "Authorization": "Bearer " + token, "Accept": "application/vnd.github.v3.diff",
-    })
-    with urllib.request.urlopen(request, timeout=30) as response:
-        patch = response.read(MAX_DIFF_BYTES + 1)
-    files = len(re.findall(br"^diff --git ", patch, re.M))
-    if not patch or len(patch) > MAX_DIFF_BYTES or not files or files > MAX_DIFF_FILES:
-        raise ValueError("Empty or oversized review diff; split the PR")
-    return patch
-
-
-def changed_files(repository, base, head, token):
-    """Fetch file identities and line counts independently of the diff stream."""
-    request = urllib.request.Request(compare_url(repository, base, head), headers={
-        "Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
-    })
-    with urllib.request.urlopen(request, timeout=30) as response:
-        data = response.read(MAX_TREE_BYTES + 1)
-    if len(data) > MAX_TREE_BYTES:
-        raise ValueError("Oversized changed-file manifest")
-    comparison = json.loads(data)
-    files = comparison.get("files")
-    if not isinstance(files, list) or not 1 <= len(files) <= MAX_DIFF_FILES:
-        raise ValueError("Missing or oversized changed-file manifest")
-    modes = {}
-    for root, revision in (("base", base), ("product", head)):
-        tree = run("git", "-C", root, "ls-tree", "-r", "-z", full_sha(revision))
-        if len(tree) > MAX_TREE_BYTES:
-            raise ValueError("Oversized changed-file tree")
-        modes[root] = {entry.split(b"\t", 1)[1].decode("utf-8"): entry.split()[0].decode("ascii")
-                       for entry in tree.rstrip(b"\0").split(b"\0") if entry}
-    manifest = []
-    seen = set()
-    for item in files:
-        name, status = item["filename"], item["status"]
-        source = None if status == "added" else item["previous_filename"] if status == "renamed" else name
-        target = None if status == "removed" else name
-        if (not isinstance(name, str) or not name or name in seen
-                or status not in ("added", "removed", "modified", "renamed")
-                or any(type(item.get(key)) is not int or item[key] < 0 for key in ("additions", "deletions"))
-                or ("patch" in item and not isinstance(item["patch"], str))):
-            raise ValueError("Invalid changed-file manifest")
-        seen.add(name)
-        manifest.append({"source": source, "target": target, "status": status,
-                         "additions": item["additions"], "deletions": item["deletions"], "has_patch": "patch" in item,
-                         "old_mode": modes["base"].get(source),
-                         "new_mode": modes["product"].get(target)})
-    return manifest
 
 
 def harness_pin(root, revision):
@@ -258,8 +196,7 @@ def archive_harness(selection):
     tree = full_sha(run("git", "-C", "harness", "rev-parse", "HEAD^{tree}").decode().strip())
     if selection.get("tree", tree) != tree:
         raise ValueError("Harness checkout tree does not match source authority")
-    data = source_archive("harness", revision, "ejm-harness", "tar")
-    return data, {**selection, "tree": tree, "archive_sha256": hashlib.sha256(data).hexdigest()}
+    return source_archive("harness", revision, "ejm-harness", "tar")
 
 
 def main():
@@ -288,19 +225,13 @@ def main():
     out = Path("prepared")
     out.mkdir()
     (out / "product.tar").write_bytes(source_archive("product", head, "product", "tar"))
-    context = {"repository": repository, "pr": int(os.environ["PR_NUMBER"]), "head": head, "base": base}
     if selection is not None:
-        data, context["harness"] = archive_harness(selection)
-        (out / "harness.tar").write_bytes(data)
+        (out / "harness.tar").write_bytes(archive_harness(selection))
     ui = ui_revision("base")
     if ui:
         if run("git", "-C", "ejm-ui", "cat-file", "-t", ui).strip() != b"commit":
             raise ValueError("UI source pin must name a commit, not a tree or tag")
         (out / "ui.tar").write_bytes(source_archive("ejm-ui", ui, "ejm-ui", "tar"))
-        context["ui_source"] = {"repository": "ejmlabs/ejm-ui", "revision": ui}
-    (out / "change.patch").write_bytes(review_diff(repository, base, head, os.environ["GH_TOKEN"]))
-    context["files"] = changed_files(repository, base, head, os.environ["GH_TOKEN"])
-    (out / "context.json").write_text(json.dumps(context))
 
 
 if __name__ == "__main__":

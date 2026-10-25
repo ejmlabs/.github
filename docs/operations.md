@@ -44,89 +44,66 @@ explicit revocation and a new human command.
 | --- | --- |
 | Changed files | 200 |
 | Added and deleted lines | 12,000 |
-| Diff bytes | 1 MB |
 | Preparation | 5 minutes |
 | Quality | 45 minutes |
 | Separate registry gate | 25 minutes |
-| Each AI review | 9 minutes within a 12-minute job |
-| Reviewer command | 480 seconds |
-| Forced termination after timeout | 15 seconds |
-| Each model call | 225 seconds, at most two attempts |
-| Model token cap | 160,000; never above 180,000 |
-| Model output token cap | 16,000 |
-| Validated result | 64 KB and 50 findings |
+| AI review job | 12 minutes |
+| Each model call | 225 seconds |
 | Source handoff artifacts | 3 days |
 
-Two independent automated reviews run serially through a pinned open-source
-reviewer at high reasoning effort, with no fallback model. The owner accepted
-diff-only review as an owner decision, not a pilot
-result. Available extracted head sources provide static context.
-The installer creates a fresh virtual environment in runner temp and uses an
-isolated package installer with a hash-locked file covering every dependency, wheels
-only, and no cache or dependency resolution. Critical, high and medium findings
-block; low findings are advisory.
-A failed required check blocks merge.
+The AI review gate uses the pinned open-source reviewer's documented GitHub
+Action setup and label blocking, with no custom result rules:
 
-Revisions with the completion guard require `complete` as a JSON boolean and
-accept only `true`. Missing, nonboolean or false values fail, even with no
-findings. A trusted adapter binds the result to the admitted head and pass and
-fails closed on a missing or failed reviewer exit, malformed output, unsafe
-paths, coverage warnings, clipped patches, failed chunks, or exceeded result
-limits. A precheck records files excluded by the reviewer's file filter and,
-for ejmlabs/.github only, strips exact build-generated workflow paths
-verified by the workflow build check. Binary-only exclusions and deleted SVG
-files (status removed, mode 100644) are listed as not model-reviewed and do
-not make the review incomplete. Two narrow deterministic checks also cover
-skipped text files, and the result records their fixed codes:
-`lock-manifest-mirror v1` accepts a `package-lock.json` change only when its
-sibling `package.json` changes in the same diff and the lockfile change is
-limited to the root dependency-range maps that mirror it exactly, with no
-resolved, integrity, version or package entry change; `svg-allowlist v1`
-accepts an added or modified mode 100644 SVG only under
-`packages/tokens/assets/`, at most 128 KiB, parsed strictly with an element and
-attribute allowlist and no DTD, entities, processing instructions, CDATA,
-comments or prefixed attributes. Every other lockfile, SVG and skipped text
-hunk, renames into skipped or generated paths, coverage warnings, and
-clipped text stay fail-closed. The
-security-concerns field is required. Security concerns produce
-high findings, and credential-like text is redacted. Only a fixed list of
-negative security answers counts as no concern after whitespace is normalized;
-any other answer still adds a high finding. A blocked pass appends its
-validated findings to the job step summary as inert, size-bounded text and
-still blocks if that write is skipped or fails. Missing material context
-must be reported as a finding. These checks
-cannot prove correctness, so human review and the other gates remain necessary.
-Older pinned revisions do not gain new validation automatically.
-Metadata-only PRs remain fail-closed and require a human review.
+- `ai` (needs admission, protected environment `legacy-review`) rechecks
+  admission, requires the model key, installs the hash-locked reviewer, runs
+  its GitHub Action runner for the admitted PR and rechecks admission. Only
+  review runs, at high reasoning effort with no fallback model. The runner's
+  fail-on-tool-errors setting stays at its default, so the job fails when no
+  review happens. Its token has `contents: read`, `pull-requests: write` (for
+  the review comment and labels) and `statuses: read`. It reads the PR through
+  the API and never checks out or runs PR code. File handling, context limits
+  and prompts are the reviewer's defaults. Repository and global reviewer
+  settings files are ignored.
+- The review publishes the reviewer's own labels: `Possible security concern`
+  and `Review effort N/5`, and a merge recommendation in its comment.
+- `labels` (needs `ai`, `pull-requests: read`) fails when the PR carries the
+  `Possible security concern` label. Effort labels and the merge
+  recommendation are advisory.
+- `finish` publishes **AI review** as success only when both jobs passed for
+  the admitted commit. A label failure gets the fixed description "Blocked by
+  a review label; a maintainer may remove it to override".
+- Override: a maintainer reviews the concern and removes the label. GitHub
+  records the removal in the PR timeline. Callers also trigger on
+  `pull_request_target` `unlabeled`, which runs the `override` job from
+  trusted main with no secrets, no checkout and `statuses: write`. It changes
+  **AI review** to success only when the current head's status is that
+  label-blocked failure, the remover is a current human maintain or admin
+  user, and no blocking label remains. It never runs before a completed
+  review of the current head. Any other removal leaves the status unchanged.
+
+Create the `Possible security concern` label in each repository before
+adoption. The reviewer logs, but does not fail on, a label publication error,
+so a missing label would not block; check the review comment's security
+section during maintainer approval.
+
+A failed required check blocks merge. These checks cannot prove correctness,
+so human review and the other gates remain necessary. Metadata-only PRs remain
+fail-closed and require a human review.
 
 Builds receive no model key, source-read secret, deployment credential or
 write token. Never reuse a cache produced by PR code in a privileged job.
-The review step clears inherited repository token variables. Only that step
-receives the model key, through its environment. Installation has no model key.
-The reviewer uses extracted head sources for static context, with repository
-and global settings disabled. Preparation removes links and special files from
-the head sources. Ignore patterns are cleared, workflow output is disabled, and
-the model cost map uses the installed local data. Isolated module loading
-prevents those sources from shadowing installed modules. No PR code runs in the review
-job. Keep unrelated
-credentials out of the job.
-
-Reviewer stdout and stderr stay in runner-local files and are never printed or
-uploaded. Review-result artifact upload is removed. Local findings are bounded,
-redacted, and sanitized to remove links, images, HTML, and mention markers.
-Adapter and validation logs contain counts and status. Use INFO logging, zero
-verbosity, and disabled message logging only.
-Never enable step or runner debug logging on this path. Preparation and review
-jobs reject runner debug mode before processing sources or using the model key.
+Installation has no token or model key. Only the review step receives the model
+key and the job token. Use INFO logging. Never enable step or runner debug
+logging on this path. Preparation and review jobs reject runner debug mode
+before processing sources or using the model key.
 
 Use only provider prepaid credits on a dedicated account, invoiced billing limit $0,
 automatic top-up off, and an ACL-restricted key limited to the configured model and chat
 endpoint, with request and token rate limits. Review provider audit logs weekly.
 The service sends alerts at 50% and 80% of the credit balance. Hostile diffs
 reaching the provider are an accepted defensive-use risk. These provider-side
-controls are REQUIRED. The token cap is 160,000 and must never exceed 180,000;
-oversized or clipped changes fail closed and require a human review or a split.
-Caps by tier are T0 32,000, T1 64,000, T2 128,000, T3 160,000; all PRs are T3 for now.
+controls are REQUIRED. The reviewer's default context limit applies; files it
+leaves out are listed in its comment and need human review.
 The prepaid balance is raised by stage and is currently $50.
 Set a separate workflow execution budget and
 alerts. Per-run limits do not cap aggregate spending. Restrict repository
@@ -138,7 +115,7 @@ The explicit `ejm-ui` profile defines the requirements for a future adoption
 by the owner of the `@ejm/*` UI contracts, tokens, themes, and shared site tools.
 It requires `README.md#development` as the contributor guide and uses the same
 five required statuses, human maintainer decisions, exact-commit approval and
-revocation rules, two serial independent automated reviews, spending bounds,
+revocation rules, the automated review gate, spending bounds,
 replay rejection, and source-release checks as the
 other profiles. It needs no private harness source or cross-repository token.
 
@@ -221,39 +198,6 @@ The public font fixtures separately exercise the unchanged hash allowlist.
 Neither fixture set establishes that a private owner checkout satisfies this
 contract. That requires the separate review and adoption evidence above.
 
-## Static workflow review data
-
-Before changing a caller pin, include the exact old and new implementations
-as bounded review data. Run the exporter from a local checkout containing
-both canonical commits:
-
-```sh
-python3 scripts/export_review_context.py \
-  --old FULL_OLD_IMPLEMENTATION_SHA \
-  --new FULL_NEW_IMPLEMENTATION_SHA \
-  --destination /path/to/repository/.github/review-context
-```
-
-Use a new destination without symlink parents. For later rotations, export
-to fresh staging and replace the old pair in the same PR as both caller pins.
-Do not accumulate historical copies.
-
-The exporter reads a fixed set of 16 files: reusable workflows, generator,
-runtime scripts, prompt, schema and community templates. It writes ordinary,
-nonexecutable files plus commit, tree, blob, mode, size and SHA-256 metadata.
-The combined data must fit within 750,000 bytes. It neither fetches nor
-executes source, and archive attributes cannot hide selected blobs.
-
-Compare exported bytes with canonical Git objects and protected
-`workflow-pins/FULL_SHA` refs before human admission. A local manifest alone
-does not establish remote provenance; the installed workflow does not
-authenticate these snapshots automatically. The old revision must match the
-trusted default caller, and the new revision the proposed callers.
-
-Builds must not import or execute review data. Keep model network and repository
-credentials disabled. Keep a pin change unmerged until the required source is
-available and both reviews complete.
-
 ## Studio quality entry
 
 Studio must provide `scripts/check.mjs` before adopting a shared revision with
@@ -270,13 +214,6 @@ does not select the asset layout. These commands run in the admitted Quality job
 without credentials and stop at the first failure. Keep the entry when replacing
 retained assets. Adopt shared revisions through reviewed caller pin updates.
 A shared policy test does not prove a hosted Studio run or site deployment.
-
-For entry changes, supply the relevant consumer call path as
-[bounded Studio source context](../review/consumer-sources/ejmlabs/README.md).
-Its manifest pins the public owner commit and each copied blob. Keep these
-read-only sources separate from canonical workflow review data, retain their
-rights notice, and never execute them in shared checks. Static copies do not
-replace the consumer's admitted Quality run.
 
 ## CLI quality prerequisites
 
@@ -319,20 +256,16 @@ API reads are bounded; later changes to harness `main` cannot substitute a
 different checked-out revision.
 
 Preparation verifies the actual harness checkout against the selected pin.
-The source handoff binds the dependency revision, tree, protected-main
-authority and archive SHA-256 in `context.json`. Quality uses that archive
-with the admitted CLI source and lockfile. Both AI passes receive the same
-context as static data, with no checkout credential in their model steps.
-IDE retains trusted-base harness selection.
+The source handoff carries that archive. Quality uses it with the admitted CLI
+source and lockfile. IDE retains trusted-base harness selection.
 
 Adopt this selector separately from a dependency update:
 
 1. Check the shared policy tests, generated workflows and actionlint. Obtain
-   both complete hosted reviews and all required protected checks, then retain
+   a complete hosted review and all required protected checks, then retain
    the exact implementation under `workflow-pins/FULL_SHA`.
 2. Adopt the retained workflow revision in a protected CLI caller change while
-   keeping its working harness pin and lock. Export and verify the canonical
-   old/new workflow source pair for that change.
+   keeping its working harness pin and lock.
 3. Submit the new harness pin and matching lock together, based on reviewed
    protected harness history. Require fresh exact-head human decisions and the
    full hosted consumer gate.
@@ -373,7 +306,7 @@ uses `secrets: inherit`. Changing the label starts no workflow. Product callers
 do not accept this fixture form.
 
 Use a dedicated, unmerged acceptance PR with fresh exact-head human readiness
-and approval. Verify that both model jobs stop at the missing-key guard before
+and approval. Verify that the model job stops at the missing-key guard before
 the reviewer runs. Inspect step states, all five statuses and the native review.
 Keep the fixture unmerged and remove its label when closing it.
 
@@ -395,7 +328,7 @@ audit affected runs and readmit work only after containment.
 
 Public harness source needs no private checkout token. Pin its exact revision
 in `.github/harness-revision`; trusted preparation archives it for the
-credential-free build and review jobs. Remove unused source-read secrets once
+credential-free build jobs. Remove unused source-read secrets once
 anonymous access to every required pin is verified. Never replace a missing
 source contract with a broad personal token.
 
@@ -425,8 +358,8 @@ Trusted preparation reads the dependency from protected main, validates the
 proposed metadata without using it to select a checkout, then archives the
 exact committed UI tree with the existing source file and byte bounds. Archive
 attributes cannot omit or rewrite files. Product and dependency archives share
-one immutable artifact identity. The reviewer receives their static source;
-credential-free Quality and registry jobs receive the same data. Those build
+one immutable artifact identity. Credential-free Quality and registry jobs
+receive that data. Those build
 jobs install the UI lockfile with lifecycle scripts disabled when needed. No
 product script executes in source preparation or result publication.
 
@@ -456,9 +389,9 @@ Adopt the corrected caller pin through review; preserve the original notices.
 
 The coupled PR caller update also adopts the reviewed CLI harness selector,
 optional public UI source handoff, and UI owner profile. Shared checks retain
-their human admission, completion guard, two independent automated reviews,
-required statuses, and separate missing-model-key route. Studio keeps its public
-`scripts/check.mjs` quality entry and bounded consumer source context. This
+their human admission, automated review gate, required statuses, and separate
+missing-model-key route. Studio keeps its public `scripts/check.mjs` quality
+entry. This
 change adds no UI source pin and updates no product caller. It does not prove a first draft release or
 duplicate-tag refusal; those paths still require separate authorized runs.
 
@@ -532,8 +465,7 @@ member readiness and recovery access; that is a separate access change.
 Inspect actual runs, immutable artifacts, reviewer transcripts and source
 identities before claiming installed behavior. A green adoption PR may have
 run the previous caller; it does not prove execution of the new one. Actual
-reviews must match the admitted head and pass and meet the installed result
-schema. Recheck every required status, native approval and exact head before
+reviews must match the admitted head. Recheck every required status, native approval and exact head before
 normal protected merge.
 
 Keep genuine outside-contributor, bot, nonmaintainer and fork event tests open
@@ -545,6 +477,11 @@ product's security and contributor guides.
 
 ## Decision log
 
+- **2026-10-25, documented reviewer gating.** The owner decided to replace
+  the custom review gate with the reviewer's documented GitHub Action runner
+  and label blocking. The custom result adapter, two passes, coverage rules,
+  negative-answer list and static review data were removed. This supersedes
+  the interim decision below.
 - **2026-10-25, deterministically covered files (interim).** The owner
   approved at 02:14 PT the two narrow checks `lock-manifest-mirror v1` and
   `svg-allowlist v1` described above, ahead of the full deterministically

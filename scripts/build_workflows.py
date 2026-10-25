@@ -14,27 +14,9 @@ DOWNLOAD = "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
 # Provider settings are confined to these constants and the review-step key env.
 REVIEWER_MODEL = "xai/grok-4.5"
 REVIEWER_FALLBACK_MODELS = '[]'
-REVIEW_TOKEN_CAPS = {"T0": 32000, "T1": 64000, "T2": 128000, "T3": 160000}
-REVIEW_TOKEN_CEILING = 180000
-DEFAULT_REVIEW_TIER = "T3"
-REVIEWER_MAX_OUTPUT_TOKENS = 16000
-REVIEWER_AI_TIMEOUT = 225
-REVIEWER_MODEL_ATTEMPTS = 2
 REVIEWER_REASONING_EFFORT = "high"
-REVIEWER_PROPAGATE_TOOL_ERRORS = "true"
-REVIEWER_USE_REPO_SETTINGS_FILE = "false"
-REVIEWER_USE_GLOBAL_SETTINGS_FILE = "false"
-REVIEWER_NUM_MAX_FINDINGS = 50
-REVIEWER_ENABLE_REVIEW_COVERAGE_FOOTER = "true"
-REVIEWER_LOG_LEVEL = "INFO"
-REVIEWER_VERBOSITY_LEVEL = "0"
-REVIEWER_TURN_OFF_MESSAGE_LOGGING = "true"
-REVIEWER_TIMEOUT_SECONDS = 480
-REVIEWER_KILL_AFTER_SECONDS = 15
-REVIEWER_TIMEOUT_MINUTES = 9
+REVIEWER_AI_TIMEOUT = 225
 REVIEWER_JOB_TIMEOUT_MINUTES = 12
-REVIEWER_INSTRUCTIONS = (ROOT / "review/reviewer-instructions.md").read_text()
-
 
 def yaml(value, indent=0):
     """Emit the limited maps, lists and strings used here, without dependencies."""
@@ -81,31 +63,6 @@ REJECT_DEBUG = run("Require private review logs", python("""import os
 if os.environ.get('RUNNER_DEBUG') == '1':
     raise SystemExit('Runner diagnostics must be disabled for review')
 """))
-REVIEWER_COVERAGE_CHECK = source("pr_agent_result.py", True) + """
-skipped_output = Path(sys.argv[2])
-skipped_output.write_text('[]')
-from unidiff import PatchSet
-from pr_agent.algo.language_handler import is_valid_file
-change_path = Path(sys.argv[1])
-context = read_json(sys.argv[3], 1_000_000)
-repository = context.get('repository') if isinstance(context, dict) else None
-patch = read(change_path)
-patch, excluded = strip_excluded_review_paths(patch, repository)
-if excluded:
-    change_path.write_text(patch)
-check_patch(patch, context.get('files') if isinstance(context, dict) else None, repository)
-files = PatchSet(patch)
-if not files:
-    raise ValueError('Missing changed files')
-skipped = []
-for file in files:
-    name = git_path(file.source_file if file.target_file == '/dev/null' else file.target_file)
-    if name.startswith(('a/', 'b/')):
-        name = name[2:]
-    if not is_valid_file(name):
-        skipped.append(name)
-skipped_output.write_text(json.dumps(skipped + excluded))
-"""
 ARTIFACT = {"uses": DOWNLOAD, "with": {"artifact-ids": "${{ needs.prepare.outputs.artifact }}", "merge-multiple": True, "path": "prepared"}}
 EXTRACT = run("Extract source data safely", """python3 - <<'PY'
 import tarfile
@@ -138,7 +95,7 @@ def governance():
                   {"uses": CHECKOUT, "if": "${{ steps.harness.outputs.revision != '' }}", "with": {"repository": "ejmlabs/ejm-harness", "ref": "${{ steps.harness.outputs.revision }}", "path": "harness", "persist-credentials": False, "token": "${{ secrets.EJM_HARNESS_TOKEN || github.token }}"}},
                   run("Read optional public UI dependency from trusted main", python(source("prepare.py"), "ui-pin"), id="ui"),
                   {"uses": CHECKOUT, "if": "${{ steps.ui.outputs.revision != '' }}", "with": {"repository": "ejmlabs/ejm-ui", "ref": "${{ steps.ui.outputs.revision }}", "path": "ejm-ui", "persist-credentials": False, "fetch-depth": 1, "submodules": False}},
-                  run("Archive source and bounded diff", python(source("prepare.py"))), VERIFY,
+                  run("Archive admitted source", python(source("prepare.py"))), VERIFY,
                   {"uses": UPLOAD, "id": "sources", "with": {"name": "admitted-sources", "path": "prepared/", "retention-days": 3, "if-no-files-found": "error"}}],
     }
     quality = {
@@ -222,88 +179,45 @@ if [ "$reviewer_status" -ne 0 ]; then
   exit "$reviewer_status"
 fi
 """
-    review = """set +e
-cd reviewer/review-data/product &&
-mkdir .git &&
-""" + python(source("reviewer_cli.py"),
-        '--diff-file "$GITHUB_WORKSPACE/reviewer/review-data/change.patch" --output "$RUNNER_TEMP/review.md" --json-output "$RUNNER_TEMP/review.json" review > "$RUNNER_TEMP/reviewer.log" 2>&1',
-        executable='timeout -k ' + str(REVIEWER_KILL_AFTER_SECONDS) + ' ' + str(REVIEWER_TIMEOUT_SECONDS) + ' "$RUNNER_TEMP/reviewer-venv/bin/python" -I') + """reviewer_status=$?
-printf '%s\\n' "$reviewer_status" > "$RUNNER_TEMP/reviewer-exit-code"
-printf 'reviewer exit %s\\n' "$reviewer_status"
-exit 0
+    # The documented action runner reviews the admitted PR through the API; no PR code is checked out here.
+    review = """printf '{"action":"opened","pull_request":{"url":"https://api.github.com/repos/%s/pulls/%s"}}' "$GITHUB_REPOSITORY" "$PR_NUMBER" > "$RUNNER_TEMP/review-event.json"
+cd "$RUNNER_TEMP"
+GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="$RUNNER_TEMP/review-event.json" "$RUNNER_TEMP/reviewer-venv/bin/python" -I -m pr_agent.servers.github_action_runner
 """
     ai = {
-        "needs": ["admission", "prepare"], "if": "${{ github.run_attempt == 1 && needs.admission.outputs.run == 'true' }}", "runs-on": "ubuntu-24.04", "timeout-minutes": REVIEWER_JOB_TIMEOUT_MINUTES,
+        "needs": "admission", "if": "${{ github.run_attempt == 1 && needs.admission.outputs.run == 'true' }}", "runs-on": "ubuntu-24.04", "timeout-minutes": REVIEWER_JOB_TIMEOUT_MINUTES,
         "environment": "legacy-review",
-        "permissions": {"contents": "read", "pull-requests": "read", "statuses": "read"}, "env": ENV,
-        "strategy": {"fail-fast": False, "max-parallel": 1, "matrix": {"pass": [1, 2]}},
-        "steps": [REJECT_DEBUG, VERIFY, ARTIFACT,
-                  run("Prepare trusted reviewer directory and isolated configuration", """python3 - <<'PY'
-import json, os, stat, tarfile
-from pathlib import Path
-root = Path('reviewer/review-data')
-root.mkdir(parents=True)
-for file in sorted(Path('prepared').glob('*.tar')):
-    with tarfile.open(file) as archive: archive.extractall(root, filter='data')
-product = root / 'product'
-if not stat.S_ISDIR(product.lstat().st_mode):
-    product.unlink()
-    product.mkdir()
-unsafe = []
-for directory, directories, files in os.walk(product, followlinks=False):
-    for name in directories + files:
-        entry = Path(directory) / name
-        info = entry.lstat()
-        if stat.S_ISDIR(info.st_mode):
-            continue
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink > 1:
-            unsafe.append(entry)
-            if name in directories:
-                directories.remove(name)
-for entry in unsafe:
-    entry.unlink()
-for name in ('context.json', 'change.patch'):
-    (root / name).write_bytes((Path('prepared') / name).read_bytes())
-context = json.loads((root / 'context.json').read_text())
-context['pass'] = int(os.environ['REVIEW_PASS'])
-(root / 'context.json').write_text(json.dumps(context))
-Path(os.environ['RUNNER_TEMP'], 'review-home').mkdir()
-if os.environ['HAS_MODEL_KEY'] != 'true': raise ValueError('the model key is required; review fails closed')
-PY
-""", env={"REVIEW_PASS": "${{ matrix.pass }}", "HAS_MODEL_KEY": "${{ secrets.XAI_API_KEY != '' }}"}),
+        "permissions": {"contents": "read", "pull-requests": "write", "statuses": "read"}, "env": ENV,
+        "steps": [REJECT_DEBUG, VERIFY,
+                  run("Require the review model key", 'test "$HAS_MODEL_KEY" = true\n', env={"HAS_MODEL_KEY": "${{ secrets.XAI_API_KEY != '' }}"}),
                   run("Install the pinned reviewer", install, env={"GH_TOKEN": "", "GITHUB_TOKEN": "", "PIP_CONFIG_FILE": "/dev/null"}),
-                  run("Check reviewer file coverage", python(REVIEWER_COVERAGE_CHECK,
-                      '"$GITHUB_WORKSPACE/reviewer/review-data/change.patch" "$RUNNER_TEMP/reviewer-skipped.txt" "$GITHUB_WORKSPACE/reviewer/review-data/context.json" > "$RUNNER_TEMP/reviewer-precheck.log" 2>&1',
-                      executable='"$RUNNER_TEMP/reviewer-venv/bin/python" -I'), env={
-                          "GH_TOKEN": "", "GITHUB_TOKEN": "", "CONFIG__USE_REPO_SETTINGS_FILE": "false",
-                          "CONFIG__USE_GLOBAL_SETTINGS_FILE": "false", "LITELLM_LOCAL_MODEL_COST_MAP": "True"}),
-                  run("Independent automated review", review, **{"timeout-minutes": REVIEWER_TIMEOUT_MINUTES}, env={
-                      "GH_TOKEN": "", "GITHUB_TOKEN": "", "XAI__KEY": "${{ secrets.XAI_API_KEY }}",
-                      "HOME": "${{ runner.temp }}/review-home", "LOG_LEVEL": REVIEWER_LOG_LEVEL,
-                      "IGNORE__GLOB": "[]", "IGNORE__REGEX": "[]", "GITHUB_ACTION_CONFIG__ENABLE_OUTPUT": "false",
-                      "LITELLM_LOCAL_MODEL_COST_MAP": "True",
-                      "LITELLM_MODE": "PRODUCTION",
-                      "CONFIG__VERBOSITY_LEVEL": REVIEWER_VERBOSITY_LEVEL,
-                      "LITELLM__TURN_OFF_MESSAGE_LOGGING": REVIEWER_TURN_OFF_MESSAGE_LOGGING,
+                  run("Automated review", review, env={
+                      "GITHUB_TOKEN": "${{ github.token }}", "XAI__KEY": "${{ secrets.XAI_API_KEY }}",
                       "CONFIG__MODEL": REVIEWER_MODEL, "CONFIG__FALLBACK_MODELS": REVIEWER_FALLBACK_MODELS,
-                      "CONFIG__MAX_MODEL_TOKENS": str(REVIEW_TOKEN_CAPS[DEFAULT_REVIEW_TIER]), "CONFIG__MAX_OUTPUT_TOKENS": str(REVIEWER_MAX_OUTPUT_TOKENS),
-                      "CONFIG__AI_TIMEOUT": str(REVIEWER_AI_TIMEOUT), "CONFIG__REASONING_EFFORT": REVIEWER_REASONING_EFFORT,
-                      "CONFIG__PROPAGATE_TOOL_ERRORS": REVIEWER_PROPAGATE_TOOL_ERRORS,
-                      "CONFIG__USE_REPO_SETTINGS_FILE": REVIEWER_USE_REPO_SETTINGS_FILE,
-                      "CONFIG__USE_GLOBAL_SETTINGS_FILE": REVIEWER_USE_GLOBAL_SETTINGS_FILE,
-                      "PR_REVIEWER__NUM_MAX_FINDINGS": str(REVIEWER_NUM_MAX_FINDINGS),
-                      "PR_REVIEWER__ENABLE_REVIEW_COVERAGE_FOOTER": REVIEWER_ENABLE_REVIEW_COVERAGE_FOOTER,
-                      "PR_REVIEWER__EXTRA_INSTRUCTIONS": REVIEWER_INSTRUCTIONS}),
-                  run("Adapt reviewer output", python(source("pr_agent_result.py"), '"$RUNNER_TEMP/review.json" "$RUNNER_TEMP/review.md" "$RUNNER_TEMP/reviewer-exit-code" reviewer/review-data/context.json reviewer/review-data/change.patch "$RUNNER_TEMP/reviewer-skipped.txt" "$PR_HEAD" "$REVIEW_PASS" review-result.json'), env={"PR_HEAD": "${{ needs.admission.outputs.head }}", "REVIEW_PASS": "${{ matrix.pass }}"}),
-                  run("Validate the exact head, pass, and bounded review output", python(source("review_result.py"), 'review-result.json "$PR_HEAD" "$REVIEW_PASS"'), env={"PR_HEAD": "${{ needs.admission.outputs.head }}", "REVIEW_PASS": "${{ matrix.pass }}"}),
+                      "CONFIG__REASONING_EFFORT": REVIEWER_REASONING_EFFORT, "CONFIG__AI_TIMEOUT": str(REVIEWER_AI_TIMEOUT),
+                      "CONFIG__LOG_LEVEL": "INFO",
+                      "CONFIG__USE_REPO_SETTINGS_FILE": "false", "CONFIG__USE_GLOBAL_SETTINGS_FILE": "false",
+                      "GITHUB_ACTION_CONFIG__AUTO_REVIEW": "true", "GITHUB_ACTION_CONFIG__AUTO_DESCRIBE": "false",
+                      "GITHUB_ACTION_CONFIG__AUTO_IMPROVE": "false",
+                      "PR_REVIEWER__ENABLE_REVIEW_LABELS_SECURITY": "true", "PR_REVIEWER__ENABLE_REVIEW_LABELS_EFFORT": "true",
+                      "PR_REVIEWER__REQUIRE_MERGE_RECOMMENDATION": "true"}),
                   VERIFY],
     }
-    finish = {"needs": ["admission", "prepare", "quality", "registry", "standards", "ai"],
+    labels = {"needs": ["admission", "ai"], "if": "${{ github.run_attempt == 1 && needs.admission.outputs.run == 'true' }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
+              "permissions": {"pull-requests": "read"}, "env": {"PR_NUMBER": "${{ needs.admission.outputs.pr }}", "GH_TOKEN": "${{ github.token }}"},
+              "steps": [run("Fail on blocking review labels", python(source("governance.py"), "labels"))]}
+    # Removing a review label is the logged maintainer override; re-evaluate only a completed, label-blocked review.
+    override = {"if": "${{ github.run_attempt == 1 && github.event_name == 'pull_request_target' && github.event.action == 'unlabeled' }}",
+                "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
+                "permissions": {"contents": "read", "pull-requests": "read", "statuses": "write"},
+                "concurrency": {"group": "human-command-${{ github.repository }}-${{ github.event.pull_request.number }}", "cancel-in-progress": False},
+                "steps": [run("Re-evaluate the review after a label removal", python(source("governance.py"), "relabel"), env={"GH_TOKEN": "${{ github.token }}"})]}
+    finish = {"needs": ["admission", "prepare", "quality", "registry", "standards", "ai", "labels"],
               "if": "${{ github.run_attempt == 1 && always() && needs.admission.outputs.run == 'true' }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
               "permissions": {"contents": "read", "pull-requests": "write", "statuses": "write"},
               "env": {**ENV, "JOB_RESULTS": "${{ toJSON(needs) }}"},
               "steps": [run("Publish required results only after live admission validation", python(source("governance.py"), "finish"))]}
-    return {"name": "Human-admitted PR checks", "on": {"workflow_call": {"secrets": {"XAI_API_KEY": {"required": False}, "EJM_HARNESS_TOKEN": {"required": False}}}}, "permissions": {}, "jobs": {"admission": admission, "prepare": prepare, "quality": quality, "registry": registry, "standards": standards, "ai": ai, "finish": finish}}
+    return {"name": "Human-admitted PR checks", "on": {"workflow_call": {"secrets": {"XAI_API_KEY": {"required": False}, "EJM_HARNESS_TOKEN": {"required": False}}}}, "permissions": {}, "jobs": {"admission": admission, "prepare": prepare, "quality": quality, "registry": registry, "standards": standards, "ai": ai, "labels": labels, "finish": finish, "override": override}}
 
 
 def release_workflow():
