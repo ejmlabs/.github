@@ -384,11 +384,12 @@ checks.
 
 ## Community policy adoption
 
-The proposed contributor wording and repository-specific private reporting
-routes are staged in `templates/community-next/`. The current caller pin still
-embeds the existing community templates and requires an exact match, so the
-canonical templates and installed guides retain that policy. Activate the
-staged policies through a separate reviewed caller and policy adoption.
+Canonical `templates/community/` contributor wording describes automated review
+generically and lists private vulnerability reporting routes for each public
+product repository, including `ejm-chess`. Installed guides must match those
+templates after `scripts/sync_community.py`. Consumers pick up the update by
+adopting a reviewed caller pin that includes this revision, then re-syncing.
+`templates/community-next/` mirrors the same policy for staged comparison.
 
 ## Missing model key acceptance staging
 

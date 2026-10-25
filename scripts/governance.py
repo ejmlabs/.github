@@ -168,13 +168,15 @@ def admit(api, event):
     if sender["login"] != user["login"] or not human(user, api.permission(user["login"])):
         raise ValueError("A command must be posted by the human maintainer who authorizes it")
     action, requested = command(comment["body"])
-    if not current_head(pr, requested):
-        raise ValueError("Command must name the current non-draft PR head targeting main")
     if action == "revoke":
+        if not current_head(pr, requested):
+            raise ValueError("Command must name the current non-draft PR head targeting main")
         invalidate(api, number, sha, "Revoked by a current human maintainer")
         return
     if not same_repository(pr):
-        raise ValueError("Fork PRs require manual review; Fork PRs cannot be admitted automatically")
+        raise ValueError("Fork PRs require manual review instead of automated admission")
+    if not current_head(pr, requested):
+        raise ValueError("Command must name the current non-draft PR head targeting main")
     if action == "approve":
         ready = api.statuses(sha).get("Human readiness", {})
         ready_id = re.search(r"\[ready:(\d+)\]", ready.get("description", ""))
