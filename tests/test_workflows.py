@@ -552,12 +552,17 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertLess(steps.index(review), steps.index(adapter))
         self.assertLess(steps.index(adapter), steps.index(validation))
         self.assertFalse(any(step.get("uses", "").startswith(("actions/upload-artifact@", "actions/cache@", "actions/checkout@")) for step in steps))
+        self.assertEqual(set(validation["env"]), {"PR_HEAD", "REVIEW_PASS"})
         for step in (review, adapter, validation):
             self.assertNotIn("GITHUB_STEP_SUMMARY", step["run"])
             self.assertNotIn("GITHUB_OUTPUT", step["run"])
-            if embedded_source(step["run"]) is not None:
-                self.assertNotIn("GITHUB_STEP_SUMMARY", embedded_source(step["run"]))
-                self.assertNotIn("GITHUB_OUTPUT", embedded_source(step["run"]))
+            embedded = embedded_source(step["run"])
+            if embedded is not None:
+                self.assertNotIn("GITHUB_OUTPUT", embedded)
+            if step is validation:
+                self.assertIn("GITHUB_STEP_SUMMARY", embedded)
+            elif embedded is not None:
+                self.assertNotIn("GITHUB_STEP_SUMMARY", embedded)
 
     def test_install_embeds_the_complete_hash_lock_without_credentials(self):
         steps = self.governance["jobs"]["ai"]["steps"]

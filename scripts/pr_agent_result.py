@@ -29,6 +29,18 @@ COVERAGE = re.compile(
     r"\*\*Review coverage:\*\* The following files were not included in this review because of the token budget|"
     r"had patches clipped before analysis to fit the token budget|chunk\(s\) failed and are not covered"
 )
+# Whole answer only. Text that merely starts with "no" is still a concern.
+NEGATIVE_SECURITY = re.compile(
+    r"(?:no security concerns (?:identified|found|detected|noted)"
+    r"|no security issues identified"
+    r"|no vulnerabilities found"
+    r"|no security concerns"
+    r"|none identified"
+    r"|no concerns"
+    r"|none"
+    r"|no)\.?",
+    re.IGNORECASE,
+)
 MAX_OUTPUT_TOKENS = 16_000
 URL_TOKEN = re.compile(
     r"(?:(?<!\w)[a-z][a-z0-9+.-]*\s*:\s*[/\\]\s*[/\\]|(?<!\w)(?:https?|hxxps?|ftp|file|javascript|data|mailto)\s*:\s*|"
@@ -145,6 +157,10 @@ def model_string(value):
     if not isinstance(value, str):
         raise Incomplete("invalid finding text")
     return value.strip()
+
+
+def negative_security_answer(value):
+    return NEGATIVE_SECURITY.fullmatch(" ".join(value.split())) is not None
 
 
 def strip_markdown_links(value):
@@ -973,7 +989,7 @@ def adapt(review_json, review_markdown, reviewer_exit, context, patch, skipped_f
         if not isinstance(concern, str):
             raise Incomplete("unexpected security concern shape")
         concern = model_string(concern)
-        if concern and not re.fullmatch(r"no\.?", concern, re.I) and not any(item["severity"] == "high" for item in findings):
+        if concern and not negative_security_answer(concern) and not any(item["severity"] == "high" for item in findings):
             findings.append({"severity": "high", "file": first_changed_file(patch, identity["files"]), "line": 1,
                              "title": "Security concern", "reason": text(concern)})
         if len(findings) > 50:
