@@ -495,7 +495,7 @@
           "CONFIG__FALLBACK_MODELS": "[]"
           "CONFIG__MAX_MODEL_TOKENS": "160000"
           "CONFIG__MAX_OUTPUT_TOKENS": "16000"
-          "CONFIG__AI_TIMEOUT": "120"
+          "CONFIG__AI_TIMEOUT": "225"
           "CONFIG__REASONING_EFFORT": "high"
           "CONFIG__PROPAGATE_TOOL_ERRORS": "true"
           "CONFIG__USE_REPO_SETTINGS_FILE": "false"
