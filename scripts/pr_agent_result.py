@@ -34,43 +34,92 @@ URL_TOKEN = re.compile(
     r"(?<!\w)[a-z][a-z0-9+.-]*:(?=\S|$)|//|www\.|(?<!\w)(?:[\w-]+\.)+[\w-]+\.?(?::[0-9]+)?[/\\])[^\s<>]*", re.I
 )
 # Build-generated workflows verified by scripts/build_workflows.py --check.
+# Exclusion applies only for the .github profile (see github_profile).
 EXCLUDED_REVIEW_PATHS = frozenset({
     ".github/workflows/governance.yml",
     ".github/workflows/draft-release.yml",
 })
-# Language-filter asset types the model cannot usefully review. Lockfiles, csv,
-# and other text filters stay fail-closed when skipped with hunks.
-NOT_MODEL_REVIEWED_EXTENSIONS = frozenset({
-    "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "svg",
-    "woff", "woff2", "ttf", "otf", "eot",
-    "mp3", "mp4", "webm", "ogg",
-    "pdf", "zip", "gz", "tgz", "bz2", "xz", "zst", "tar",
-    "exe", "dll", "so", "dylib", "bin", "class", "jar", "war", "egg", "snap",
-})
+SVG_DENY = re.compile(
+    r"<script|<foreignobject|<iframe|<embed|<object|"
+    r"on[a-z]+\s*=|"
+    r"javascript:|data:|"
+    r"<!doctype|<!entity|"
+    r"@import",
+    re.I,
+)
+SVG_URL = re.compile(r"url\s*\(\s*", re.I)
+SVG_HREF = re.compile(r"(?:xlink:)?href\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))", re.I)
 
 
-def not_model_reviewed_asset(name):
+def github_profile(repository):
+    return isinstance(repository, str) and repository.split("/")[-1] == ".github"
+
+
+def is_svg_name(name):
     base = name.rsplit("/", 1)[-1]
-    if "." not in base:
-        return False
-    return base.rsplit(".", 1)[-1].lower() in NOT_MODEL_REVIEWED_EXTENSIONS
+    return "." in base and base.rsplit(".", 1)[-1].lower() == "svg"
 
 
-def strip_excluded_review_paths(patch):
-    """Remove exact build-generated paths from the review patch."""
+def svg_added_line_denied(line):
+    content = line[1:]
+    if SVG_DENY.search(content):
+        return True
+    for match in SVG_URL.finditer(content):
+        if not content[match.end():].startswith("#"):
+            return True
+    for match in SVG_HREF.finditer(content):
+        value = match.group(1) or match.group(2) or match.group(3) or ""
+        if not value.startswith("#"):
+            return True
+    return False
+
+
+def excluded_manifest_item(item):
+    """True when a manifest entry is an exact generated-path add/remove/modify."""
+    source, target = item.get("source"), item.get("target")
+    status = item.get("status")
+    if status == "modified":
+        return source == target and source in EXCLUDED_REVIEW_PATHS
+    if status == "added":
+        return source is None and target in EXCLUDED_REVIEW_PATHS
+    if status == "removed":
+        return target is None and source in EXCLUDED_REVIEW_PATHS
+    return False
+
+
+def strip_excluded_review_paths(patch, repository=None):
+    """Remove exact build-generated paths for the .github profile only."""
+    if not github_profile(repository):
+        return patch, []
     blocks = re.split(r"(?m)(?=^diff --git )", patch)
     kept = [blocks[0]]
     excluded = []
     for block in blocks[1:]:
-        header = re.fullmatch(r'diff --git ("(?:[^"\\]|\\.)*"|a/.*?) ("(?:[^"\\]|\\.)*"|b/.*)',
-                              block.splitlines()[0])
+        lines = block.splitlines()
+        header = re.fullmatch(r'diff --git ("(?:[^"\\]|\\.)*"|a/.*?) ("(?:[^"\\]|\\.)*"|b/.*)', lines[0])
         if not header:
             raise Incomplete("unsupported change header")
         old, new = patch_path(header[1], "a/"), patch_path(header[2], "b/")
-        key = new if new is not None else old
-        if key in EXCLUDED_REVIEW_PATHS:
-            excluded.append(key)
+        metadata = []
+        for line in lines[1:]:
+            if line.startswith("@@"):
+                break
+            metadata.append(line)
+        renamed_or_copied = any(line.startswith(("rename from ", "rename to ", "copy from ", "copy to "))
+                                for line in metadata)
+        touches = {name for name in (old, new) if name in EXCLUDED_REVIEW_PATHS}
+        if renamed_or_copied and touches:
+            raise Incomplete("unsupported change to a generated review path")
+        if renamed_or_copied:
+            kept.append(block)
             continue
+        # Exact modified (old == new == path), or pure add/remove of that path
+        # (git headers name a/path and b/path even for add/remove).
+        if old is not None and old == new and old in EXCLUDED_REVIEW_PATHS:
+            excluded.append(old)
+            continue
+        if touches:
+            raise Incomplete("unsupported change to a generated review path")
         kept.append(block)
     return "".join(kept), excluded
 
@@ -245,7 +294,7 @@ def patch_path(value, prefix):
     return safe_patch_path(value[2:])
 
 
-def check_patch(patch, manifest):
+def check_patch(patch, manifest, repository=None):
     """Reconcile every raw block and hunk with independent compare-API data."""
     if not isinstance(manifest, list) or not 1 <= len(manifest) <= 200:
         raise Incomplete("missing or invalid changed-file manifest")
@@ -364,7 +413,12 @@ def check_patch(patch, manifest):
             if item["additions"] or item["deletions"] or not (binary or renamed or mode_change or empty_file):
                 raise Incomplete("missing change hunks or verified metadata")
     missing = set(expected) - seen
-    allowed_missing = {name for name in missing if name in EXCLUDED_REVIEW_PATHS}
+    allowed_missing = set()
+    if github_profile(repository):
+        for name in missing:
+            item = expected[name]
+            if excluded_manifest_item(item):
+                allowed_missing.add(name)
     if seen != set(expected) - allowed_missing:
         raise Incomplete("changed files are missing from the patch")
 
@@ -375,23 +429,70 @@ def check_termination(skipped_file):
         raise Incomplete("model termination was missing or incomplete")
 
 
-def check_skipped(patch, skipped_file):
+def svg_skip_allowed(lines, item):
+    """Allow skipped SVG text only for plain 100644 add/modify/remove that is safe."""
+    if not isinstance(item, dict) or item.get("status") not in ("added", "modified", "removed"):
+        return False
+    if item["status"] == "renamed":
+        return False
+    metadata, hunk_lines = [], []
+    for index, line in enumerate(lines[1:], 1):
+        if line.startswith("@@"):
+            hunk_lines = lines[index:]
+            break
+        metadata.append(line)
+    if any(line.startswith(("rename from ", "rename to ", "copy from ", "copy to ")) for line in metadata):
+        return False
+    old_mode, new_mode = item.get("old_mode"), item.get("new_mode")
+    if item["status"] == "added":
+        if new_mode != "100644" or f"new file mode {new_mode}" not in metadata:
+            return False
+    elif item["status"] == "removed":
+        if old_mode != "100644" or f"deleted file mode {old_mode}" not in metadata:
+            return False
+    else:
+        if old_mode != "100644" or new_mode != "100644":
+            return False
+        if any(line.startswith(("old mode ", "new mode ", "new file mode ", "deleted file mode "))
+               for line in metadata):
+            # Mode must stay 100644 on both sides; reject mode flips in the patch.
+            modes = [line for line in metadata if re.fullmatch(r"(?:old|new) mode 100(?:644|755)", line)]
+            if modes and any(not line.endswith("100644") for line in modes):
+                return False
+    added = [line for line in hunk_lines if line.startswith("+") and not line.startswith("+++")]
+    if not added:
+        return True
+    return all(not svg_added_line_denied(line) for line in added)
+
+
+def check_skipped(patch, skipped_file, manifest=None, repository=None):
     skipped = read_json(skipped_file)
     if not isinstance(skipped, list) or any(not isinstance(name, str) or not name for name in skipped):
         raise Incomplete("invalid skipped-file list")
     if not skipped:
         return
+    if not isinstance(manifest, list):
+        raise Incomplete("missing or invalid changed-file manifest")
+    by_key = {}
+    for item in manifest:
+        if not isinstance(item, dict):
+            raise Incomplete("invalid changed-file manifest")
+        key = item.get("target") if item.get("target") is not None else item.get("source")
+        if isinstance(key, str):
+            by_key[key] = item
     unmatched = set(skipped)
-    # Exact build-generated paths are stripped from the patch before review.
-    for name in list(unmatched):
-        if name in EXCLUDED_REVIEW_PATHS:
-            unmatched.discard(name)
+    if github_profile(repository):
+        for name in list(unmatched):
+            item = by_key.get(name)
+            if name in EXCLUDED_REVIEW_PATHS and item is not None and excluded_manifest_item(item):
+                unmatched.discard(name)
     for block in re.split(r"(?m)(?=^diff --git )", patch):
         if not block.startswith("diff --git "):
             continue
         lines = block.splitlines()
         source = target = None
         hunks = False
+        rename_or_copy_from = None
         for line in lines[1:]:
             if line.startswith("@@ "):
                 hunks = True
@@ -400,6 +501,9 @@ def check_skipped(patch, skipped_file):
                 source = line[4:].split("\t", 1)[0]
             elif line.startswith("+++ "):
                 target = line[4:].split("\t", 1)[0]
+            elif line.startswith(("rename from ", "copy from ")):
+                marker = "rename from " if line.startswith("rename from ") else "copy from "
+                rename_or_copy_from = safe_patch_path(git_path(line[len(marker):]))
         value = source if target == "/dev/null" else target
         if value is None:
             header = re.fullmatch(r'diff --git ("(?:[^"\\]|\\.)*"|a/.*?) ("(?:[^"\\]|\\.)*"|b/.*)', lines[0])
@@ -411,10 +515,12 @@ def check_skipped(patch, skipped_file):
             raise Incomplete("unsupported skipped-file path")
         name = name[2:]
         if name in skipped:
-            # Asset-filter exclusions are listed as not model-reviewed. Lockfiles
-            # and other filtered text with hunks stay fail-closed.
-            if hunks and not not_model_reviewed_asset(name):
+            if rename_or_copy_from is not None and rename_or_copy_from not in skipped:
                 raise Incomplete("reviewer skipped changed text files")
+            if hunks:
+                item = by_key.get(name)
+                if not (is_svg_name(name) and svg_skip_allowed(lines, item)):
+                    raise Incomplete("reviewer skipped changed text files")
             unmatched.discard(name)
     if unmatched:
         raise Incomplete("skipped-file list does not match the change")
@@ -452,8 +558,8 @@ def adapt(review_json, review_markdown, reviewer_exit, context, patch, skipped_f
         patch = read(patch)
         if not re.search(r"(?m)^diff --git ", patch):
             raise Incomplete("missing change headers")
-        check_patch(patch, identity.get("files"))
-        check_skipped(patch, skipped_file)
+        check_patch(patch, identity.get("files"), identity.get("repository"))
+        check_skipped(patch, skipped_file, identity.get("files"), identity.get("repository"))
         payload = read_json(review_json)
         usage = payload.get("usage") if isinstance(payload, dict) else None
         if usage is not None:

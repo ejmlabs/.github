@@ -29,8 +29,8 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Fixed
 
-- Treat build-generated workflow paths and language-filtered asset changes as
-  not model-reviewed so reviews complete when the remaining text is covered.
+- Treat .github build-generated workflow paths and safe SVG text as not
+  model-reviewed so reviews complete when the remaining text is covered.
 - Confine the review model key to a protected environment restricted to main.
 - Keep debug guards in the first workflow steps with valid job conditions.
   Isolate reviewer installation from caches and workspace configuration, remove

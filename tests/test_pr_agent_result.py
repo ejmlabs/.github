@@ -48,6 +48,11 @@ class ReviewerResultTests(unittest.TestCase):
         context["files"] = list(files)
         self.context.write_text(json.dumps(context))
 
+    def repository(self, name):
+        context = json.loads(self.context.read_text())
+        context["repository"] = name
+        self.context.write_text(json.dumps(context))
+
     def issue(self, **changes):
         return {"relevant_file": "src/main.py", "start_line": 7, "end_line": 9,
                 "issue_header": "Missing return value", "issue_content": "The caller receives None and crashes.", **changes}
@@ -355,22 +360,27 @@ class ReviewerResultTests(unittest.TestCase):
                 self.incomplete(result)
                 self.assertIn("skipped changed text", result["summary"])
 
-    def test_skipped_asset_text_is_not_model_reviewed(self):
-        for name in ("a..b.svg", "café.svg", "icons/logo.png"):
+    def test_skipped_binary_assets_without_text_hunks_complete(self):
+        name = "icons/logo.png"
+        self.manifest(self.file(name, additions=0, deletions=0, has_patch=False))
+        self.skipped.write_text(json.dumps([name]))
+        self.patch.write_text(f"diff --git a/{name} b/{name}\nBinary files a/{name} and b/{name} differ\n")
+        result, _ = self.run_adapter()
+        self.complete(result)
+
+    def test_skipped_non_svg_asset_text_hunks_fail_closed(self):
+        for name in ("icons/logo.png", "evil.py.png", "tool.so"):
             with self.subTest(name=name):
-                binary = name.endswith(".png")
-                self.manifest(self.file(name, additions=0 if binary else 1, deletions=0 if binary else 1,
-                                        has_patch=not binary))
+                self.manifest(self.file(name, additions=1, deletions=0, has_patch=True, new_mode="100644",
+                                        source=None, status="added"))
                 self.skipped.write_text(json.dumps([name]))
-                old, new = "a/" + name, "b/" + name
-                if name == "café.svg":
-                    old, new = '"a/caf\\303\\251.svg"', '"b/caf\\303\\251.svg"'
-                if binary:
-                    self.patch.write_text(f"diff --git {old} {new}\nBinary files {old} and {new} differ\n")
-                else:
-                    self.patch.write_text(f"diff --git {old} {new}\n--- {old}\n+++ {new}\n@@ -1 +1 @@\n-old\n+new\n")
+                self.patch.write_text(
+                    f"diff --git a/{name} b/{name}\nnew file mode 100644\n"
+                    f"--- /dev/null\n+++ b/{name}\n@@ -0,0 +1 @@\n+payload\n"
+                )
                 result, _ = self.run_adapter()
-                self.complete(result)
+                self.incomplete(result)
+                self.assertIn("skipped changed text", result["summary"])
 
     def test_skipped_deletions_and_renames_with_text_fail_closed(self):
         for target, name in (("/dev/null", "Cargo.lock"), ("b/renamed.lock", "renamed.lock")):
@@ -629,6 +639,7 @@ class ReviewerResultTests(unittest.TestCase):
     def test_generated_workflow_paths_missing_from_patch_are_not_model_reviewed(self):
         # Shape from ejmlabs/.github reviews: compare-diff text omitted from the
         # model patch after precheck strip; manifest still lists the files.
+        self.repository("ejmlabs/.github")
         text = self.file("scripts/governance.py")
         generated = [
             self.file(".github/workflows/governance.yml", additions=7, deletions=7, has_patch=False),
@@ -645,6 +656,10 @@ class ReviewerResultTests(unittest.TestCase):
         )
         result, _ = self.run_adapter()
         self.complete(result)
+        # Other profiles keep generated paths model-reviewed (fail closed if missing).
+        self.repository("ejmlabs/ejm-ui")
+        result, _ = self.run_adapter()
+        self.incomplete(result)
 
     def test_removed_and_added_binaries_without_text_patches_complete(self):
         # Shapes from ejmlabs#13 (removed PNG) and ejm-ui#21 (added PNG/ICO).
@@ -672,7 +687,7 @@ class ReviewerResultTests(unittest.TestCase):
         self.complete(result)
 
     def test_skipped_svg_assets_with_text_hunks_do_not_fail_closed(self):
-        # Shape from ejmlabs#13 / ejm-ui#21: language filter skips SVG text.
+        # Shape from ejmlabs#13: removal-only SVG text.
         asset = self.file("design-kit/motifs/grid.svg", target=None, status="removed",
                           additions=0, deletions=1, has_patch=True, old_mode="100644")
         text = self.file("CHANGELOG.md", additions=1, deletions=0)
@@ -699,6 +714,159 @@ class ReviewerResultTests(unittest.TestCase):
         result, _ = self.run_adapter()
         self.incomplete(result)
         self.assertIn("coverage", result["summary"])
+
+    def test_delta_e_probes_fail_closed_except_safe_svg(self):
+        # Probe table from the completeness security review.
+        probes = []
+
+        # Rename src/auth.py → src/auth.png with text hunks
+        probes.append(("rename-to-png", False, {
+            "files": [self.file("src/auth.png", source="src/auth.py", status="renamed",
+                                additions=1, deletions=1)],
+            "skipped": ["src/auth.png"],
+            "patch": (
+                "diff --git a/src/auth.py b/src/auth.png\n"
+                "similarity index 50%\nrename from src/auth.py\nrename to src/auth.png\n"
+                "--- a/src/auth.py\n+++ b/src/auth.png\n@@ -1 +1 @@\n-old\n+new\n"
+            ),
+        }))
+        # New tool.png mode 100755 with script text
+        probes.append(("exec-png", False, {
+            "files": [self.file("tool.png", source=None, status="added", additions=1, deletions=0,
+                                has_patch=True, new_mode="100755")],
+            "skipped": ["tool.png"],
+            "patch": (
+                "diff --git a/tool.png b/tool.png\nnew file mode 100755\n"
+                "--- /dev/null\n+++ b/tool.png\n@@ -0,0 +1 @@\n+#!/bin/sh\n"
+            ),
+        }))
+        # New public/logo.svg mode 120000 symlink
+        probes.append(("svg-symlink", False, {
+            "files": [self.file("public/logo.svg", source=None, status="added", additions=1, deletions=0,
+                                has_patch=True, new_mode="120000")],
+            "skipped": ["public/logo.svg"],
+            "patch": (
+                "diff --git a/public/logo.svg b/public/logo.svg\nnew file mode 120000\n"
+                "--- /dev/null\n+++ b/public/logo.svg\n@@ -0,0 +1 @@\n+../../.env\n"
+            ),
+        }))
+        # New SVG with onload= and <script>
+        probes.append(("svg-script", False, {
+            "files": [self.file("icon.svg", source=None, status="added", additions=1, deletions=0,
+                                has_patch=True, new_mode="100644")],
+            "skipped": ["icon.svg"],
+            "patch": (
+                "diff --git a/icon.svg b/icon.svg\nnew file mode 100644\n"
+                "--- /dev/null\n+++ b/icon.svg\n@@ -0,0 +1 @@\n+"
+                "<svg onload=\"x()\"><script>alert(1)</script></svg>\n"
+            ),
+        }))
+        # New evil.py.png holding Python text
+        probes.append(("double-ext", False, {
+            "files": [self.file("evil.py.png", source=None, status="added", additions=1, deletions=0,
+                                has_patch=True, new_mode="100644")],
+            "skipped": ["evil.py.png"],
+            "patch": (
+                "diff --git a/evil.py.png b/evil.py.png\nnew file mode 100644\n"
+                "--- /dev/null\n+++ b/evil.py.png\n@@ -0,0 +1 @@\n+print(1)\n"
+            ),
+        }))
+        # LOGO.SVG text change (case folded) with unsafe content → incomplete
+        probes.append(("logo-svg-case", False, {
+            "files": [self.file("LOGO.SVG", additions=1, deletions=1, has_patch=True,
+                                old_mode="100644", new_mode="100644")],
+            "skipped": ["LOGO.SVG"],
+            "patch": (
+                "diff --git a/LOGO.SVG b/LOGO.SVG\n"
+                "--- a/LOGO.SVG\n+++ b/LOGO.SVG\n@@ -1 +1 @@\n-old\n+"
+                "<svg><script>x</script></svg>\n"
+            ),
+        }))
+        # Rename scripts/x.py → .github/workflows/governance.yml with hunks
+        probes.append(("rename-into-generated", False, {
+            "repo": "ejmlabs/.github",
+            "files": [self.file(".github/workflows/governance.yml", source="scripts/x.py",
+                                status="renamed", additions=1, deletions=1)],
+            "skipped": [".github/workflows/governance.yml"],
+            "patch": (
+                "diff --git a/scripts/x.py b/.github/workflows/governance.yml\n"
+                "similarity index 50%\nrename from scripts/x.py\n"
+                "rename to .github/workflows/governance.yml\n"
+                "--- a/scripts/x.py\n+++ b/.github/workflows/governance.yml\n"
+                "@@ -1 +1 @@\n-old\n+new\n"
+            ),
+        }))
+        # Cargo.lock control
+        probes.append(("cargo-lock", False, {
+            "files": [self.file("Cargo.lock")],
+            "skipped": ["Cargo.lock"],
+            "patch": (
+                "diff --git a/Cargo.lock b/Cargo.lock\n"
+                "--- a/Cargo.lock\n+++ b/Cargo.lock\n@@ -1 +1 @@\n-old\n+new\n"
+            ),
+        }))
+        # Safe added SVG (allowed)
+        probes.append(("safe-added-svg", True, {
+            "files": [self.file("mark.svg", source=None, status="added", additions=1, deletions=0,
+                                has_patch=True, new_mode="100644")],
+            "skipped": ["mark.svg"],
+            "patch": (
+                "diff --git a/mark.svg b/mark.svg\nnew file mode 100644\n"
+                "--- /dev/null\n+++ b/mark.svg\n@@ -0,0 +1 @@\n+"
+                "<svg xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M0 0\"/></svg>\n"
+            ),
+        }))
+        # Removal-only SVG (allowed)
+        probes.append(("removal-svg", True, {
+            "files": [self.file("gone.svg", target=None, status="removed", additions=0, deletions=1,
+                                has_patch=True, old_mode="100644")],
+            "skipped": ["gone.svg"],
+            "patch": (
+                "diff --git a/gone.svg b/gone.svg\ndeleted file mode 100644\n"
+                "--- a/gone.svg\n+++ /dev/null\n@@ -1 +0,0 @@\n-<svg/>\n"
+            ),
+        }))
+
+        for label, expect_complete, case in probes:
+            with self.subTest(label=label):
+                self.repository(case.get("repo", "ejmlabs/ejm-ui"))
+                self.manifest(*case["files"])
+                self.skipped.write_text(json.dumps(case["skipped"]))
+                self.patch.write_text(case["patch"])
+                result, _ = self.run_adapter()
+                if expect_complete:
+                    self.complete(result)
+                else:
+                    self.incomplete(result)
+
+    def test_safe_svg_with_fragment_href_and_url_completes(self):
+        self.manifest(self.file("ok.svg", source=None, status="added", additions=1, deletions=0,
+                                has_patch=True, new_mode="100644"))
+        self.skipped.write_text(json.dumps(["ok.svg"]))
+        self.patch.write_text(
+            "diff --git a/ok.svg b/ok.svg\nnew file mode 100644\n"
+            "--- /dev/null\n+++ b/ok.svg\n@@ -0,0 +1 @@\n+"
+            "<svg><use href=\"#a\" xlink:href=\"#b\"/><rect fill=\"url(#g)\"/></svg>\n"
+        )
+        result, _ = self.run_adapter()
+        self.complete(result)
+
+    def test_svg_external_href_or_url_fails_closed(self):
+        for content in (
+            '<svg><use href="https://evil.invalid/x"/></svg>',
+            '<svg><rect fill="url(https://evil.invalid/x)"/></svg>',
+            '<svg><a xlink:href="javascript:alert(1)">x</a></svg>',
+        ):
+            with self.subTest(content=content[:40]):
+                self.manifest(self.file("bad.svg", source=None, status="added", additions=1, deletions=0,
+                                        has_patch=True, new_mode="100644"))
+                self.skipped.write_text(json.dumps(["bad.svg"]))
+                self.patch.write_text(
+                    "diff --git a/bad.svg b/bad.svg\nnew file mode 100644\n"
+                    f"--- /dev/null\n+++ b/bad.svg\n@@ -0,0 +1 @@\n+{content}\n"
+                )
+                result, _ = self.run_adapter()
+                self.incomplete(result)
 
 
 if __name__ == "__main__":

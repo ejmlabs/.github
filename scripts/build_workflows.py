@@ -86,11 +86,13 @@ skipped_output.write_text('[]')
 from unidiff import PatchSet
 from pr_agent.algo.language_handler import is_valid_file
 change_path = Path(sys.argv[1])
+context = read_json(sys.argv[3], 1_000_000)
+repository = context.get('repository') if isinstance(context, dict) else None
 patch = read(change_path)
-patch, excluded = strip_excluded_review_paths(patch)
+patch, excluded = strip_excluded_review_paths(patch, repository)
 if excluded:
     change_path.write_text(patch)
-check_patch(patch, read_json(sys.argv[3], 1_000_000).get('files'))
+check_patch(patch, context.get('files') if isinstance(context, dict) else None, repository)
 files = PatchSet(patch)
 if not files:
     raise ValueError('Missing changed files')
