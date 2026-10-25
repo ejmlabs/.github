@@ -5,7 +5,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from standards import MIT_TERMS, consumer_workflows, licenses, missing_model_key_workflows, read, semver, versions, workflows
+from governance import REPOS
+from standards import COMMUNITY_GUIDES, MIT_TERMS, VERSIONS, consumer_workflows, licenses, missing_model_key_workflows, read, semver, versions, workflows
 from build_workflows import governance, release_workflow, yaml
 from review_result import validate
 
@@ -29,6 +30,19 @@ class StandardTests(unittest.TestCase):
             self.assertEqual(versions(root, "ejmlabs"), "0.1.0")
             (root / "CHANGELOG.md").write_text("## Unreleased\n")
             with self.assertRaises(ValueError): versions(root, "ejmlabs")
+
+    def test_chess_profile_uses_the_version_file_and_development_guide(self):
+        self.assertIn("ejmlabs/ejm-chess", REPOS)
+        self.assertEqual(COMMUNITY_GUIDES["ejm-chess"], "README.md#development")
+        self.assertEqual(VERSIONS["ejm-chess"], ())
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "VERSION").write_text("0.1.0\n")
+            (root / "CHANGELOG.md").write_text("## [0.1.0] - 2026-10-20\n")
+            (root / "LICENSE").write_text("MIT License\n\nCopyright (c) 2026 Example\n\n" + MIT_TERMS + "\n")
+            self.assertEqual(versions(root, "ejm-chess"), "0.1.0")
+            with self.assertRaisesRegex(ValueError, "Unknown repository profile"):
+                versions(root, "ejm-unknown")
 
     def test_symlinked_policy_cannot_read_outside_checkout(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -64,6 +78,15 @@ class StandardTests(unittest.TestCase):
             with self.assertRaises(ValueError): validate(file, "a" * 40, 1)
             file.write_text("x" * 64001)
             with self.assertRaises(ValueError): validate(file, "a" * 40, 1)
+            secret = "sk-" + ("a" * 24)
+            encoded = json.dumps({"head": "a" * 40, "pass": 1, "complete": True, "summary": secret, "findings": []})
+            for payload in (encoded, encoded.replace("sk-", "s\\u006b-")):
+                with self.subTest(escaped=payload != encoded):
+                    file.write_text(payload)
+                    with self.assertRaises(ValueError) as caught:
+                        validate(file, "a" * 40, 1)
+                    self.assertNotIn(secret, str(caught.exception))
+                    self.assertIn("key-like pattern", str(caught.exception))
 
     def test_ai_incomplete_review_cannot_pass_with_empty_findings(self):
         # Actual harness PR #12 pass 1 output, accepted by the old validator.
@@ -212,7 +235,7 @@ class WorkflowTests(unittest.TestCase):
                         workflows(self.root, ".github")
 
     def test_missing_model_key_caller_is_accepted_only_for_the_shared_profile(self):
-        profiles = (".github", "ejm-cli", "ejm-harness", "ejm-ide", "ejmlabs")
+        profiles = (".github", "ejm-chess", "ejm-cli", "ejm-harness", "ejm-ide", "ejmlabs")
         for profile in profiles:
             workflows(self.root, profile)
         for name, text in missing_model_key_workflows(self.revision).items():

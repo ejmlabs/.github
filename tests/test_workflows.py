@@ -223,6 +223,7 @@ class WorkflowSecurityTests(unittest.TestCase):
                 ["npm", "--prefix", "site", "test"],
                 ["npm", "--prefix", "site", "run", "build"],
             ],
+            "ejm-chess": [],
         }
         for profile, expected in gates.items():
             for failure in (None, *range(len(expected))):
@@ -239,15 +240,59 @@ class WorkflowSecurityTests(unittest.TestCase):
                            "COMMAND_LOG": str(log), "FAIL_AT": "none" if failure is None else str(failure)}
                     result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", script], cwd=root, env=env, capture_output=True, text=True)
                     self.assertEqual(result.returncode, 0 if failure is None else 19, result.stderr)
-                    calls = [json.loads(line) for line in log.read_text().splitlines()]
+                    calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
                     self.assertEqual([call["command"] for call in calls], expected if failure is None else expected[:failure + 1])
                     if profile == "ejm-ui":
                         self.assertTrue(all(call["ignore_scripts"] == "true" for call in calls))
 
+    def test_ejm_chess_quality_fails_closed_when_application_code_appears(self):
+        script = next(step["run"] for step in self.governance["jobs"]["quality"]["steps"] if "ejm-chess)" in step.get("run", ""))
+        message = "ejm-chess has application code; add its quality recipe in ejmlabs/.github"
+        cases = {
+            "empty": ({}, 0),
+            "package.json": ({"package.json": "{}\n"}, 1),
+            "src": ({"src/main.ts": "export {}\n"}, 1),
+            "documentation": ({"README.md": "# Chess\n", "VERSION": "0.1.0\n", "LICENSE": "MIT\n", ".gitignore": "node_modules/\n",
+                               ".gitattributes": "* text=auto\n", "docs/a.md": "Rules\n", "docs/b/c.yaml": "name: chess\n",
+                               "openspec/x.yml": "name: chess\n", ".github/workflows/pr.yml": "name: PR\n",
+                               ".github/ISSUE_TEMPLATE/bug.md": "Bug report\n", ".github/CODEOWNERS": "* @ejmlabs\n",
+                               ".github/dependabot.yml": "version: 2\n", ".github/SECURITY.md": "Security policy\n",
+                               "docs/x.yml": "name: chess\n", "openspec/a.md": "Proposal\n", "openspec/b/c.yaml": "name: chess\n"}, 0),
+            "dependabot": ({".github/dependabot.yml": "version: 2\n"}, 0),
+            "nested dependabot": ({".github/hooks/dependabot.yml": "version: 2\n"}, 1),
+            "docs worker": ({"docs/app/worker.ts": "export {}\n"}, 1),
+            "docs wrangler": ({"docs/wrangler.jsonc": "{}\n"}, 1),
+            "github source": ({".github/src/main.rs": "fn main() {}\n"}, 1),
+            "nested issue template source": ({".github/ISSUE_TEMPLATE/app/worker.ts": "export {}\n"}, 1),
+            "nested workflow": ({".github/workflows/sub/x.yml": "name: PR\n"}, 1),
+            "docs source": ({"docs/x.ts": "export {}\n"}, 1),
+            "github script": ({".github/x.js": "export {}\n"}, 1),
+            "openspec source": ({"openspec/x.py": "pass\n"}, 1),
+            "wrangler.jsonc": ({"wrangler.jsonc": "{}\n"}, 1),
+            "worker.ts": ({"worker.ts": "export {}\n"}, 1),
+            "app": ({"app/index.html": "<p></p>\n"}, 1),
+            "functions": ({"functions/api.js": "export {}\n"}, 1),
+            "nested VERSION": ({"tools/VERSION": "1\n"}, 1),
+            "nested gitignore": ({"sub/.gitignore": "node_modules/\n"}, 1),
+        }
+        for name, (files, code) in cases.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                product = root / "product"
+                product.mkdir()
+                for path, text in files.items():
+                    target = product / path
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(text)
+                result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", script], cwd=root, env={**os.environ, "PROFILE": "ejm-chess"}, capture_output=True, text=True)
+                self.assertEqual(result.returncode, code, result.stderr)
+                if code:
+                    self.assertIn(message, result.stderr)
+
     def test_ui_installs_its_rust_toolchain_without_unused_audit_binaries(self):
         script = next(step["run"] for step in self.governance["jobs"]["quality"]["steps"]
                       if step.get("name") == "Install pinned Rust tools")
-        for profile in ("ejm-ui", "ejm-cli", "ejm-harness", "ejm-ide"):
+        for profile in ("ejm-ui", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-chess"):
             with self.subTest(profile=profile), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 (root / "bin").mkdir()
@@ -258,10 +303,12 @@ class WorkflowSecurityTests(unittest.TestCase):
                     stub.chmod(0o755)
                 env = {**os.environ, "PROFILE": profile, "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"], "COMMAND_LOG": str(log)}
                 subprocess.run(["bash", "-e", "-c", script], cwd=root, env=env, check=True, capture_output=True, text=True)
-                calls = [json.loads(line) for line in log.read_text().splitlines()]
-                expected = [["toolchain", "install", "1.99.1", "--profile", "minimal", "--component", "clippy,rustfmt"], ["default", "1.99.1"]]
-                if profile != "ejm-ui":
-                    expected.extend([["install", "cargo-deny", "--version", "0.20.2", "--locked"], ["install", "cargo-machete", "--version", "0.9.2", "--locked"]])
+                calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+                expected = []
+                if profile != "ejm-chess":
+                    expected = [["toolchain", "install", "1.99.1", "--profile", "minimal", "--component", "clippy,rustfmt"], ["default", "1.99.1"]]
+                    if profile != "ejm-ui":
+                        expected.extend([["install", "cargo-deny", "--version", "0.20.2", "--locked"], ["install", "cargo-machete", "--version", "0.9.2", "--locked"]])
                 self.assertEqual(calls, expected)
 
     def test_privileged_jobs_run_only_trusted_scripts_and_actions(self):
@@ -383,6 +430,63 @@ class WorkflowSecurityTests(unittest.TestCase):
                 for term in denied:
                     self.assertNotIn(term, text)
                 self.assertNotRegex(text, r"\b(?:sol|python|pip)\b")
+
+    def test_review_validator_rejects_unsafe_reports_and_decoded_key_like_text(self):
+        validator = next(step for step in self.governance["jobs"]["ai"]["steps"] if step.get("name") == "Validate the exact head, pass, and bounded review output")
+        head = "a" * 40
+        base = {"head": head, "pass": 1, "complete": True, "summary": "Reviewed the full diff.", "findings": []}
+        cases = []
+        for severity in ("critical", "high", "medium", "low"):
+            report = {**base, "findings": [{"severity": severity, "file": "src/auth.rs", "line": 3,
+                                           "title": "Authorization check", "reason": "The boundary requires review."}]}
+            cases.append((severity, json.dumps(report), True, severity != "low"))
+        secret = "s" + "k-" + "proj-" + "A" * 24
+        unsafe = json.dumps({**base, "summary": secret})
+        duplicate = json.dumps(base)[:-1] + ', "summary": "Replacement"}'
+        hidden = unsafe.replace("sk-", "s\\u006b-")[:-1] + ', "summary": "Replacement"}'
+        cases.extend([
+            ("empty findings", json.dumps(base), True, False),
+            ("wrong head", json.dumps({**base, "head": "b" * 40}), False, False),
+            ("wrong pass", json.dumps({**base, "pass": 2}), False, False),
+            ("incomplete", json.dumps({**base, "complete": False}), False, False),
+            ("malformed", "{", False, False),
+            ("oversized", " " * 64001, False, False),
+            ("key marker", unsafe, False, False),
+            ("escaped key marker", unsafe.replace("sk-", "s\\u006b-"), False, False),
+            ("duplicate field", duplicate, False, False),
+            ("overwritten escaped key marker", hidden, False, False),
+        ])
+        for word in ("risk-based", "task-list", "src/task-runner.ts",
+                     "use the task-runner-configuration-file and risk-assessment-documentation-notes"):
+            cases.append(("prose " + word, json.dumps({**base, "summary": "See " + word + "."}), True, False))
+        for prefix in ('"', " ", "="):
+            payload = json.dumps({**base, "summary": prefix + secret})
+            cases.append(("key after " + repr(prefix), payload, False, False))
+            cases.append(("escaped key after " + repr(prefix), payload.replace("sk-", "s\\u006b-"), False, False))
+        for prefix in ("line\n", "\t"):
+            cases.append(("decoded key after " + repr(prefix), json.dumps({**base, "summary": prefix + secret}), False, False))
+        finding = {"severity": "low", "file": "src/auth.rs", "line": 3,
+                   "title": "Authorization check", "reason": "line\n" + secret}
+        cases.extend([
+            ("decoded key in finding", json.dumps({**base, "findings": [finding]}), False, False),
+            ("decoded key in field name", json.dumps({**base, "\n" + secret: "hidden"}), False, False),
+        ])
+        body = "Ab1x" * 10
+        for key in ("sk" + "-" + body, "sk" + "-proj-" + body, "sk" + "-svcacct-" + body, "sk" + "-admin-" + body,
+                    "gh" + "p_" + body, "gh" + "s_" + body, "github" + "_pat_" + body):
+            cases.append(("key shape " + key[:6], json.dumps({**base, "summary": "Leaked " + key}), False, False))
+        for name, payload, safe, blocked in cases:
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                report = root / "review-result.json"
+                report.write_text(payload)
+                env = {**os.environ, "PR_HEAD": head, "REVIEW_PASS": "1"}
+                result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", validator["run"]],
+                                        cwd=root, env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0 if safe and not blocked else 1, result.stderr)
+                self.assertNotIn(secret, result.stdout + result.stderr)
+                if name.startswith("decoded key"):
+                    self.assertIn("Review output matches a key-like pattern", result.stderr)
 
     def test_review_step_excludes_ambient_tokens_and_preserves_admission_rechecks(self):
         ai = self.governance["jobs"]["ai"]

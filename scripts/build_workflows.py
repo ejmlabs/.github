@@ -149,7 +149,7 @@ def governance():
                   run("Install Linux harness keyring build prerequisites", """sudo apt-get update
 sudo apt-get install --yes --no-install-recommends pkg-config libdbus-1-dev
 """, **{"if": "${{ needs.admission.outputs.profile == 'ejm-harness' && runner.os == 'Linux' }}"}),
-                  run("Install pinned Rust tools", """if [[ "$PROFILE" == ejm-* ]]; then
+                  run("Install pinned Rust tools", """if [[ "$PROFILE" == ejm-cli || "$PROFILE" == ejm-harness || "$PROFILE" == ejm-ide || "$PROFILE" == ejm-ui ]]; then
   rustup toolchain install 1.99.1 --profile minimal --component clippy,rustfmt
   rustup default 1.99.1
   if [[ "$PROFILE" != ejm-ui ]]; then
@@ -164,6 +164,7 @@ if [[ -d ../ejm-ui ]]; then
   npm --prefix ../ejm-ui ci --ignore-scripts
 fi
 case "$PROFILE" in
+  ejm-chess) if find . ! -type d ! -path './docs/*.md' ! -path './docs/*.yaml' ! -path './docs/*.yml' ! -path './openspec/*.md' ! -path './openspec/*.yaml' ! -path './openspec/*.yml' ! \\( -path './.github/workflows/*.yml' ! -path './.github/workflows/*/*' \\) ! \\( -path './.github/ISSUE_TEMPLATE/*' ! -path './.github/ISSUE_TEMPLATE/*/*' \\) ! -path ./.github/CODEOWNERS ! -path ./.github/dependabot.yml ! -path './.github/*.md' ! -name '*.md' ! -path ./VERSION ! -path ./LICENSE ! -path ./.gitignore ! -path ./.gitattributes | grep -q .; then echo "ejm-chess has application code; add its quality recipe in ejmlabs/.github" >&2; exit 1; fi ;;
   ejm-cli) ./scripts/check ;;
   ejm-harness) npm ci --ignore-scripts; npm --prefix registry ci --ignore-scripts; ./scripts/check ;;
   ejm-ide) npm ci --ignore-scripts; npm run verify; npm run site:check; npm run site:build ;;

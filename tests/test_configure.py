@@ -10,7 +10,8 @@ import configure_repositories as settings
 class SettingsSafetyTests(unittest.TestCase):
     def test_ui_is_explicitly_selectable_without_expanding_the_default_rollout(self):
         self.assertEqual(settings.NAMES, (".github", "ejmlabs", "ejm-cli", "ejm-harness", "ejm-ide"))
-        self.assertEqual(settings.SUPPORTED_NAMES, (*settings.NAMES, "ejm-ui"))
+        self.assertEqual(settings.SUPPORTED_NAMES, (*settings.NAMES, "ejm-ui", "ejm-chess"))
+        self.assertNotIn("ejm-chess", settings.NAMES)
 
     def test_hold_never_enables_actions_or_sets_allowlist(self):
         with patch.object(settings, "api", return_value={}) as api:
