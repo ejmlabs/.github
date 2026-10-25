@@ -715,8 +715,8 @@ class ReviewerResultTests(unittest.TestCase):
         self.incomplete(result)
         self.assertIn("coverage", result["summary"])
 
-    def test_delta_e_probes_fail_closed_except_safe_svg(self):
-        # Probe table from the completeness security review.
+    def test_delta_e_and_f_probes_fail_closed_except_removal_svg(self):
+        # Probe tables from completeness security reviews Delta E and F.
         probes = []
 
         # Rename src/auth.py → src/auth.png with text hunks
@@ -771,7 +771,7 @@ class ReviewerResultTests(unittest.TestCase):
                 "--- /dev/null\n+++ b/evil.py.png\n@@ -0,0 +1 @@\n+print(1)\n"
             ),
         }))
-        # LOGO.SVG text change (case folded) with unsafe content → incomplete
+        # LOGO.SVG text change (case folded) with additions → incomplete
         probes.append(("logo-svg-case", False, {
             "files": [self.file("LOGO.SVG", additions=1, deletions=1, has_patch=True,
                                 old_mode="100644", new_mode="100644")],
@@ -805,8 +805,8 @@ class ReviewerResultTests(unittest.TestCase):
                 "--- a/Cargo.lock\n+++ b/Cargo.lock\n@@ -1 +1 @@\n-old\n+new\n"
             ),
         }))
-        # Safe added SVG (allowed)
-        probes.append(("safe-added-svg", True, {
+        # Added SVG (any '+') incomplete under removal-only exemption
+        probes.append(("added-svg", False, {
             "files": [self.file("mark.svg", source=None, status="added", additions=1, deletions=0,
                                 has_patch=True, new_mode="100644")],
             "skipped": ["mark.svg"],
@@ -814,6 +814,16 @@ class ReviewerResultTests(unittest.TestCase):
                 "diff --git a/mark.svg b/mark.svg\nnew file mode 100644\n"
                 "--- /dev/null\n+++ b/mark.svg\n@@ -0,0 +1 @@\n+"
                 "<svg xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M0 0\"/></svg>\n"
+            ),
+        }))
+        # Modified SVG with additions incomplete
+        probes.append(("modified-svg-with-add", False, {
+            "files": [self.file("edit.svg", additions=1, deletions=1, has_patch=True,
+                                old_mode="100644", new_mode="100644")],
+            "skipped": ["edit.svg"],
+            "patch": (
+                "diff --git a/edit.svg b/edit.svg\n"
+                "--- a/edit.svg\n+++ b/edit.svg\n@@ -1 +1 @@\n-<svg/>\n+<svg><path/></svg>\n"
             ),
         }))
         # Removal-only SVG (allowed)
@@ -824,6 +834,65 @@ class ReviewerResultTests(unittest.TestCase):
             "patch": (
                 "diff --git a/gone.svg b/gone.svg\ndeleted file mode 100644\n"
                 "--- a/gone.svg\n+++ /dev/null\n@@ -1 +0,0 @@\n-<svg/>\n"
+            ),
+        }))
+        # Modified SVG with only '-' hunk lines (allowed)
+        probes.append(("modified-removal-only-svg", True, {
+            "files": [self.file("trim.svg", additions=0, deletions=1, has_patch=True,
+                                old_mode="100644", new_mode="100644")],
+            "skipped": ["trim.svg"],
+            "patch": (
+                "diff --git a/trim.svg b/trim.svg\n"
+                "--- a/trim.svg\n+++ b/trim.svg\n@@ -1,2 +1 @@\n <svg/>\n-<path/>\n"
+            ),
+        }))
+        # Delta F bypass probes (all incomplete under removal-only)
+        probes.append(("f-plusplus-script", False, {
+            "files": [self.file("pp.svg", source=None, status="added", additions=1, deletions=0,
+                                has_patch=True, new_mode="100644")],
+            "skipped": ["pp.svg"],
+            "patch": (
+                "diff --git a/pp.svg b/pp.svg\nnew file mode 100644\n"
+                "--- /dev/null\n+++ b/pp.svg\n@@ -0,0 +1 @@\n++<script>alert(1)</script>\n"
+            ),
+        }))
+        probes.append(("f-namespaced-script", False, {
+            "files": [self.file("ns.svg", source=None, status="added", additions=1, deletions=0,
+                                has_patch=True, new_mode="100644")],
+            "skipped": ["ns.svg"],
+            "patch": (
+                "diff --git a/ns.svg b/ns.svg\nnew file mode 100644\n"
+                "--- /dev/null\n+++ b/ns.svg\n@@ -0,0 +1 @@\n+"
+                "<x:script xmlns:x=\"http://www.w3.org/2000/svg\">x</x:script>\n"
+            ),
+        }))
+        probes.append(("f-split-onload", False, {
+            "files": [self.file("on.svg", source=None, status="added", additions=2, deletions=0,
+                                has_patch=True, new_mode="100644")],
+            "skipped": ["on.svg"],
+            "patch": (
+                "diff --git a/on.svg b/on.svg\nnew file mode 100644\n"
+                "--- /dev/null\n+++ b/on.svg\n@@ -0,0 +1,2 @@\n+<svg onload\n+=\"alert(1)\"/>\n"
+            ),
+        }))
+        probes.append(("f-entity-set-href", False, {
+            "files": [self.file("ent.svg", source=None, status="added", additions=1, deletions=0,
+                                has_patch=True, new_mode="100644")],
+            "skipped": ["ent.svg"],
+            "patch": (
+                "diff --git a/ent.svg b/ent.svg\nnew file mode 100644\n"
+                "--- /dev/null\n+++ b/ent.svg\n@@ -0,0 +1 @@\n+"
+                "<svg><a><set attributeName=\"href\" to=\"&#106;avascript:alert(1)\"/></a></svg>\n"
+            ),
+        }))
+        probes.append(("f-split-external-href", False, {
+            "files": [self.file("use.svg", source=None, status="added", additions=2, deletions=0,
+                                has_patch=True, new_mode="100644")],
+            "skipped": ["use.svg"],
+            "patch": (
+                "diff --git a/use.svg b/use.svg\nnew file mode 100644\n"
+                "--- /dev/null\n+++ b/use.svg\n@@ -0,0 +1,2 @@\n+<svg><use href\n"
+                "+=\"https://evil.invalid/x.svg#a\"/></svg>\n"
             ),
         }))
 
@@ -839,7 +908,7 @@ class ReviewerResultTests(unittest.TestCase):
                 else:
                     self.incomplete(result)
 
-    def test_safe_svg_with_fragment_href_and_url_completes(self):
+    def test_added_svg_with_any_plus_content_fails_closed(self):
         self.manifest(self.file("ok.svg", source=None, status="added", additions=1, deletions=0,
                                 has_patch=True, new_mode="100644"))
         self.skipped.write_text(json.dumps(["ok.svg"]))
@@ -849,24 +918,7 @@ class ReviewerResultTests(unittest.TestCase):
             "<svg><use href=\"#a\" xlink:href=\"#b\"/><rect fill=\"url(#g)\"/></svg>\n"
         )
         result, _ = self.run_adapter()
-        self.complete(result)
-
-    def test_svg_external_href_or_url_fails_closed(self):
-        for content in (
-            '<svg><use href="https://evil.invalid/x"/></svg>',
-            '<svg><rect fill="url(https://evil.invalid/x)"/></svg>',
-            '<svg><a xlink:href="javascript:alert(1)">x</a></svg>',
-        ):
-            with self.subTest(content=content[:40]):
-                self.manifest(self.file("bad.svg", source=None, status="added", additions=1, deletions=0,
-                                        has_patch=True, new_mode="100644"))
-                self.skipped.write_text(json.dumps(["bad.svg"]))
-                self.patch.write_text(
-                    "diff --git a/bad.svg b/bad.svg\nnew file mode 100644\n"
-                    f"--- /dev/null\n+++ b/bad.svg\n@@ -0,0 +1 @@\n+{content}\n"
-                )
-                result, _ = self.run_adapter()
-                self.incomplete(result)
+        self.incomplete(result)
 
 
 if __name__ == "__main__":

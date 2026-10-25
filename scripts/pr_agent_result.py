@@ -34,44 +34,18 @@ URL_TOKEN = re.compile(
     r"(?<!\w)[a-z][a-z0-9+.-]*:(?=\S|$)|//|www\.|(?<!\w)(?:[\w-]+\.)+[\w-]+\.?(?::[0-9]+)?[/\\])[^\s<>]*", re.I
 )
 # Build-generated workflows verified by scripts/build_workflows.py --check.
-# Exclusion applies only for the .github profile (see github_profile).
+# Exclusion applies only for ejmlabs/.github (see github_profile).
 EXCLUDED_REVIEW_PATHS = frozenset({
     ".github/workflows/governance.yml",
     ".github/workflows/draft-release.yml",
 })
-SVG_DENY = re.compile(
-    r"<script|<foreignobject|<iframe|<embed|<object|"
-    r"on[a-z]+\s*=|"
-    r"javascript:|data:|"
-    r"<!doctype|<!entity|"
-    r"@import",
-    re.I,
-)
-SVG_URL = re.compile(r"url\s*\(\s*", re.I)
-SVG_HREF = re.compile(r"(?:xlink:)?href\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))", re.I)
-
-
 def github_profile(repository):
-    return isinstance(repository, str) and repository.split("/")[-1] == ".github"
+    return repository == "ejmlabs/.github"
 
 
 def is_svg_name(name):
     base = name.rsplit("/", 1)[-1]
     return "." in base and base.rsplit(".", 1)[-1].lower() == "svg"
-
-
-def svg_added_line_denied(line):
-    content = line[1:]
-    if SVG_DENY.search(content):
-        return True
-    for match in SVG_URL.finditer(content):
-        if not content[match.end():].startswith("#"):
-            return True
-    for match in SVG_HREF.finditer(content):
-        value = match.group(1) or match.group(2) or match.group(3) or ""
-        if not value.startswith("#"):
-            return True
-    return False
 
 
 def excluded_manifest_item(item):
@@ -430,24 +404,27 @@ def check_termination(skipped_file):
 
 
 def svg_skip_allowed(lines, item):
-    """Allow skipped SVG text only for plain 100644 add/modify/remove that is safe."""
-    if not isinstance(item, dict) or item.get("status") not in ("added", "modified", "removed"):
+    """Allow skipped SVG text only for removal-only 100644 changes (no added hunk lines)."""
+    if not isinstance(item, dict) or item.get("status") not in ("modified", "removed"):
         return False
-    if item["status"] == "renamed":
-        return False
-    metadata, hunk_lines = [], []
-    for index, line in enumerate(lines[1:], 1):
+    metadata, hunk_body = [], []
+    in_hunk = False
+    for line in lines[1:]:
         if line.startswith("@@"):
-            hunk_lines = lines[index:]
-            break
-        metadata.append(line)
+            in_hunk = True
+            continue
+        if in_hunk:
+            hunk_body.append(line)
+        else:
+            metadata.append(line)
     if any(line.startswith(("rename from ", "rename to ", "copy from ", "copy to ")) for line in metadata):
         return False
+    # Any '+' hunk-body line means content was added; exemption is removal-only.
+    # Count only hunk-body lines so '+++ ' file headers cannot be confused with content.
+    if any(line.startswith("+") for line in hunk_body):
+        return False
     old_mode, new_mode = item.get("old_mode"), item.get("new_mode")
-    if item["status"] == "added":
-        if new_mode != "100644" or f"new file mode {new_mode}" not in metadata:
-            return False
-    elif item["status"] == "removed":
+    if item["status"] == "removed":
         if old_mode != "100644" or f"deleted file mode {old_mode}" not in metadata:
             return False
     else:
@@ -455,14 +432,10 @@ def svg_skip_allowed(lines, item):
             return False
         if any(line.startswith(("old mode ", "new mode ", "new file mode ", "deleted file mode "))
                for line in metadata):
-            # Mode must stay 100644 on both sides; reject mode flips in the patch.
             modes = [line for line in metadata if re.fullmatch(r"(?:old|new) mode 100(?:644|755)", line)]
             if modes and any(not line.endswith("100644") for line in modes):
                 return False
-    added = [line for line in hunk_lines if line.startswith("+") and not line.startswith("+++")]
-    if not added:
-        return True
-    return all(not svg_added_line_denied(line) for line in added)
+    return True
 
 
 def check_skipped(patch, skipped_file, manifest=None, repository=None):
