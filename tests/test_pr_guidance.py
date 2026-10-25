@@ -65,6 +65,21 @@ class GuidanceTests(unittest.TestCase):
         for changed in ({'draft': True}, {'base': {'ref': 'feature'}}, {'state': 'closed'}):
             self.assertNotIn('/ready', guidance.render({**pr(), **changed}, {}))
 
+    def test_fork_and_deleted_head_repository_do_not_invite_admission(self):
+        same = {**pr(), 'head': {'sha': SHA, 'repo': {'full_name': 'ejmlabs/ejm-cli'}},
+                'base': {'ref': 'main', 'repo': {'full_name': 'ejmlabs/ejm-cli'}}}
+        self.assertIn('/ready ' + SHA, guidance.render(same, {}))
+        for head_repo in ({'full_name': 'outside/ejm-cli'}, None):
+            item = {**same, 'head': {'sha': SHA, 'repo': head_repo}}
+            text = guidance.render(item, {})
+            self.assertNotIn('/ready', text)
+            self.assertNotIn('/approve', text)
+            self.assertNotIn('/revoke', text)
+            self.assertIn('manual review', text)
+            for check in guidance.CHECKS:
+                states = {'Human readiness': {'state': 'success'}, check: {'state': 'failure'}}
+                self.assertNotIn('/ready', guidance.render(item, states))
+
     def test_update_preserves_author_text_and_replaces_stale_sha(self):
         old = guidance.update_body('Description\n\n## Review\nKeep this.', guidance.render(pr(), {}))
         new = guidance.render({**pr(), 'head': {'sha': 'b' * 40}}, {})

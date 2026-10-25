@@ -546,8 +546,9 @@ The shared governance implementation maintains a bounded block between
 `<!-- ejm-next-action:start -->` and `<!-- ejm-next-action:end -->` in the PR
 body. It reads the live head, base, draft state and required statuses. The block
 shows admission, waiting, failure/retry, approval or protected merge guidance.
-Commands always name the full current head. A draft or stacked PR gets its
-prerequisite instead of an unusable admission command. Text outside the block
+Commands always name the full current head. A draft, stacked, fork, or
+deleted-head PR gets its prerequisite instead of an unusable admission command.
+Text outside the block
 is retained, and unchanged updates make no write. Duplicate or broken markers
 fail without rewriting the author's text.
 

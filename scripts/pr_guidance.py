@@ -25,6 +25,8 @@ def render(pr, statuses):
         text = 'Finish the draft and mark this PR ready for review before admission.'
     elif pr['base']['ref'] != 'main':
         text = 'Merge the predecessor, then retarget this PR to main before admission.'
+    elif (pr['head'].get('repo') or {}).get('full_name') != (pr['base'].get('repo') or {}).get('full_name'):
+        text = 'Fork PRs require manual review instead of automated admission.'
     elif ready != 'success':
         text = 'A human maintainer must post this as a **new PR comment** to start checks:\n\n' + command('ready')
     elif any(statuses.get(key, {}).get('state') in ('failure', 'error') for key in CHECKS):
