@@ -56,7 +56,7 @@ loguru==0.7.3 --hash=sha256:31a33c10c8e1e10422bfd431aeb5d351c7cf7fa671e3c4df0041
 markupsafe==3.0.4 --hash=sha256:8e124f974786f831d6043728e38296969d3579db8896fe004682f5758e613581
 multidict==7.2.0 --hash=sha256:8f1591edd7fca2d0af4168f2a5f2d7db2e950f7dc3e008f4bd6e741f16674134
 openai==2.54.0 --hash=sha256:89089789197ccdb87f173a03145ed1598d00795220c93e96cf712b1cbf5e5f2b
-opentelemetry-api==1.43.0 --hash=sha256:20acf45e9b21851926835292e4045d290acade1edd2ff3de86d2f069687ba1fd
+opentelemetry-api==1.45.1 --hash=sha256:aa38ed19bcc084ba42782a73255b3582283eced7ad6dddbd6695189e69adfb75 --hash=sha256:b31553efa588ae44bc306f863c785c5333a9ecc091248c6ee68b4b6c87fdedfb
 opentelemetry-exporter-otlp-proto-common==1.43.0 --hash=sha256:123c3f9cc87218562490c63b36f497bf3a722faf174a515d1443f31ababa6264
 opentelemetry-exporter-otlp-proto-http==1.43.0 --hash=sha256:647f603aa8efdbdb4dbff842e0729d0406a6fff26b295a72d3d60e7d963b2610
 opentelemetry-proto==1.43.0 --hash=sha256:c58f1f7ef84bc7dc2834016c0c37fe0081dde7ca9f6339be1970fbf9cdaaa90d
