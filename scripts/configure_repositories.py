@@ -5,6 +5,9 @@ import base64
 import json
 import re
 import subprocess
+import urllib.parse
+
+from governance import SECURITY_LABEL
 
 
 NAMES = (".github", "ejmlabs", "ejm-cli", "ejm-harness", "ejm-ide")
@@ -83,6 +86,9 @@ def configure(name, protect, hold, revision=None):
         "send_secrets_and_variables": False, "require_approval_for_fork_pr_workflows": True,
     }, optional=True)
     api(root + "/vulnerability-alerts", "PUT")
+    # The review token may be unable to create labels; an existing label is the override path.
+    api(root + "/labels", "POST", {"name": SECURITY_LABEL, "color": "d73a4a",
+                                   "description": "Blocks AI review until a maintainer removes it"}, optional=True)
     fixes = api(root + "/automated-security-fixes", "PUT", optional=True)
     immutable = api(root + "/immutable-releases", "PUT", optional=True)
     # These APIs are public-only or depend on installed security products. No paid enrollment.
@@ -111,7 +117,8 @@ def configure(name, protect, hold, revision=None):
               "dependency_alerts": api(root + "/vulnerability-alerts"), "security_updates": api(root + "/automated-security-fixes", optional=True),
               "immutable_releases": api(root + "/immutable-releases", optional=True),
               "private_reporting": reporting, "external_approval": external,
-              "metadata": api(root), "rulesets": api(root + "/rulesets")}
+              "metadata": api(root), "rulesets": api(root + "/rulesets"),
+              "security_label": api(root + "/labels/" + urllib.parse.quote(SECURITY_LABEL))}
     if protect:
         result["main_protection"] = api(root + "/branches/main/protection")
     return result

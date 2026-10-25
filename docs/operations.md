@@ -61,30 +61,52 @@ Action setup and label blocking, with no custom result rules:
   fail-on-tool-errors setting stays at its default, so the job fails when no
   review happens. Its token has `contents: read`, `pull-requests: write` (for
   the review comment and labels) and `statuses: read`. It reads the PR through
-  the API and never checks out or runs PR code. File handling, context limits
-  and prompts are the reviewer's defaults. Repository and global reviewer
-  settings files are ignored.
+  the API and never checks out or runs PR code. File handling and prompts are
+  the reviewer's defaults; the model context cap stays 160,000 tokens and the
+  output cap 16,000. Repository and global reviewer settings files are
+  ignored. The reviewer's documented action output (`review`, this run's
+  review data) is exposed as the job output.
 - The review publishes the reviewer's own labels: `Possible security concern`
   and `Review effort N/5`, and a merge recommendation in its comment.
-- `labels` (needs `ai`, `pull-requests: read`) fails when the PR carries the
+- `labels` (needs `ai`, `pull-requests: read`) receives that output through
+  its environment only, never in a script. It fails when the output is missing
+  or unparsable, has no security verdict, or the verdict is not "no" under
+  the reviewer's own negative-answer rule (empty, no, none or false). The
+  reviewer applies the same rule to set its label, so removing the label
+  before this job runs cannot pass. It also fails while the PR carries the
   `Possible security concern` label. Effort labels and the merge
   recommendation are advisory.
 - `finish` publishes **AI review** as success only when both jobs passed for
-  the admitted commit. A label failure gets the fixed description "Blocked by
-  a review label; a maintainer may remove it to override".
+  the admitted commit. A `labels` failure gets the fixed description "Blocked
+  by the review's security verdict or label; a maintainer may remove the
+  label to override".
 - Override: a maintainer reviews the concern and removes the label. GitHub
   records the removal in the PR timeline. Callers also trigger on
   `pull_request_target` `unlabeled`, which runs the `override` job from
   trusted main with no secrets, no checkout and `statuses: write`. It changes
   **AI review** to success only when the current head's status is that
-  label-blocked failure, the remover is a current human maintain or admin
-  user, and no blocking label remains. It never runs before a completed
-  review of the current head. Any other removal leaves the status unchanged.
+  label-blocked failure, the removed label is `Possible security concern`,
+  the remover is a current human maintain or admin user, and no blocking
+  label remains. It never runs before a completed review of the current head.
+  Any other removal leaves the status unchanged. If the label is absent, for
+  example because publication failed or the verdict was missing, a maintainer
+  adds it and then removes it.
 
-Create the `Possible security concern` label in each repository before
-adoption. The reviewer logs, but does not fail on, a label publication error,
-so a missing label would not block; check the review comment's security
-section during maintainer approval.
+`scripts/configure_repositories.py` creates the `Possible security concern`
+label and reads it back, because the review token may be unable to create it.
+
+Automated review covers only what the reviewer sends to the model. It does not
+cover files the reviewer always excludes (lockfiles such as
+`package-lock.json`, `pnpm-lock.yaml` and `yarn.lock`, minified files and
+maps, images, SVG and other assets, binaries) or files clipped by the token
+budget. The review comment's coverage footer lists files left out. Maintainer
+approval must cover them: inspect every excluded or clipped file, especially
+lockfile `resolved` and `integrity` changes, before `/approve`. This is an
+owner decision to keep the reviewer's default file handling.
+
+The model reads attacker-controlled PR title, description, commits and diff,
+which can steer its security verdict to "no". This residual risk is accepted;
+human Maintainer approval is the backstop.
 
 A failed required check blocks merge. These checks cannot prove correctness,
 so human review and the other gates remain necessary. Metadata-only PRs remain
@@ -102,8 +124,9 @@ automatic top-up off, and an ACL-restricted key limited to the configured model 
 endpoint, with request and token rate limits. Review provider audit logs weekly.
 The service sends alerts at 50% and 80% of the credit balance. Hostile diffs
 reaching the provider are an accepted defensive-use risk. These provider-side
-controls are REQUIRED. The reviewer's default context limit applies; files it
-leaves out are listed in its comment and need human review.
+controls are REQUIRED. The model token cap is 160,000 and the output cap
+16,000; files clipped by the cap are listed in the review comment and need
+human review.
 The prepaid balance is raised by stage and is currently $50.
 Set a separate workflow execution budget and
 alerts. Per-run limits do not cap aggregate spending. Restrict repository
@@ -424,6 +447,27 @@ through a checked PR.
 5. Test human readiness, stale pushes, self approval, revocation, missing keys,
    failed checks and duplicate release tags in GitHub before claiming those
    paths verified. Local policy tests do not establish event delivery.
+
+### Adopting the documented reviewer gate
+
+The label-removal trigger changes the canonical caller, and each repository's
+required **Repository standards** check runs the standards embedded at the pin
+on its main. Adopt in three steps, each through an ordinary admitted PR with
+no administrator bypass:
+
+1. Merge the shared change here and retain its commit under
+   `workflow-pins/FULL_SHA`.
+2. In every caller, including this repository's own `pr.yml`, change only the
+   governance and release pins to that commit. Keep the old caller form and
+   the old `CONTRIBUTING.md`; the old standards accept them.
+3. Once main runs the new pin, change the caller to the new form (the
+   `pull_request_target` `unlabeled` trigger and job condition) and run
+   `scripts/sync_community.py` for `CONTRIBUTING.md` in the same PR. The new
+   standards accept it.
+
+Between steps 2 and 3, other PRs in that repository fail **Repository
+standards** and the label override is unavailable, because label removal
+starts no workflow. Keep that window short and land step 3 first.
 
 ## Public visibility checklist
 

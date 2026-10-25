@@ -16,6 +16,8 @@ REVIEWER_MODEL = "xai/grok-4.5"
 REVIEWER_FALLBACK_MODELS = '[]'
 REVIEWER_REASONING_EFFORT = "high"
 REVIEWER_AI_TIMEOUT = 225
+REVIEWER_MAX_MODEL_TOKENS = 160000
+REVIEWER_MAX_OUTPUT_TOKENS = 16000
 REVIEWER_JOB_TIMEOUT_MINUTES = 12
 
 def yaml(value, indent=0):
@@ -188,24 +190,28 @@ GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="$RUNNER_TEMP/review-event.json
         "needs": "admission", "if": "${{ github.run_attempt == 1 && needs.admission.outputs.run == 'true' }}", "runs-on": "ubuntu-24.04", "timeout-minutes": REVIEWER_JOB_TIMEOUT_MINUTES,
         "environment": "legacy-review",
         "permissions": {"contents": "read", "pull-requests": "write", "statuses": "read"}, "env": ENV,
+        # The documented action output carries this run's review verdict to the label gate.
+        "outputs": {"review": "${{ steps.review.outputs.review }}"},
         "steps": [REJECT_DEBUG, VERIFY,
                   run("Require the review model key", 'test "$HAS_MODEL_KEY" = true\n', env={"HAS_MODEL_KEY": "${{ secrets.XAI_API_KEY != '' }}"}),
                   run("Install the pinned reviewer", install, env={"GH_TOKEN": "", "GITHUB_TOKEN": "", "PIP_CONFIG_FILE": "/dev/null"}),
-                  run("Automated review", review, env={
+                  run("Automated review", review, id="review", env={
                       "GITHUB_TOKEN": "${{ github.token }}", "XAI__KEY": "${{ secrets.XAI_API_KEY }}",
                       "CONFIG__MODEL": REVIEWER_MODEL, "CONFIG__FALLBACK_MODELS": REVIEWER_FALLBACK_MODELS,
                       "CONFIG__REASONING_EFFORT": REVIEWER_REASONING_EFFORT, "CONFIG__AI_TIMEOUT": str(REVIEWER_AI_TIMEOUT),
-                      "CONFIG__LOG_LEVEL": "INFO",
+                      "CONFIG__MAX_MODEL_TOKENS": str(REVIEWER_MAX_MODEL_TOKENS), "CONFIG__MAX_OUTPUT_TOKENS": str(REVIEWER_MAX_OUTPUT_TOKENS),
+                      "CONFIG__LOG_LEVEL": "INFO", "LITELLM_LOCAL_MODEL_COST_MAP": "True",
                       "CONFIG__USE_REPO_SETTINGS_FILE": "false", "CONFIG__USE_GLOBAL_SETTINGS_FILE": "false",
                       "GITHUB_ACTION_CONFIG__AUTO_REVIEW": "true", "GITHUB_ACTION_CONFIG__AUTO_DESCRIBE": "false",
-                      "GITHUB_ACTION_CONFIG__AUTO_IMPROVE": "false",
+                      "GITHUB_ACTION_CONFIG__AUTO_IMPROVE": "false", "GITHUB_ACTION_CONFIG__ENABLE_OUTPUT": "true",
                       "PR_REVIEWER__ENABLE_REVIEW_LABELS_SECURITY": "true", "PR_REVIEWER__ENABLE_REVIEW_LABELS_EFFORT": "true",
                       "PR_REVIEWER__REQUIRE_MERGE_RECOMMENDATION": "true"}),
                   VERIFY],
     }
     labels = {"needs": ["admission", "ai"], "if": "${{ github.run_attempt == 1 && needs.admission.outputs.run == 'true' }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
-              "permissions": {"pull-requests": "read"}, "env": {"PR_NUMBER": "${{ needs.admission.outputs.pr }}", "GH_TOKEN": "${{ github.token }}"},
-              "steps": [run("Fail on blocking review labels", python(source("governance.py"), "labels"))]}
+              "permissions": {"pull-requests": "read"}, "env": {"PR_NUMBER": "${{ needs.admission.outputs.pr }}", "GH_TOKEN": "${{ github.token }}",
+                                                               "REVIEW_OUTPUT": "${{ needs.ai.outputs.review }}"},
+              "steps": [run("Fail on a security verdict or blocking review label", python(source("governance.py"), "labels"))]}
     # Removing a review label is the logged maintainer override; re-evaluate only a completed, label-blocked review.
     override = {"if": "${{ github.run_attempt == 1 && github.event_name == 'pull_request_target' && github.event.action == 'unlabeled' }}",
                 "runs-on": "ubuntu-24.04", "timeout-minutes": 3,

@@ -529,10 +529,11 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertEqual(review["env"], {
             "GITHUB_TOKEN": "${{ github.token }}", "XAI__KEY": "${{ secrets.XAI_API_KEY }}",
             "CONFIG__MODEL": "xai/grok-4.5", "CONFIG__FALLBACK_MODELS": "[]", "CONFIG__REASONING_EFFORT": "high",
-            "CONFIG__AI_TIMEOUT": "225", "CONFIG__LOG_LEVEL": "INFO",
+            "CONFIG__AI_TIMEOUT": "225", "CONFIG__MAX_MODEL_TOKENS": "160000", "CONFIG__MAX_OUTPUT_TOKENS": "16000",
+            "CONFIG__LOG_LEVEL": "INFO", "LITELLM_LOCAL_MODEL_COST_MAP": "True",
             "CONFIG__USE_REPO_SETTINGS_FILE": "false", "CONFIG__USE_GLOBAL_SETTINGS_FILE": "false",
             "GITHUB_ACTION_CONFIG__AUTO_REVIEW": "true", "GITHUB_ACTION_CONFIG__AUTO_DESCRIBE": "false",
-            "GITHUB_ACTION_CONFIG__AUTO_IMPROVE": "false",
+            "GITHUB_ACTION_CONFIG__AUTO_IMPROVE": "false", "GITHUB_ACTION_CONFIG__ENABLE_OUTPUT": "true",
             "PR_REVIEWER__ENABLE_REVIEW_LABELS_SECURITY": "true", "PR_REVIEWER__ENABLE_REVIEW_LABELS_EFFORT": "true",
             "PR_REVIEWER__REQUIRE_MERGE_RECOMMENDATION": "true",
         })
@@ -540,6 +541,21 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertNotIn("FAIL_ON_TOOL_ERRORS", json.dumps(self.governance))
         self.assertNotIn("DEBUG", json.dumps(ai))
         self.assertEqual(ai["timeout-minutes"], 12)
+
+    def test_review_verdict_reaches_the_label_gate_only_through_env(self):
+        jobs = self.governance["jobs"]
+        review = next(step for step in jobs["ai"]["steps"] if step.get("name") == "Automated review")
+        self.assertEqual(review["id"], "review")
+        self.assertEqual(jobs["ai"]["outputs"], {"review": "${{ steps.review.outputs.review }}"})
+        self.assertEqual(jobs["labels"]["env"]["REVIEW_OUTPUT"], "${{ needs.ai.outputs.review }}")
+        # Model output is never interpolated into a script or any other field.
+        for name, job in jobs.items():
+            for step in job["steps"]:
+                self.assertNotIn("outputs.review", json.dumps({k: v for k, v in step.items() if k != "env"}))
+            if name not in ("ai", "labels"):
+                self.assertNotIn("outputs.review", json.dumps(job))
+        self.assertEqual(json.dumps(jobs["labels"]).count("outputs.review"), 1)
+        self.assertEqual([shlex.split(step["run"].splitlines()[0])[2] for step in jobs["labels"]["steps"]], ["labels"])
 
     def test_review_step_runs_the_documented_runner_on_an_opened_event_and_fails_closed(self):
         review = next(step for step in self.governance["jobs"]["ai"]["steps"] if step.get("name") == "Automated review")

@@ -17,6 +17,13 @@ import build_workflows
 
 @unittest.skipUnless(importlib.util.find_spec("pr_agent"), "Pinned reviewer is not installed")
 class ProviderSettingsProof(unittest.TestCase):
+    def test_label_gate_uses_the_reviewers_own_negative_answer_rule(self):
+        from pr_agent.algo.utils import is_value_no
+        import governance
+        for value in (None, "", "No", " no ", "NONE", "false", "False.", "No.", "Yes", "n/a", 0, 1, True, False, [], ["No"]):
+            with self.subTest(value=value):
+                self.assertEqual(governance.is_value_no(value), is_value_no(value))
+
     def test_provider_reasoning_and_no_fallback(self):
         self.assertEqual(version("pr-agent"), "0.48.0")
         self.assertEqual(version("litellm"), "1.105.0")

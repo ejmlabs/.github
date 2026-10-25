@@ -162,7 +162,7 @@ class AdmissionTests(unittest.TestCase):
                 self.assertLessEqual(len(review["description"]), 140)
 
     def test_label_job_fails_only_on_the_reviewer_security_label(self):
-        os.environ["PR_NUMBER"] = "1"
+        os.environ.update(PR_NUMBER="1", REVIEW_OUTPUT=json.dumps({"security_concerns": "No"}))
         for names, blocked in (([], False), (["Review effort 3/5"], False), (["Possible security concern"], True),
                                (["possible security concern", "Review effort 5/5"], True)):
             with self.subTest(names=names):
@@ -172,6 +172,29 @@ class AdmissionTests(unittest.TestCase):
                         labels(self.api)
                 else:
                     labels(self.api)
+        self.assertFalse(self.api.log)
+
+    def test_label_job_fails_on_this_runs_verdict_even_after_the_label_is_removed(self):
+        os.environ["PR_NUMBER"] = "1"
+        # (a) The label was removed before this job ran, but the run's own verdict reports a concern.
+        for concern in ("Yes, the token is logged", "SQL injection in the query builder", True):
+            with self.subTest(concern=concern):
+                os.environ["REVIEW_OUTPUT"] = json.dumps({"security_concerns": concern, "key_issues_to_review": []})
+                with self.assertRaisesRegex(ValueError, "security concern"):
+                    labels(self.api)
+        # (b) Missing, unparsable or verdict-free output fails closed.
+        for output in (None, "", "not json", "[]", json.dumps({"key_issues_to_review": []}), json.dumps({"security_concerns": None})):
+            with self.subTest(output=output):
+                os.environ.pop("REVIEW_OUTPUT", None)
+                if output is not None:
+                    os.environ["REVIEW_OUTPUT"] = output
+                with self.assertRaisesRegex(ValueError, "review output|security verdict"):
+                    labels(self.api)
+        # The reviewer's own negative answers pass when no blocking label is present.
+        for answer in ("No", " none ", "FALSE", ""):
+            with self.subTest(answer=answer):
+                os.environ["REVIEW_OUTPUT"] = json.dumps({"security_concerns": answer})
+                labels(self.api)
         self.assertFalse(self.api.log)
 
     def label_blocked(self):
@@ -191,8 +214,18 @@ class AdmissionTests(unittest.TestCase):
         self.assertIn("@maintainer", review["description"])
         self.assertFalse(self.api.reviews)
 
+    def test_maintainer_removing_a_non_blocking_label_cannot_override(self):
+        event = self.label_blocked()
+        for name in ("Review effort 3/5", "triage", None):
+            with self.subTest(label=name):
+                removed = {**event, "label": {"name": name}} if name else {k: v for k, v in event.items() if k != "label"}
+                before = copy.deepcopy(self.api.log)
+                relabel(self.api, removed)
+                self.assertEqual(self.api.log, before)
+        self.assertEqual(self.api.statuses(SHA)["AI review"]["description"], LABEL_BLOCKED)
+
     def test_label_removal_cannot_pass_before_a_completed_review_or_without_a_maintainer(self):
-        event = {"action": "unlabeled", "pull_request": {"number": 1}, "sender": USER}
+        event = {"action": "unlabeled", "pull_request": {"number": 1}, "label": {"name": "Possible security concern"}, "sender": USER}
         admit(self.api, self.event)
         for review in (None, ("pending", "Admitted checks queued"), ("failure", "Failed, cancelled, missing, or incomplete")):
             with self.subTest(review=review):

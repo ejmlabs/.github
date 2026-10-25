@@ -12,8 +12,9 @@ REPOS = {"ejmlabs/" + name for name in (".github", "ejmlabs", "ejm-cli", "ejm-ha
 CONTEXTS = ("Human readiness", "Maintainer approval", "Quality", "Repository standards", "AI review")
 COMMAND = re.compile(r"^/(ready|approve|revoke) ([0-9a-f]{40})$")
 # The reviewer's own security label; removing it is the maintainer override.
-BLOCKING_LABELS = {"possible security concern"}
-LABEL_BLOCKED = "Blocked by a review label; a maintainer may remove it to override"
+SECURITY_LABEL = "Possible security concern"
+BLOCKING_LABELS = {SECURITY_LABEL.lower()}
+LABEL_BLOCKED = "Blocked by the review's security verdict or label; a maintainer may remove the label to override"
 
 
 def command(text):
@@ -259,7 +260,26 @@ def blocking_labels(api, number):
     return pr, [label["name"] for label in pr["labels"] if label["name"].lower() in BLOCKING_LABELS]
 
 
+def is_value_no(value):
+    """The reviewer's own rule for a negative answer (pr_agent.algo.utils.is_value_no, 0.48.0)."""
+    if not value:
+        return True
+    value_str = str(value).strip().lower()
+    if value_str == 'no' or value_str == 'none' or value_str == 'false':
+        return True
+    return False
+
+
 def labels(api):
+    # Decide from this run's documented action output, so removing the label early cannot pass.
+    try:
+        review = json.loads(os.environ.get("REVIEW_OUTPUT", ""))
+    except ValueError:
+        raise ValueError("Missing or unparsable review output") from None
+    if not isinstance(review, dict) or review.get("security_concerns") is None:
+        raise ValueError("Review output has no security verdict")
+    if not is_value_no(review["security_concerns"]):
+        raise ValueError("Review reported a security concern")
     found = blocking_labels(api, os.environ["PR_NUMBER"])[1]
     if found:
         raise ValueError("Blocking review label present: " + ", ".join(found))
@@ -267,6 +287,9 @@ def labels(api):
 
 def relabel(api, event):
     """Re-evaluate a completed, label-blocked review after a label is removed."""
+    if ((event.get("label") or {}).get("name") or "").lower() not in BLOCKING_LABELS:
+        print("A non-blocking label was removed; nothing to re-evaluate")
+        return
     pr, found = blocking_labels(api, event["pull_request"]["number"])
     sha = pr["head"]["sha"]
     review = api.statuses(sha).get("AI review", {})
