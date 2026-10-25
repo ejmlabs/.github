@@ -62,7 +62,15 @@ Action setup and label blocking, with no custom result rules:
   review happens. Its token has `contents: read`, `pull-requests: write` (for
   the review comment and labels) and `statuses: read`. It reads the PR through
   the API and never checks out or runs PR code. File handling and prompts are
-  the reviewer's defaults; the model context cap stays 160,000 tokens and the
+  the reviewer's defaults, plus one extra instruction: the review is told not
+  to report a changed pin of this repository's shared workflow
+  (`ejmlabs/.github/.github/workflows/...@` a full 40-character hash, or the
+  matching `standards-ref`) as missing context or a security concern, because
+  it never sees those workflows. It is still told to report other references,
+  moves to an older revision, and changes that widen permissions, secrets or
+  triggers. The instruction is guidance, not a check: it does not verify where
+  the pinned commit came from, so the maintainer must confirm the commit is
+  retained under `workflow-pins/FULL_SHA` before `/approve`. The model context cap stays 160,000 tokens and the
   output cap 16,000. Repository and global reviewer settings files are
   ignored. The reviewer's documented action output (`review`, this run's
   review data) is exposed as the job output.

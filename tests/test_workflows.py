@@ -536,11 +536,25 @@ class WorkflowSecurityTests(unittest.TestCase):
             "GITHUB_ACTION_CONFIG__AUTO_IMPROVE": "false", "GITHUB_ACTION_CONFIG__ENABLE_OUTPUT": "true",
             "PR_REVIEWER__ENABLE_REVIEW_LABELS_SECURITY": "true", "PR_REVIEWER__ENABLE_REVIEW_LABELS_EFFORT": "true",
             "PR_REVIEWER__REQUIRE_MERGE_RECOMMENDATION": "true",
+            "PR_REVIEWER__EXTRA_INSTRUCTIONS": workflows.REVIEWER_EXTRA_INSTRUCTIONS,
         })
         # Fail-on-tool-errors stays at its default (true), so a run without a review fails the job.
         self.assertNotIn("FAIL_ON_TOOL_ERRORS", json.dumps(self.governance))
         self.assertNotIn("DEBUG", json.dumps(ai))
         self.assertEqual(ai["timeout-minutes"], 12)
+
+    def test_review_instruction_covers_only_full_hash_pins_of_this_repository(self):
+        text = workflows.REVIEWER_EXTRA_INSTRUCTIONS
+        for required in ("ejmlabs/.github/.github/workflows/", "40 hex characters", "`standards-ref`", "not a full 40-character commit hash",
+                         "another repository or path", "older revision", "new permissions, secrets or triggers"):
+            self.assertIn(required, text)
+        # The wording is neutral, contains no expression and stays one bounded paragraph.
+        self.assertNotIn("${{", text)
+        self.assertNotIn("\n", text)
+        self.assertLess(len(text), 1000)
+        lowered = text.lower()
+        for term in ("gpt", "grok", "xai", "openai", "litellm", "pr-agent", "pr_agent"):
+            self.assertNotIn(term, lowered)
 
     def test_review_verdict_reaches_the_label_gate_only_through_env(self):
         jobs = self.governance["jobs"]
