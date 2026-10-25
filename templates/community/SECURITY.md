@@ -8,7 +8,6 @@ The latest published patch of each documented supported minor line receives secu
 
 Use GitHub private vulnerability reporting for the affected repository:
 
-- [ejm-chess](https://github.com/ejmlabs/ejm-chess/security/advisories/new)
 - [ejm-cli](https://github.com/ejmlabs/ejm-cli/security/advisories/new)
 - [ejm-harness](https://github.com/ejmlabs/ejm-harness/security/advisories/new)
 - [ejm-ide](https://github.com/ejmlabs/ejm-ide/security/advisories/new)
