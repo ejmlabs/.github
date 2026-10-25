@@ -17,6 +17,7 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Changed
 
+- Tell the automated review that a changed full-hash pin of this repository's shared workflows is not missing context or a security concern, so pins-only updates can pass; other references and widened permissions are still reported.
 - Replace the custom automated review gate with the pinned reviewer's documented GitHub Action runner and label blocking: one review per admission, its own security and effort labels, a merge recommendation, and a required label check. Removing the security label is the maintainer override; callers also trigger on label removal to re-evaluate. Removed the result adapter, two passes, coverage and negative-answer rules, and static review data.
 - Publish blocking review findings to the job summary as inert, size-bounded text, and treat only a fixed list of negative security answers as no concern.
 - Cover two classes of reviewer-skipped files with narrow fail-closed checks: `package-lock.json` changes that only mirror the sibling `package.json` dependency ranges (`lock-manifest-mirror v1`), and strictly allowlisted SVG assets under `packages/tokens/assets/` (`svg-allowlist v1`). All other skipped text stays incomplete.

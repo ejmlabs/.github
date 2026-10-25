@@ -19,6 +19,15 @@ REVIEWER_AI_TIMEOUT = 225
 REVIEWER_MAX_MODEL_TOKENS = 160000
 REVIEWER_MAX_OUTPUT_TOKENS = 16000
 REVIEWER_JOB_TIMEOUT_MINUTES = 12
+# The review sees only the PR diff, never the shared workflows a caller pin selects. Pins to this repository's
+# workflows are therefore not missing context; any other reference or change keeps the default handling.
+REVIEWER_EXTRA_INSTRUCTIONS = (
+    "A changed `uses: ejmlabs/.github/.github/workflows/<name>.yml@<40 hex characters>` reference, or a `standards-ref` "
+    "value equal to such a pin, selects a shared workflow that is maintained and reviewed in its own repository and is "
+    "not part of this diff. Do not report its absence, or the inability to verify what that workflow does, as missing "
+    "context or as a security concern. Still report a reference that is not a full 40-character commit hash, that names "
+    "another repository or path, or whose surrounding workflow changes grant new permissions, secrets or triggers."
+)
 
 def yaml(value, indent=0):
     """Emit the limited maps, lists and strings used here, without dependencies."""
@@ -205,7 +214,8 @@ GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="$RUNNER_TEMP/review-event.json
                       "GITHUB_ACTION_CONFIG__AUTO_REVIEW": "true", "GITHUB_ACTION_CONFIG__AUTO_DESCRIBE": "false",
                       "GITHUB_ACTION_CONFIG__AUTO_IMPROVE": "false", "GITHUB_ACTION_CONFIG__ENABLE_OUTPUT": "true",
                       "PR_REVIEWER__ENABLE_REVIEW_LABELS_SECURITY": "true", "PR_REVIEWER__ENABLE_REVIEW_LABELS_EFFORT": "true",
-                      "PR_REVIEWER__REQUIRE_MERGE_RECOMMENDATION": "true"}),
+                      "PR_REVIEWER__REQUIRE_MERGE_RECOMMENDATION": "true",
+                      "PR_REVIEWER__EXTRA_INSTRUCTIONS": REVIEWER_EXTRA_INSTRUCTIONS}),
                   VERIFY],
     }
     labels = {"needs": ["admission", "ai"], "if": "${{ github.run_attempt == 1 && needs.admission.outputs.run == 'true' }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
