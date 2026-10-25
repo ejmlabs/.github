@@ -546,7 +546,7 @@ class WorkflowSecurityTests(unittest.TestCase):
     def test_review_instruction_covers_only_full_hash_pins_of_this_repository(self):
         text = workflows.REVIEWER_EXTRA_INSTRUCTIONS
         for required in ("ejmlabs/.github/.github/workflows/", "40 hex characters", "`standards-ref`", "not a full 40-character commit hash",
-                         "another repository or path", "new permissions, secrets or triggers"):
+                         "another repository or path", "older revision", "new permissions, secrets or triggers"):
             self.assertIn(required, text)
         # The wording is neutral, contains no expression and stays one bounded paragraph.
         self.assertNotIn("${{", text)

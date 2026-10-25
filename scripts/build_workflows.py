@@ -26,7 +26,7 @@ REVIEWER_EXTRA_INSTRUCTIONS = (
     "value equal to such a pin, selects a shared workflow that is maintained and reviewed in its own repository and is "
     "not part of this diff. Do not report its absence, or the inability to verify what that workflow does, as missing "
     "context or as a security concern. Still report a reference that is not a full 40-character commit hash, that names "
-    "another repository or path, or whose surrounding workflow changes grant new permissions, secrets or triggers."
+    "another repository or path, or that moves to an older revision, or whose surrounding workflow changes grant new permissions, secrets or triggers."
 )
 
 def yaml(value, indent=0):
