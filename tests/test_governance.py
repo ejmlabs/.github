@@ -241,7 +241,7 @@ class AdmissionTests(unittest.TestCase):
                     event = self.event if kind == "ready" else self.approval()
                     before = copy.deepcopy(self.api.log)
                     self.fork(self.api, repo)
-                    with self.assertRaisesRegex(ValueError, "Fork PRs cannot be admitted"):
+                    with self.assertRaisesRegex(ValueError, "Fork PRs require manual review"):
                         admit(self.api, event)
                     self.assertEqual(self.api.log, before)
                     self.assertFalse(self.api.reviews)

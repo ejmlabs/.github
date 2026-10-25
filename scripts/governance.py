@@ -174,9 +174,9 @@ def admit(api, event):
         invalidate(api, number, sha, "Revoked by a current human maintainer")
         return
     if not same_repository(pr):
-        raise ValueError("Fork PRs require manual review. Fork PRs cannot be admitted automatically.")
-    if not current_pr(pr, requested):
-        raise ValueError("Command must name the current non-draft PR head targeting main, or PR is not a same-repository branch")
+        raise ValueError("Fork PRs require manual review instead of automated admission")
+    if not current_head(pr, requested):
+        raise ValueError("Command must name the current non-draft PR head targeting main")
     if action == "approve":
         ready = api.statuses(sha).get("Human readiness", {})
         ready_id = re.search(r"\[ready:(\d+)\]", ready.get("description", ""))
