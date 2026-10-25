@@ -211,6 +211,59 @@ class ReviewerResultTests(unittest.TestCase):
                 self.assertFalse(self.complete(result))
                 self.assertEqual(result["findings"], [])
 
+    def test_strict_negative_security_answers_add_no_finding(self):
+        accepted = (
+            "No", "No.", "None", "None.", "No security concerns", "No security concerns.",
+            "No security concerns identified", "No security concerns identified.",
+            "No security concerns found", "No security concerns found.",
+            "No security concerns detected", "No security concerns detected.",
+            "No security concerns noted", "No security concerns noted.",
+            "No security issues identified", "No security issues identified.",
+            "No concerns", "No concerns.", "No vulnerabilities found", "No vulnerabilities found.",
+            "None identified", "None identified.",
+            "  nO   security\tconcerns\nidentified.  ",
+            "NO SECURITY CONCERNS\nNOTED.",
+            " none. ",
+        )
+        for concern in accepted:
+            with self.subTest(concern=concern):
+                self.payload["review"]["security_concerns"] = concern
+                result, _ = self.run_adapter()
+                self.assertFalse(self.complete(result))
+                self.assertEqual(result["findings"], [])
+        self.payload["review"]["key_issues_to_review"] = [self.issue()]
+        self.payload["review"]["security_concerns"] = "No security concerns identified."
+        result, _ = self.run_adapter()
+        self.assertTrue(self.complete(result))
+        self.assertEqual(len(result["findings"]), 1)
+        self.assertEqual(result["findings"][0]["severity"], "medium")
+
+    def test_security_answers_outside_the_negative_list_stay_high(self):
+        for concern in (
+                "No input validation allows XSS",
+                "No.  But the token is logged",
+                "Not sure",
+                "Nope",
+                "No security concern",
+                "No security concerns identified/found",
+                "No security issues found",
+                "No vulnerabilities identified",
+                "None found",
+                "No!",
+                "No..",
+                "N/A",
+                "No security concerns identified in this change.",
+                "See no security concerns.",
+        ):
+            with self.subTest(concern=concern):
+                self.payload["review"]["security_concerns"] = concern
+                result, _ = self.run_adapter()
+                self.assertTrue(self.complete(result))
+                self.assertEqual(result["findings"], [{
+                    "severity": "high", "file": "src/main.py", "line": 1,
+                    "title": "Security concern", "reason": concern,
+                }])
+
     def test_security_issue_in_header_or_content_is_high_without_duplicate(self):
         for changes in ({"issue_header": "SQL injection"}, {"issue_content": "An attacker can bypass authorization."}):
             with self.subTest(changes=changes):

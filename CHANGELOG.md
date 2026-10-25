@@ -17,6 +17,7 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Changed
 
+- Publish blocking review findings to the job summary as inert, size-bounded text, and treat only a fixed list of negative security answers as no concern.
 - Cover two classes of reviewer-skipped files with narrow fail-closed checks: `package-lock.json` changes that only mirror the sibling `package.json` dependency ranges (`lock-manifest-mirror v1`), and strictly allowlisted SVG assets under `packages/tokens/assets/` (`svg-allowlist v1`). All other skipped text stays incomplete.
 - Allow each automated review model call up to 225 seconds, so slow high-effort responses complete within the existing two-attempt and 480-second reviewer limits instead of failing as incomplete.
 - Removed the previous hosted review action, its key and its allowance.

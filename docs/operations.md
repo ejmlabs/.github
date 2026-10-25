@@ -89,7 +89,11 @@ comments or prefixed attributes. Every other lockfile, SVG and skipped text
 hunk, renames into skipped or generated paths, coverage warnings, and
 clipped text stay fail-closed. The
 security-concerns field is required. Security concerns produce
-high findings, and credential-like text is redacted. Missing material context
+high findings, and credential-like text is redacted. Only a fixed list of
+negative security answers counts as no concern after whitespace is normalized;
+any other answer still adds a high finding. A blocked pass appends its
+validated findings to the job step summary as inert, size-bounded text and
+still blocks if that write is skipped or fails. Missing material context
 must be reported as a finding. These checks
 cannot prove correctness, so human review and the other gates remain necessary.
 Older pinned revisions do not gain new validation automatically.
