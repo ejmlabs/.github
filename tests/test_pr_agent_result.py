@@ -1,5 +1,7 @@
+import difflib
 import json
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -930,6 +932,262 @@ class ReviewerResultTests(unittest.TestCase):
         )
         result, _ = self.run_adapter()
         self.incomplete(result)
+
+    def stage_changes(self, specs, use_archive=True):
+        archive = self.root / "product"
+        if archive.exists():
+            shutil.rmtree(archive)
+        chunks, items, skipped = [], [], []
+        for spec in specs:
+            path, old, new = spec["path"], spec.get("old", b""), spec["new"]
+            status = spec.get("status", "modified" if old else "added")
+            old_mode, new_mode = spec.get("old_mode", "100644"), spec.get("new_mode", "100644")
+            if "patch" in spec:
+                diff, adds, dels = spec["patch"], spec["additions"], spec["deletions"]
+            else:
+                diff, adds, dels = self.unified(path, old, new, status, old_mode, new_mode, spec.get("header"))
+            chunks.append(diff if diff.endswith("\n") else diff + "\n")
+            item = {"source": None if status == "added" else spec.get("source", path),
+                    "target": None if status == "removed" else spec.get("target", path),
+                    "status": status, "additions": adds, "deletions": dels, "has_patch": True}
+            if status != "added" and "old_mode" in spec or status == "modified":
+                item["old_mode"] = old_mode
+            if status != "removed":
+                item["new_mode"] = new_mode
+            if spec.get("modes"):
+                item.update(spec["modes"])
+            items.append(item)
+            if spec.get("skip"):
+                skipped.append(spec.get("skip_name", path))
+            blob = spec.get("blob", new if status != "removed" else None)
+            if use_archive and blob is not None and spec.get("write", True):
+                dest = archive / path
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(blob)
+        self.repository("ejmlabs/ejm-ui")
+        self.manifest(*items)
+        self.skipped.write_text(json.dumps(skipped))
+        self.patch.write_text("".join(chunks))
+
+    def unified(self, path, old, new, status, old_mode, new_mode, header):
+        source = [] if status == "added" or old == b"" else old.decode().splitlines(True)
+        diff = "".join(difflib.unified_diff(source, new.decode().splitlines(True), fromfile="a/" + path, tofile="b/" + path, n=3))
+        if status == "added" or old == b"":
+            diff = diff.replace("--- a/" + path + "\n", "--- /dev/null\n", 1)
+        adds = sum(line.startswith("+") and not line.startswith("+++") for line in diff.splitlines())
+        dels = sum(line.startswith("-") and not line.startswith("---") for line in diff.splitlines())
+        if header is None:
+            if status == "added" or old == b"":
+                header = "new file mode 100644\n"
+            elif old_mode != new_mode:
+                header = f"old mode {old_mode}\nnew mode {new_mode}\n"
+            else:
+                header = "index 1111111..2222222 100644\n"
+        return f"diff --git a/{path} b/{path}\n{header}{diff}", adds, dels
+
+    def assert_coverage(self, codes):
+        result, stdout = self.run_adapter()
+        if codes is None:
+            self.incomplete(result)
+            self.assertNotIn("covered by check:", result["summary"])
+            return result
+        self.complete(result)
+        summary = "Reviewed the supplied change; 0 finding(s)."
+        if codes:
+            summary += " " + " ".join(codes)
+        self.assertEqual(result["summary"], summary)
+        self.assertNotIn("complete", result["summary"].lower())
+        self.assertNotIn(summary, stdout)
+        return result
+
+    def lock_bytes(self, deps, root=None, packages=None, top=None):
+        root_pkg = {"name": "ui", "version": "1.2.3", "devDependencies": deps}
+        if root:
+            root_pkg.update(root)
+        body = {"name": "ui", "version": "1.2.3", "lockfileVersion": 3, "requires": True, "packages": {
+            "": root_pkg,
+            "node_modules/jsdom": {"version": "30.1.3", "resolved": "https://registry.example/jsdom.tgz", "integrity": "sha512-abc"},
+        }}
+        if packages:
+            body["packages"].update(packages)
+        if top:
+            body.update(top)
+        return (json.dumps(body, indent=2) + "\n").encode()
+
+    def package_bytes(self, deps):
+        return (json.dumps({"name": "ui", "version": "1.2.3", "devDependencies": deps}, indent=2) + "\n").encode()
+
+    def pr27_svg(self, fill="#202721"):
+        return (
+            '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
+            'width="473" height="256" viewBox="0 0 473 256" role="img" aria-label="ui by ejmlabs, ink logo">'
+            '<title>ui by ejmlabs, ink logo</title>'
+            f'<rect x="0" y="0" width="16" height="16" rx="0" fill="{fill}"/>'
+            '<g transform="translate(55.8 55.8) scale(3.56)">'
+            f'<path fill="{fill}" d="M150 114L126 114"/>'
+            '<text x="72" y="64" font-family="Manrope, sans-serif" font-size="48" font-weight="500">ui</text>'
+            '</g></svg>\n'
+        ).encode()
+
+    def test_pr27_shaped_lock_mirror_and_asset_svg_are_covered(self):
+        base_deps = {"jsdom": "^30.1.3", "typescript": "^5.9.0"}
+        head_deps = {"jsdom": "^30.1.3", "sharp": "^0.35.5", "typescript": "^5.9.0"}
+        svg = "packages/tokens/assets/projects/ui/logo-ink.svg"
+        self.stage_changes([
+            {"path": "package-lock.json", "old": self.lock_bytes(base_deps), "new": self.lock_bytes(head_deps), "skip": True},
+            {"path": "package.json", "old": self.package_bytes(base_deps), "new": self.package_bytes(head_deps)},
+            {"path": svg, "old": b"", "new": self.pr27_svg(), "status": "added", "skip": True},
+        ])
+        self.assert_coverage(["covered by check: lock-manifest-mirror v1", "covered by check: svg-allowlist v1"])
+        # Same mirror in a nested package, and a modified asset SVG with context, still covered.
+        nested_lock, nested_pkg = "packages/app/package-lock.json", "packages/app/package.json"
+        modified = "packages/tokens/assets/mark.svg"
+        old_svg = b'<svg xmlns="http://www.w3.org/2000/svg">\n<path d="M0 0" fill="#111"/>\n</svg>\n'
+        new_svg = b'<svg xmlns="http://www.w3.org/2000/svg">\n<path d="M0 0" fill="#222"/>\n</svg>\n'
+        self.stage_changes([
+            {"path": nested_lock, "old": self.lock_bytes(base_deps), "new": self.lock_bytes(head_deps), "skip": True},
+            {"path": nested_pkg, "old": self.package_bytes(base_deps), "new": self.package_bytes(head_deps)},
+            {"path": modified, "old": old_svg, "new": new_svg, "skip": True},
+        ])
+        self.assert_coverage(["covered by check: lock-manifest-mirror v1", "covered by check: svg-allowlist v1"])
+
+    def test_lock_manifest_mirror_rejects_closed(self):
+        base_deps = {"jsdom": "^30.1.3", "typescript": "^5.9.0"}
+        head_deps = {"jsdom": "^30.1.3", "sharp": "^0.35.5", "typescript": "^5.9.0"}
+        base_lock, head_lock = self.lock_bytes(base_deps), self.lock_bytes(head_deps)
+        base_pkg, head_pkg = self.package_bytes(base_deps), self.package_bytes(head_deps)
+        duplicate = head_lock.replace(b'    "sharp": "^0.35.5",\n', b'    "sharp": "^0.35.5",\n    "sharp": "^0.35.5",\n', 1)
+        resolved = self.lock_bytes(head_deps, packages={"node_modules/jsdom": {"version": "30.1.3", "resolved": "https://registry.example/other.tgz", "integrity": "sha512-abc"}})
+        integrity = self.lock_bytes(head_deps, packages={"node_modules/jsdom": {"version": "30.1.3", "resolved": "https://registry.example/jsdom.tgz", "integrity": "sha512-zzz"}})
+        root_version = self.lock_bytes(head_deps, root={"version": "9.9.9"})
+        top_version = self.lock_bytes(head_deps, top={"version": "9.9.9"})
+        new_pkg = self.lock_bytes(head_deps, packages={"node_modules/sharp": {"version": "0.35.5", "integrity": "sha512-def"}})
+        mismatch = self.package_bytes({"jsdom": "^30.1.3", "sharp": "^0.0.1", "typescript": "^5.9.0"})
+        cases = {
+            "duplicate-key": (duplicate, head_pkg, True),
+            "resolved": (resolved, head_pkg, True),
+            "integrity": (integrity, head_pkg, True),
+            "root-version": (root_version, head_pkg, True),
+            "top-version": (top_version, head_pkg, True),
+            "new-package": (new_pkg, head_pkg, True),
+            "manifest-mismatch": (head_lock, mismatch, True),
+            "manifest-absent": (head_lock, None, True),
+            "cargo": None,
+            "wrong-basename": None,
+            "no-archive": (head_lock, head_pkg, False),
+        }
+        for label, spec in cases.items():
+            with self.subTest(label=label):
+                if label == "cargo":
+                    self.stage_changes([{"path": "Cargo.lock", "old": b"a\n", "new": b"b\n", "skip": True}])
+                elif label == "wrong-basename":
+                    self.stage_changes([
+                        {"path": "not-package-lock.json", "old": base_lock, "new": head_lock, "skip": True},
+                        {"path": "package.json", "old": base_pkg, "new": head_pkg},
+                        {"path": "yarn.lock", "old": b"a\n", "new": b"b\n", "skip": True},
+                    ])
+                elif label == "manifest-absent":
+                    self.stage_changes([{"path": "package-lock.json", "old": base_lock, "new": head_lock, "skip": True}])
+                else:
+                    lock_new, pkg_new, archive = spec
+                    files = [{"path": "package-lock.json", "old": base_lock, "new": lock_new, "skip": True}]
+                    if pkg_new is not None:
+                        files.append({"path": "package.json", "old": base_pkg, "new": pkg_new})
+                    self.stage_changes(files, use_archive=archive)
+                result = self.assert_coverage(None)
+                self.assertIn("skipped changed text", result["summary"])
+
+    def test_svg_allowlist_rejects_closed(self):
+        good = self.pr27_svg().decode()
+        path = "packages/tokens/assets/projects/ui/logo-ink.svg"
+        mutations = {
+            "href": good.replace("<path ", '<path href="https://evil.invalid/a" '),
+            "xlink-href": good.replace("<path ", '<path xlink:href="#a" '),
+            "style-attribute": good.replace("<path ", '<path style="fill:#fff" '),
+            "style-element": good.replace("<path ", "<style>x</style><path "),
+            "script": good.replace("<path ", "<script>alert(1)</script><path "),
+            "doctype": "<!DOCTYPE svg>" + good,
+            "entity": '<!DOCTYPE svg [<!ENTITY x "a">]>' + good.replace("</title>", "&x;</title>"),
+            "external-entity": '<!DOCTYPE svg [<!ENTITY x SYSTEM "http://evil.invalid/x">]>' + good,
+            "pi": '<?xml-stylesheet type="text/css" href="x"?>' + good,
+            "cdata": good.replace("<title>ui by ejmlabs, ink logo</title>", "<text><![CDATA[a]]></text>"),
+            "comment": good.replace("<title>", "<!-- hidden --><title>"),
+            "url": good.replace('fill="#202721"', 'fill="url(#paint)"', 1),
+            "javascript": good.replace('fill="#202721"', 'fill="javascript:alert(1)"', 1),
+            "javascript-entity": good.replace('fill="#202721"', 'fill="&#106;avascript:alert(1)"', 1),
+            "data": good.replace('fill="#202721"', 'fill="data:image/svg+xml,a"', 1),
+            "onload": good.replace("<svg ", '<svg onload="alert(1)" ', 1),
+            "wrong-root": '<g xmlns="http://www.w3.org/2000/svg"/>\n',
+            "wrong-namespace": good.replace("http://www.w3.org/2000/svg", "http://evil.invalid/svg", 1),
+            "parse-error": '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"></svg>\n',
+        }
+        for label, text in mutations.items():
+            with self.subTest(label=label):
+                blob = text.encode()
+                self.stage_changes([{"path": path, "old": b"", "new": blob, "status": "added", "skip": True}])
+                result = self.assert_coverage(None)
+                self.assertIn("skipped changed text", result["summary"])
+        old_line = b'<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0" fill="#111"/></svg>\n'
+        new_line = b'<svg xmlns="http://www.w3.org/2000/svg"><path d="M1 1" fill="#222"/></svg>\n'
+        partial_old = b'<svg xmlns="http://www.w3.org/2000/svg">\n<path d="M0 0" fill="#111"/>\n</svg>\n'
+        partial_new = b'<svg xmlns="http://www.w3.org/2000/svg">\n<path d="M0 0" fill="#222"/>\n</svg>\n'
+        structural = {
+            "rename": {"patch": (
+                "diff --git a/packages/tokens/assets/a.svg b/packages/tokens/assets/b.svg\n"
+                "similarity index 90%\nrename from packages/tokens/assets/a.svg\nrename to packages/tokens/assets/b.svg\n"
+                "--- a/packages/tokens/assets/a.svg\n+++ b/packages/tokens/assets/b.svg\n@@ -1 +1 @@\n"
+                "-<svg xmlns=\"http://www.w3.org/2000/svg\"/>\n+" + good
+            ), "additions": 1, "deletions": 1, "path": "packages/tokens/assets/b.svg", "source": "packages/tokens/assets/a.svg",
+               "status": "renamed", "new": self.pr27_svg(), "skip": True},
+            "mode-change": {"path": path, "old": self.pr27_svg(), "new": self.pr27_svg("#111111"), "old_mode": "100644", "new_mode": "100755", "skip": True},
+            "non-asset": {"path": "packages/tokens/logo.svg", "old": b"", "new": self.pr27_svg(), "status": "added", "skip": True},
+            "dot-segment": {"path": "packages/tokens/assets/./logo.svg", "old": b"", "new": self.pr27_svg(), "status": "added", "skip": True},
+            "oversize": {"path": path, "old": b"", "new": self.pr27_svg(), "status": "added", "skip": True, "blob": b"x" * 131073},
+            "non-utf8": {"path": path, "old": b"", "new": self.pr27_svg(), "status": "added", "skip": True, "blob": b"\xff\xfe<svg>"},
+            "blob-mismatch": {"path": path, "old": b"", "new": self.pr27_svg(), "status": "added", "skip": True, "blob": self.pr27_svg(fill="#111111")},
+            "partial-without-archive": {"path": path, "old": partial_old, "new": partial_new, "skip": True, "archive": False},
+            "lock-without-archive": None,
+        }
+        for label, spec in structural.items():
+            with self.subTest(label=label):
+                if label == "lock-without-archive":
+                    base_deps = {"jsdom": "^30.1.3"}
+                    head_deps = {"jsdom": "^30.1.3", "sharp": "^0.35.5"}
+                    self.stage_changes([
+                        {"path": "package-lock.json", "old": self.lock_bytes(base_deps), "new": self.lock_bytes(head_deps), "skip": True},
+                        {"path": "package.json", "old": self.package_bytes(base_deps), "new": self.package_bytes(head_deps)},
+                    ], use_archive=False)
+                else:
+                    self.stage_changes([spec], use_archive=spec.get("archive", True))
+                result = self.assert_coverage(None)
+                if label != "rename":
+                    self.assertIn("skipped changed text", result["summary"])
+        with self.subTest(label="path-traversal"):
+            name = "packages/tokens/assets/../../logo.svg"
+            self.stage_changes([{"path": name, "old": b"", "new": self.pr27_svg(), "status": "added", "skip": True}])
+            result = self.assert_coverage(None)
+            self.assertIn("unsafe", result["summary"])
+        # Added file and a whole-file replacement can be reconstructed when the archive is absent.
+        with self.subTest(label="added-without-archive"):
+            self.stage_changes([{"path": path, "old": b"", "new": self.pr27_svg(), "status": "added", "skip": True}], use_archive=False)
+            self.assert_coverage(["covered by check: svg-allowlist v1"])
+        with self.subTest(label="whole-file-without-archive"):
+            self.stage_changes([{"path": path, "old": old_line, "new": new_line, "skip": True}], use_archive=False)
+            self.assert_coverage(["covered by check: svg-allowlist v1"])
+
+    def test_deleted_svg_stays_covered_without_the_new_check_code(self):
+        asset = self.file("packages/tokens/assets/gone.svg", target=None, status="removed", additions=0, deletions=1,
+                          has_patch=True, old_mode="100644")
+        self.manifest(asset)
+        self.skipped.write_text(json.dumps(["packages/tokens/assets/gone.svg"]))
+        self.patch.write_text(
+            "diff --git a/packages/tokens/assets/gone.svg b/packages/tokens/assets/gone.svg\n"
+            "deleted file mode 100644\n--- a/packages/tokens/assets/gone.svg\n+++ /dev/null\n"
+            "@@ -1 +0,0 @@\n-<svg/>\n"
+        )
+        result, _ = self.run_adapter()
+        self.complete(result)
+        self.assertNotIn("covered by check:", result["summary"])
 
 
 if __name__ == "__main__":

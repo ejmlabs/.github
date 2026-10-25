@@ -6,6 +6,7 @@ import json
 import re
 import sys
 import unicodedata
+import xml.parsers.expat as expat
 from pathlib import Path, PureWindowsPath
 
 
@@ -46,6 +47,27 @@ def github_profile(repository):
 def is_svg_name(name):
     base = name.rsplit("/", 1)[-1]
     return "." in base and base.rsplit(".", 1)[-1].lower() == "svg"
+
+
+# Fixed public codes. They do not mean the skipped file was model-reviewed.
+LOCK_COVERAGE = "covered by check: lock-manifest-mirror v1"
+SVG_COVERAGE = "covered by check: svg-allowlist v1"
+ASSET_SVG_DIR = "packages/tokens/assets/"
+SVG_NAMESPACE = "http://www.w3.org/2000/svg"
+XLINK_NAMESPACE = "http://www.w3.org/1999/xlink"
+SVG_ELEMENTS = frozenset("svg g path rect circle ellipse line polyline polygon text tspan title desc".split())
+# Minimal set that covers the asset SVGs shipped with a one-line lock mirror.
+SVG_ATTRS = frozenset(
+    "aria-label d fill font-family font-size font-weight height role rx transform viewBox width x y".split()
+)
+SVG_TEXT = frozenset("text tspan title desc".split())
+DEP_MAPS = ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies")
+SVG_BYTE_LIMIT = 131072
+BLOB_BYTE_LIMIT = 4_000_000
+
+
+class _NoArchive(Exception):
+    """The head archive directory is not present, so blob reads are unavailable."""
 
 
 def excluded_manifest_item(item):
@@ -427,12 +449,397 @@ def svg_skip_allowed(lines, item):
     return True
 
 
-def check_skipped(patch, skipped_file, manifest=None, repository=None):
+def read_blob(root, name, limit):
+    """Read one archive blob. Refuse links, escapes, and oversize files."""
+    safe_patch_path(name)
+    root = Path(root)
+    if not root.exists() and not root.is_symlink():
+        raise _NoArchive()
+    if root.is_symlink() or not root.is_dir():
+        raise Incomplete("missing head blob")
+    path = root
+    for part in name.split("/"):
+        path = path / part
+        if path.is_symlink():
+            raise Incomplete("missing head blob")
+    if not path.is_file():
+        raise Incomplete("missing head blob")
+    if path.stat().st_size > limit:
+        raise Incomplete("oversized head blob")
+    data = path.read_bytes()
+    if len(data) > limit:
+        raise Incomplete("oversized head blob")
+    return data
+
+
+def parse_hunks(lines):
+    hunks, current = [], None
+    for line in lines:
+        if line.startswith("@@"):
+            match = re.fullmatch(r"@@ -([0-9]+)(?:,([0-9]+))? \+([0-9]+)(?:,([0-9]+))? @@.*", line)
+            if not match:
+                raise Incomplete("unsupported change hunk")
+            current = {"old_start": int(match[1]), "old_len": int(match[2]) if match[2] is not None else 1,
+                       "new_start": int(match[3]), "new_len": int(match[4]) if match[4] is not None else 1, "lines": []}
+            hunks.append(current)
+        elif current is None or not line.startswith(("+", "-", " ", "\\")):
+            raise Incomplete("unsupported change hunk")
+        else:
+            current["lines"].append(line)
+    if not hunks:
+        raise Incomplete("unsupported change hunk")
+    return hunks
+
+
+def hunk_records(hunk):
+    records = []
+    for line in hunk["lines"]:
+        if line.startswith("\\"):
+            if line != "\\ No newline at end of file" or not records or records[-1][2]:
+                raise Incomplete("unsupported change hunk")
+            kind, text, _flag = records[-1]
+            records[-1] = (kind, text, True)
+        elif line[:1] in "+- ":
+            records.append((line[0], line[1:], False))
+        else:
+            raise Incomplete("unsupported change hunk")
+    new_count = sum(kind != "-" for kind, _text, _flag in records)
+    old_count = sum(kind != "+" for kind, _text, _flag in records)
+    if new_count != hunk["new_len"] or old_count != hunk["old_len"]:
+        raise Incomplete("invalid change hunk")
+    return records
+
+
+def reverse_apply(data, hunks):
+    """Rebuild base bytes by reversing a unified diff that matches this head blob."""
+    text = data.decode("utf-8")
+    if text == "":
+        lines, ends = [], False
+    else:
+        ends = text.endswith("\n")
+        lines = text[:-1].split("\n") if ends else text.split("\n")
+    index, base = 0, []
+    for hunk in hunks:
+        records = hunk_records(hunk)
+        end = hunk["new_start"] if hunk["new_len"] == 0 else hunk["new_start"] - 1
+        if end < index or end > len(lines):
+            raise Incomplete("patch does not match head blob")
+        for cursor in range(index, end):
+            base.append((lines[cursor], cursor == len(lines) - 1 and not ends))
+        index = end
+        for kind, content, nonl in records:
+            if kind in "+ ":
+                last = index == len(lines) - 1
+                if index >= len(lines) or lines[index] != content or nonl != (last and not ends):
+                    raise Incomplete("patch does not match head blob")
+                index += 1
+            if kind in "- ":
+                base.append((content, nonl))
+    if index > len(lines):
+        raise Incomplete("patch does not match head blob")
+    for cursor in range(index, len(lines)):
+        base.append((lines[cursor], cursor == len(lines) - 1 and not ends))
+    if any(nonl for _content, nonl in base[:-1]):
+        raise Incomplete("patch does not match head blob")
+    if not base:
+        return b""
+    merged = "\n".join(content for content, _nonl in base)
+    if not base[-1][1]:
+        merged += "\n"
+    return merged.encode("utf-8")
+
+
+def reconstruct_new(hunks, added):
+    """Full new file from one hunk. Used only when the head archive is absent."""
+    if len(hunks) != 1:
+        raise Incomplete("partial svg")
+    hunk, records = hunks[0], hunk_records(hunks[0])
+    if any(kind == " " for kind, _text, _flag in records):
+        raise Incomplete("partial svg")
+    pluses = [(text, nonl) for kind, text, nonl in records if kind == "+"]
+    if added:
+        if (hunk["old_start"], hunk["old_len"], hunk["new_start"]) != (0, 0, 1):
+            raise Incomplete("partial svg")
+        if any(kind != "+" for kind, _text, _flag in records):
+            raise Incomplete("partial svg")
+    elif hunk["old_start"] != 1 or hunk["new_start"] != 1 or not pluses or not any(kind == "-" for kind, _t, _f in records):
+        raise Incomplete("partial svg")
+    if not pluses or any(nonl for _text, nonl in pluses[:-1]):
+        raise Incomplete("partial svg")
+    merged = "\n".join(text for text, _nonl in pluses)
+    if not pluses[-1][1]:
+        merged += "\n"
+    data = merged.encode("utf-8")
+    if len(data) > SVG_BYTE_LIMIT:
+        raise Incomplete("oversized head blob")
+    return data
+
+
+def load_json_object(data):
+    try:
+        value = json.loads(data.decode("utf-8"), object_pairs_hook=json_object, parse_constant=invalid_constant)
+    except Incomplete:
+        raise
+    except (UnicodeError, json.JSONDecodeError, ValueError):
+        raise Incomplete("invalid json")
+    if not isinstance(value, dict):
+        raise Incomplete("invalid json")
+    return value
+
+
+def string_map(value):
+    return isinstance(value, dict) and all(isinstance(key, str) and isinstance(item, str) for key, item in value.items())
+
+
+def mirror_lock(base, head, package_json):
+    for key in ("name", "version", "lockfileVersion", "requires"):
+        if (key in base) != (key in head) or base.get(key) != head.get(key):
+            raise Incomplete("lock changed")
+    packages = base.get("packages")
+    head_packages = head.get("packages")
+    if not isinstance(packages, dict) or not isinstance(head_packages, dict):
+        raise Incomplete("lock shape")
+    if not isinstance(packages.get(""), dict) or not isinstance(head_packages.get(""), dict):
+        raise Incomplete("lock shape")
+    base_rest = {key: item for key, item in base.items() if key != "packages"}
+    head_rest = {key: item for key, item in head.items() if key != "packages"}
+    base_rest["packages"] = {key: item for key, item in packages.items() if key != ""}
+    head_rest["packages"] = {key: item for key, item in head_packages.items() if key != ""}
+    if base_rest != head_rest:
+        raise Incomplete("lock changed")
+    base_root, head_root = packages[""], head_packages[""]
+    if not isinstance(package_json, dict):
+        raise Incomplete("manifest mismatch")
+    static = set(base_root) - set(DEP_MAPS)
+    if static != set(head_root) - set(DEP_MAPS):
+        raise Incomplete("lock changed")
+    for key in static:
+        if base_root[key] != head_root[key]:
+            raise Incomplete("lock changed")
+    for key in DEP_MAPS:
+        if (key in head_root) != (key in package_json):
+            raise Incomplete("manifest mismatch")
+        if key in head_root and (not string_map(head_root[key]) or head_root[key] != package_json[key]):
+            raise Incomplete("manifest mismatch")
+        if key in base_root and not string_map(base_root[key]):
+            raise Incomplete("lock changed")
+
+
+def sibling_manifest(manifest, name):
+    parent, _slash, base = name.rpartition("/")
+    if base != "package-lock.json":
+        return None, None
+    sibling = parent + "/package.json" if parent else "package.json"
+    if not isinstance(manifest, list):
+        return None, sibling
+    for item in manifest:
+        if not isinstance(item, dict) or item.get("target") != sibling or item.get("status") not in ("added", "modified"):
+            continue
+        if item.get("status") == "modified" and item.get("source") != sibling:
+            continue
+        if item.get("status") == "added" and item.get("source") is not None:
+            continue
+        return item, sibling
+    return None, sibling
+
+
+def block_hunks(patch, wanted):
+    for block in re.split(r"(?m)(?=^diff --git )", patch):
+        if not block.startswith("diff --git "):
+            continue
+        lines = block.splitlines()
+        source = target = None
+        hunk_at = None
+        for index, line in enumerate(lines[1:], 1):
+            if line.startswith("@@ "):
+                hunk_at = index
+                break
+            if line.startswith("--- "):
+                source = line[4:].split("\t", 1)[0]
+            elif line.startswith("+++ "):
+                target = line[4:].split("\t", 1)[0]
+        value = source if target == "/dev/null" else target
+        if value is None:
+            continue
+        name = git_path(value)
+        if name.startswith(("a/", "b/")) and name[2:] == wanted and hunk_at is not None:
+            return parse_hunks(lines[hunk_at:])
+    return None
+
+
+def metadata_lines(lines):
+    meta = []
+    for line in lines[1:]:
+        if line.startswith("@@"):
+            break
+        meta.append(line)
+    return meta
+
+
+def modes_are_plain(meta):
+    for line in meta:
+        if line.startswith(("rename from ", "rename to ", "copy from ", "copy to ")):
+            return False
+        for prefix in ("old mode ", "new mode ", "new file mode ", "deleted file mode "):
+            if line.startswith(prefix) and line[len(prefix):] != "100644":
+                return False
+        if line.startswith("index ") and len(line.split()) >= 3 and line.split()[-1] != "100644":
+            return False
+    return True
+
+
+def asset_svg_path(name):
+    if not isinstance(name, str) or not name.endswith(".svg") or "\\" in name or "\x00" in name:
+        return False
+    parts = name.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        return False
+    return name.startswith(ASSET_SVG_DIR)
+
+
+def parse_svg(data):
+    if not isinstance(data, (bytes, bytearray)) or len(data) > SVG_BYTE_LIMIT or data.startswith((b"\xef\xbb\xbf", b"\xff\xfe", b"\xfe\xff")):
+        raise Incomplete("svg rejected")
+    text = data.decode("utf-8")
+    parser, stack, seen_root = expat.ParserCreate(), [], False
+
+    def reject():
+        raise Incomplete("svg rejected")
+
+    def start(name, attrs):
+        nonlocal seen_root
+        if name not in SVG_ELEMENTS or ":" in name:
+            reject()
+        for key, value in attrs.items():
+            if key == "xmlns":
+                if stack or value != SVG_NAMESPACE:
+                    reject()
+                continue
+            if key == "xmlns:xlink":
+                if value != XLINK_NAMESPACE:
+                    reject()
+                continue
+            lowered = key.lower()
+            if key not in SVG_ATTRS or ":" in key or lowered in ("href", "style"):
+                reject()
+            folded = value.lower()
+            if "url(" in folded or "javascript:" in folded or "data:" in folded:
+                reject()
+        if not stack:
+            if name != "svg" or attrs.get("xmlns") != SVG_NAMESPACE:
+                reject()
+            seen_root = True
+        stack.append(name)
+
+    def end(name):
+        if not stack or stack.pop() != name:
+            reject()
+
+    def chars(value):
+        if value.strip() and (not stack or stack[-1] not in SVG_TEXT):
+            reject()
+
+    def bad(*_args):
+        reject()
+
+    def xml_decl(_version, encoding, _standalone):
+        if encoding and encoding.lower() not in ("utf-8", "utf8"):
+            reject()
+
+    parser.StartElementHandler = start
+    parser.EndElementHandler = end
+    parser.CharacterDataHandler = chars
+    parser.ProcessingInstructionHandler = bad
+    parser.CommentHandler = bad
+    parser.StartCdataSectionHandler = bad
+    parser.EndCdataSectionHandler = bad
+    parser.StartDoctypeDeclHandler = bad
+    parser.EndDoctypeDeclHandler = bad
+    parser.EntityDeclHandler = bad
+    parser.ExternalEntityRefHandler = bad
+    parser.UnparsedEntityDeclHandler = bad
+    parser.NotationDeclHandler = bad
+    parser.XmlDeclHandler = xml_decl
+    parser.Parse(text, True)
+    if stack or not seen_root:
+        reject()
+
+
+def lock_eligible(name, item, rename_from):
+    base = name.rsplit("/", 1)[-1] if isinstance(name, str) else ""
+    return (rename_from is None and base == "package-lock.json" and isinstance(item, dict)
+            and item.get("status") == "modified" and item.get("source") == name and item.get("target") == name)
+
+
+def hunk_slice(lines):
+    for index, line in enumerate(lines):
+        if line.startswith("@@"):
+            return parse_hunks(lines[index:])
+    raise Incomplete("missing change hunks")
+
+
+def accept_lock(name, lines, item, rename_from, manifest, patch, archive):
+    if not lock_eligible(name, item, rename_from):
+        return False
+    _item, sibling = sibling_manifest(manifest, name)
+    if _item is None or sibling is None:
+        raise Incomplete("reviewer skipped changed text files")
+    try:
+        lock_bytes = read_blob(archive, name, BLOB_BYTE_LIMIT)
+        package_bytes = read_blob(archive, sibling, BLOB_BYTE_LIMIT)
+        package_hunks = block_hunks(patch, sibling)
+        if not package_hunks:
+            raise Incomplete("manifest not in diff")
+        base_bytes = reverse_apply(lock_bytes, hunk_slice(lines))
+        reverse_apply(package_bytes, package_hunks)
+        mirror_lock(load_json_object(base_bytes), load_json_object(lock_bytes), load_json_object(package_bytes))
+    except (Incomplete, _NoArchive, OSError, UnicodeError, json.JSONDecodeError):
+        raise Incomplete("reviewer skipped changed text files")
+    return True
+
+
+def svg_eligible(name, item, rename_from, lines):
+    if rename_from is not None or not asset_svg_path(name) or not isinstance(item, dict):
+        return False
+    meta, status = metadata_lines(lines), item.get("status")
+    if not modes_are_plain(meta):
+        return False
+    if status == "added":
+        return (item.get("source") is None and item.get("target") == name and item.get("new_mode") == "100644"
+                and "new file mode 100644" in meta)
+    if status == "modified":
+        forbidden = ("new file mode ", "deleted file mode ", "rename from ", "rename to ", "copy from ", "copy to ")
+        return (item.get("source") == name and item.get("target") == name and item.get("old_mode") == "100644"
+                and item.get("new_mode") == "100644" and not any(line.startswith(forbidden) for line in meta))
+    return False
+
+
+def svg_head(archive, name, status, hunks):
+    # Head archive is the non-executing export. Without it, only a full hunk reconstruction is accepted.
+    try:
+        data = read_blob(archive, name, SVG_BYTE_LIMIT)
+    except _NoArchive:
+        return reconstruct_new(hunks, status == "added")
+    reverse_apply(data, hunks)
+    return data
+
+
+def accept_svg(name, lines, item, rename_from, archive):
+    if not svg_eligible(name, item, rename_from, lines):
+        return False
+    try:
+        parse_svg(svg_head(archive, name, item.get("status"), hunk_slice(lines)))
+    except (Incomplete, _NoArchive, OSError, UnicodeError, expat.ExpatError):
+        raise Incomplete("reviewer skipped changed text files")
+    return True
+
+
+def check_skipped(patch, skipped_file, manifest=None, repository=None, archive=None):
     skipped = read_json(skipped_file)
     if not isinstance(skipped, list) or any(not isinstance(name, str) or not name for name in skipped):
         raise Incomplete("invalid skipped-file list")
     if not skipped:
-        return
+        return []
     if not isinstance(manifest, list):
         raise Incomplete("missing or invalid changed-file manifest")
     by_key = {}
@@ -448,6 +855,7 @@ def check_skipped(patch, skipped_file, manifest=None, repository=None):
             item = by_key.get(name)
             if name in EXCLUDED_REVIEW_PATHS and item is not None and excluded_manifest_item(item):
                 unmatched.discard(name)
+    saw_lock = saw_svg = False
     for block in re.split(r"(?m)(?=^diff --git )", patch):
         if not block.startswith("diff --git "):
             continue
@@ -481,11 +889,23 @@ def check_skipped(patch, skipped_file, manifest=None, repository=None):
                 raise Incomplete("reviewer skipped changed text files")
             if hunks:
                 item = by_key.get(name)
-                if not (is_svg_name(name) and svg_skip_allowed(lines, item)):
+                if is_svg_name(name) and svg_skip_allowed(lines, item):
+                    pass
+                elif accept_lock(name, lines, item, rename_or_copy_from, manifest, patch, archive):
+                    saw_lock = True
+                elif accept_svg(name, lines, item, rename_or_copy_from, archive):
+                    saw_svg = True
+                else:
                     raise Incomplete("reviewer skipped changed text files")
             unmatched.discard(name)
     if unmatched:
         raise Incomplete("skipped-file list does not match the change")
+    codes = []
+    if saw_lock:
+        codes.append(LOCK_COVERAGE)
+    if saw_svg:
+        codes.append(SVG_COVERAGE)
+    return codes
 
 
 def first_changed_file(patch, manifest):
@@ -521,7 +941,8 @@ def adapt(review_json, review_markdown, reviewer_exit, context, patch, skipped_f
         if not re.search(r"(?m)^diff --git ", patch):
             raise Incomplete("missing change headers")
         check_patch(patch, identity.get("files"), identity.get("repository"))
-        check_skipped(patch, skipped_file, identity.get("files"), identity.get("repository"))
+        covered = check_skipped(
+            patch, skipped_file, identity.get("files"), identity.get("repository"), Path(context).parent / "product")
         payload = read_json(review_json)
         usage = payload.get("usage") if isinstance(payload, dict) else None
         if usage is not None:
@@ -557,7 +978,10 @@ def adapt(review_json, review_markdown, reviewer_exit, context, patch, skipped_f
                              "title": "Security concern", "reason": text(concern)})
         if len(findings) > 50:
             raise Incomplete("more than 50 findings including the security concern")
-        result.update(complete=True, summary=f"Reviewed the supplied change; {len(findings)} finding(s).", findings=findings)
+        summary = f"Reviewed the supplied change; {len(findings)} finding(s)."
+        if covered:
+            summary += " " + " ".join(covered)
+        result.update(complete=True, summary=summary, findings=findings)
         if len((json.dumps(result) + "\n").encode("utf-8")) > 64_000:
             raise Incomplete("review output exceeds 64000 bytes")
     except Incomplete as error:

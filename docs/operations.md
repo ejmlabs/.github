@@ -76,8 +76,17 @@ limits. A precheck records files excluded by the reviewer's file filter and,
 for ejmlabs/.github only, strips exact build-generated workflow paths
 verified by the workflow build check. Binary-only exclusions and deleted SVG
 files (status removed, mode 100644) are listed as not model-reviewed and do
-not make the review incomplete. Added or modified SVG content, other skipped
-text hunks, renames into skipped or generated paths, coverage warnings, and
+not make the review incomplete. Two narrow deterministic checks also cover
+skipped text files, and the result records their fixed codes:
+`lock-manifest-mirror v1` accepts a `package-lock.json` change only when its
+sibling `package.json` changes in the same diff and the lockfile change is
+limited to the root dependency-range maps that mirror it exactly, with no
+resolved, integrity, version or package entry change; `svg-allowlist v1`
+accepts an added or modified mode 100644 SVG only under
+`packages/tokens/assets/`, at most 128 KiB, parsed strictly with an element and
+attribute allowlist and no DTD, entities, processing instructions, CDATA,
+comments or prefixed attributes. Every other lockfile, SVG and skipped text
+hunk, renames into skipped or generated paths, coverage warnings, and
 clipped text stay fail-closed. The
 security-concerns field is required. Security concerns produce
 high findings, and credential-like text is redacted. Missing material context
@@ -529,6 +538,16 @@ establish those paths. First real draft releases, duplicate-tag refusal,
 installers, signing, registry publication and deployment also need their own
 evidence. Product-specific vulnerability and platform limits belong in the
 product's security and contributor guides.
+
+## Decision log
+
+- **2026-10-25, deterministically covered files (interim).** The owner
+  approved at 02:14 PT the two narrow checks `lock-manifest-mirror v1` and
+  `svg-allowlist v1` described above, ahead of the full deterministically
+  covered files requirement. Scope is exactly those two checks; all other
+  skipped content stays fail-closed. The security lead ratifies or reverts
+  this decision on 2026-10-25. Closing the binary, rename and mode content
+  gap is a hard condition for the next release.
 
 ## Recovery
 
