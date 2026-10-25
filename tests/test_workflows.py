@@ -514,7 +514,7 @@ class WorkflowSecurityTests(unittest.TestCase):
         for key, value in {
                 "LOG_LEVEL": "INFO", "CONFIG__MAX_MODEL_TOKENS": "160000", "CONFIG__MAX_OUTPUT_TOKENS": "16000",
                 "CONFIG__VERBOSITY_LEVEL": "0", "LITELLM__TURN_OFF_MESSAGE_LOGGING": "true",
-                "CONFIG__AI_TIMEOUT": "120", "CONFIG__PROPAGATE_TOOL_ERRORS": "true",
+                "CONFIG__AI_TIMEOUT": "225", "CONFIG__PROPAGATE_TOOL_ERRORS": "true",
                 "CONFIG__USE_REPO_SETTINGS_FILE": "false", "CONFIG__USE_GLOBAL_SETTINGS_FILE": "false",
                 "PR_REVIEWER__NUM_MAX_FINDINGS": "50", "PR_REVIEWER__ENABLE_REVIEW_COVERAGE_FOOTER": "true",
                 "IGNORE__GLOB": "[]", "IGNORE__REGEX": "[]", "GITHUB_ACTION_CONFIG__ENABLE_OUTPUT": "false",
@@ -528,6 +528,9 @@ class WorkflowSecurityTests(unittest.TestCase):
             self.assertFalse(name.startswith(("PR_AGENT_EXTRA_CONFIG", "PR_AGENT_CONFIG_BRANCH")))
         self.assertEqual(ai["timeout-minutes"], 12)
         self.assertEqual(review["timeout-minutes"], 9)
+        attempts = workflows.REVIEWER_MODEL_ATTEMPTS * int(settings["CONFIG__AI_TIMEOUT"])
+        self.assertLess(attempts, workflows.REVIEWER_TIMEOUT_SECONDS)
+        self.assertLess(workflows.REVIEWER_TIMEOUT_SECONDS + workflows.REVIEWER_KILL_AFTER_SECONDS, review["timeout-minutes"] * 60)
         script = review["run"]
         match = re.search(r"\btimeout -k ([0-9]+) ([0-9]+) ", script)
         self.assertEqual(int(match[1]), 15)

@@ -51,7 +51,7 @@ explicit revocation and a new human command.
 | Each AI review | 9 minutes within a 12-minute job |
 | Reviewer command | 480 seconds |
 | Forced termination after timeout | 15 seconds |
-| Each model call | 120 seconds |
+| Each model call | 225 seconds, at most two attempts |
 | Model token cap | 160,000; never above 180,000 |
 | Model output token cap | 16,000 |
 | Validated result | 64 KB and 50 findings |
