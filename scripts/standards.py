@@ -316,7 +316,7 @@ def native_build(text):
     """
     trigger = "on:\n  workflow_dispatch:\n  push:\n    branches: [main]\npermissions:\n  contents: read\n"
     head, _, rest = text.partition("\n")
-    if re.search(r"[\r\x0b\x0c\x1c-\x1e\x85\u2028\u2029]", text) or not re.fullmatch(r"name: [^\s\"'{}\[\]&*!|>#?%@`][^{}\[\]\t]*", head) or not rest.startswith(trigger):
+    if re.search(r"[^\n\x20-\x7e]", text) or not re.fullmatch(r"name: [^\s\"'{}\[\]&*!|>#?%@`][^{}\[\]\t]*", head) or not rest.startswith(trigger):
         raise ValueError("Build workflow must run only on workflow_dispatch and pushes to main with contents: read")
     # Reject every spelling the canonical block style does not use, so a quoted key, a flow mapping,
     # an anchor or a tag cannot hide a permission or an action from the checks below.
@@ -326,7 +326,7 @@ def native_build(text):
     current = None
     for line in rest.removeprefix(trigger).splitlines():
         indent = len(line) - len(line.lstrip(" "))
-        if block is not None and not line.strip():
+        if block is not None and not line.strip(" "):
             continue
         if block is not None and content is None and indent > block:
             content = indent
@@ -334,7 +334,7 @@ def native_build(text):
             continue
         block = content = None
         key = re.sub(r"\$\{\{.*?\}\}", "", line)
-        if not line.strip(" ") or line.lstrip().startswith("#"):
+        if not line.strip(" ") or line.lstrip(" ").startswith("#"):
             continue
         if not re.fullmatch(r" *(?:- )?[A-Za-z][A-Za-z0-9_-]*:(?: +[^\s\"'{}\[\]&*!|>#?][^{}\[\]\t]*| +[|>][1-9]?[+-]?| *)?| *- [^\s\"'{}\[\]&*!|>#?:-][^{}\[\]\t]*", key):
             raise ValueError("Build workflow must use plain block-style YAML without quoted keys, flow collections or anchors")

@@ -352,7 +352,11 @@ class WorkflowTests(unittest.TestCase):
             import yaml
         except ImportError:
             self.skipTest("PyYAML is not installed")
-        hostile = ["  actions: write", "    permissions: write-all", "      - uses: x/y@v1", "id-token: write", "ON: {workflow_call: {}}", "  env:", "    T: secrets.K",
+        try:
+            import ruamel.yaml as ruamel
+        except ImportError:
+            ruamel = None
+        hostile = ["  actions: write", "    permissions: write-all", "      - uses: x/y@v1", "id-token: write", "ON: {workflow_call: {}}", "  env:", "    T: secrets.K", "\u00a0#T: x", "\u2002# c",
                    "permissions: write-all", "secrets: inherit", "concurrency:", "    id-token: write", "- uses: x/y@v1", "run-name: x", "env:", "name: x"]
         lines = NATIVE_BUILD.splitlines()
         accepted = 0
@@ -361,14 +365,18 @@ class WorkflowTests(unittest.TestCase):
                 native_build(text)
             except ValueError:
                 continue
+            parsed = []
             try:
-                data = yaml.safe_load(text)
-            except yaml.YAMLError:
-                continue  # an unparsable file is not a workflow GitHub would run
+                parsed.append(yaml.safe_load(text))
+                if ruamel:
+                    parsed.append(ruamel.YAML(typ="safe").load(text))
+            except Exception:  # an unparsable file is not a workflow GitHub would run
+                continue
             accepted += 1
-            self.assertEqual(data["permissions"], {"contents": "read"}, text)
-            self.assertLessEqual({"on" if key is True else key for key in data}, {"name", "on", "permissions", "run-name", "env", "defaults", "concurrency", "jobs"}, text)
-            self.assertTrue(all("permissions" not in job for job in (data["jobs"] or {}).values() if isinstance(job, dict)), text)
+            for data in parsed:
+                self.assertEqual(data["permissions"], {"contents": "read"}, text)
+                self.assertLessEqual({"on" if key is True else key for key in data}, {"name", "on", "permissions", "run-name", "env", "defaults", "concurrency", "jobs"}, text)
+                self.assertTrue(all("permissions" not in job for job in (data["jobs"] or {}).values() if isinstance(job, dict)), text)
             self.assertNotRegex(text.lower(), "secrets|id-token")
         self.assertGreaterEqual(accepted, 1)
 
@@ -412,6 +420,11 @@ class WorkflowTests(unittest.TestCase):
             "repeated on": NATIVE_BUILD + "on:\n  workflow_call:\n",
             "uppercase on": NATIVE_BUILD + "ON:\n  workflow_call:\n",
             "permission after the header": NATIVE_BUILD.replace("  contents: read\n", "  contents: read\n\n  # more\n  actions: write\n", 1),
+            "no-break space before a comment mark": NATIVE_BUILD.replace("jobs:\n", 'env:\n\u00a0 #T: "${{ \\x73ecrets.K }}"\njobs:\n', 1),
+            "en space before a comment mark": NATIVE_BUILD.replace("jobs:\n", 'env:\n\u2002#T: "${{ \\x73ecrets.K }}"\njobs:\n', 1),
+            "non-ascii text in a comment": NATIVE_BUILD.replace("jobs:\n", "# caf\u00e9\njobs:\n", 1),
+            "non-ascii text in a script": NATIVE_BUILD.replace("cargo build", "cargo build \u00e9", 1),
+            "control character": NATIVE_BUILD.replace("cargo build", "cargo\x07 build", 1),
             "uppercase permissions": NATIVE_BUILD.replace("    runs-on", "    PERMISSIONS: write-all\n    runs-on"),
             "matrix flow list": NATIVE_BUILD.replace("    runs-on: ubuntu-24.04\n", "    strategy:\n      matrix:\n        os: [a, b]\n    runs-on: ubuntu-24.04\n"),
         }
