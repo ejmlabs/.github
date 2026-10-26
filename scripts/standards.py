@@ -33,7 +33,6 @@ UI_FONT_HASHES = {
     "IBMPlexMono": "7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da",
 }
 SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$")
-MODEL_KEYS = ("XAI_API_KEY",)
 MIT_TERMS = '''Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
@@ -188,34 +187,7 @@ def ui_licenses(root, text):
             raise ValueError("UI package font notice differs from the token owner: " + name)
 
 
-def consumer_workflows(revision, *, model_key="XAI_API_KEY"):
-    """Return the normal consumer workflows for one reviewed revision."""
-    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
-        raise ValueError("Standards revision must be a full lowercase commit SHA")
-    if model_key not in MODEL_KEYS:
-        raise ValueError("Unsupported model key name")
-    return {name: text.replace("STANDARDS_REVISION", revision).replace("XAI_API_KEY", model_key) for name, text in {
-        "pr.yml": """name: Human-admitted PR checks
-on:
-  issue_comment:
-    types: [created, edited, deleted]
-  pull_request_target:
-    types: [unlabeled]
-permissions: {}
-jobs:
-  governance:
-    if: ${{ github.event.issue.pull_request || github.event_name == 'pull_request_target' }}
-    permissions:
-      contents: read
-      pull-requests: write
-      statuses: write
-      actions: write
-    uses: ejmlabs/.github/.github/workflows/governance.yml@STANDARDS_REVISION
-    secrets:
-      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
-      EJM_HARNESS_TOKEN: ${{ secrets.EJM_HARNESS_TOKEN }}
-""",
-        "release.yml": """name: Draft source release
+RELEASE_CALLER = """name: Draft source release
 on:
   workflow_dispatch:
     inputs:
@@ -239,16 +211,63 @@ jobs:
       commit: ${{ inputs.commit }}
       version: ${{ inputs.version }}
       standards-ref: "STANDARDS_REVISION"
-""",
-    }.items()}
+"""
+PR_CALLER = """name: Human-admitted PR checks
+on:
+  issue_comment:
+    types: [created, edited, deleted]
+permissions: {}
+jobs:
+  governance:
+    if: ${{ github.event.issue.pull_request }}
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+      actions: write
+    uses: ejmlabs/.github/.github/workflows/governance.yml@STANDARDS_REVISION
+    secrets:
+      EJM_HARNESS_TOKEN: ${{ secrets.EJM_HARNESS_TOKEN }}
+"""
+# The caller form before the review was removed. It is accepted for one generation
+# so every repository can adopt the new pin before it adopts the new form.
+CURRENT_PR_CALLER = """name: Human-admitted PR checks
+on:
+  issue_comment:
+    types: [created, edited, deleted]
+  pull_request_target:
+    types: [unlabeled]
+permissions: {}
+jobs:
+  governance:
+    if: ${{ github.event.issue.pull_request || github.event_name == 'pull_request_target' }}
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+      actions: write
+    uses: ejmlabs/.github/.github/workflows/governance.yml@STANDARDS_REVISION
+    secrets:
+      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+      EJM_HARNESS_TOKEN: ${{ secrets.EJM_HARNESS_TOKEN }}
+"""
+PR_EVENT = {False: "github.event.issue.pull_request", True: "github.event.issue.pull_request || github.event_name == 'pull_request_target'"}
 
 
-def missing_model_key_workflows(revision, *, model_key="XAI_API_KEY"):
+def consumer_workflows(revision, *, current=False):
+    """Return the normal consumer workflows for one reviewed revision."""
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ValueError("Standards revision must be a full lowercase commit SHA")
+    return {name: text.replace("STANDARDS_REVISION", revision) for name, text in
+            (("pr.yml", CURRENT_PR_CALLER if current else PR_CALLER), ("release.yml", RELEASE_CALLER))}
+
+
+def missing_model_key_workflows(revision, *, current=False):
     """Return the exact shared-only caller for staged missing-key acceptance."""
-    documents = consumer_workflows(revision, model_key=model_key)
+    documents = consumer_workflows(revision, current=current)
     header, job = documents["pr.yml"].split("  governance:\n", 1)
-    original = "    if: ${{ github.event.issue.pull_request || github.event_name == 'pull_request_target' }}\n"
-    scope = "(github.event.issue.pull_request || github.event_name == 'pull_request_target') && github.repository == 'ejmlabs/.github'"
+    original = "    if: ${{ " + PR_EVENT[current] + " }}\n"
+    scope = ("(" + PR_EVENT[current] + ")" if current else PR_EVENT[current]) + " && github.repository == 'ejmlabs/.github'"
     label = "contains(github.event.issue.labels.*.name, 'acceptance:missing-model-key')"
     normal = job.replace(original, "    if: ${{ " + scope + " && !" + label + " }}\n")
     missing = job.split("    secrets:\n", 1)[0].replace(original, "    if: ${{ " + scope + " && " + label + " }}\n")
@@ -256,7 +275,7 @@ def missing_model_key_workflows(revision, *, model_key="XAI_API_KEY"):
     return documents
 
 
-def _reusable_workflow(text, name, *, model_key="XAI_API_KEY"):
+def _reusable_workflow(text, name):
     """Accept only the trigger scaffold and YAML subset emitted by our generator."""
     header = '# Generated by scripts/build_workflows.py. Edit scripts and regenerate.\n'
     if name == "governance.yml":
@@ -269,7 +288,7 @@ def _reusable_workflow(text, name, *, model_key="XAI_API_KEY"):
       "EJM_HARNESS_TOKEN":
         "required": false
 "permissions": {}
-'''.replace("XAI_API_KEY", model_key)
+'''
         roots = ['"jobs":']
     else:
         header += '''"name": "Checked draft source release"
@@ -355,7 +374,10 @@ def _reusable_workflow(text, name, *, model_key="XAI_API_KEY"):
     if name == "governance.yml":
         review = re.findall(r'(?ms)^  "ai":\n(.*?)(?=^  "[^\"]+":|\Z)', visible)
         expected = '    "environment": "legacy-review"'
-        if len(review) != 1 or environments != [expected] or expected not in review[0].splitlines():
+        # The review job is accepted for one generation while it is being removed.
+        if review and (len(review) != 1 or environments != [expected] or expected not in review[0].splitlines()):
+            raise ValueError("Only the review job must declare the legacy-review environment: " + name)
+        if not review and environments:
             raise ValueError("Only the review job must declare the legacy-review environment: " + name)
     elif environments:
         raise ValueError("Only the governance review job may declare an environment: " + name)
@@ -389,21 +411,18 @@ def workflows(root, profile):
     pin = re.search(r"^    uses: ejmlabs/\.github/\.github/workflows/governance\.yml@([0-9a-f]{40})$", pr, re.M)
     if not pin:
         raise ValueError("PR workflow must pin governance.yml to a full commit SHA")
-    model_key = re.search(r"^      (" + "|".join(MODEL_KEYS) + r"): \$\{\{ secrets\.\1 \}\}$", pr, re.M)
-    if not model_key:
-        raise ValueError("PR workflow must forward exactly one supported model key")
-    consumers = consumer_workflows(pin[1], model_key=model_key[1])
+    # Either caller form passes; any other document fails the exact comparison below.
+    candidates = [consumer_workflows(pin[1], current=current) for current in (False, True)]
     if profile == ".github":
-        fixture = missing_model_key_workflows(pin[1], model_key=model_key[1])
-        if pr == fixture["pr.yml"]:
-            consumers = fixture
+        candidates += [missing_model_key_workflows(pin[1], current=current) for current in (False, True)]
+    consumers = next((files for files in candidates if files["pr.yml"] == pr), candidates[0])
     for name, expected in consumers.items():
         if read(root, ".github/workflows/" + name) != expected:
             raise ValueError("Workflow differs from the canonical consumer: " + name)
     if profile == ".github":
         for name in ("governance.yml", "draft-release.yml"):
             if (directory / name).exists() or (directory / name).is_symlink():
-                _reusable_workflow(read(root, ".github/workflows/" + name), name, model_key=model_key[1])
+                _reusable_workflow(read(root, ".github/workflows/" + name), name)
 
 
 def uniform_guidance(root, profile, templates):
