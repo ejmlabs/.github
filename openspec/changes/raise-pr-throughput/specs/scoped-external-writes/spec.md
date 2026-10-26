@@ -8,12 +8,12 @@ Give the operator exactly the rights it needs to prepare work, and none of the r
 
 ### Requirement: The operator has its own narrow identity
 
-The operator MUST act only as its own GitHub App or machine user, never as the owner and never with the owner's credential or token. Its rights MUST be limited to pushing branches and opening or updating pull requests in the listed repositories. It MUST NOT hold rights to approve, merge, change labels, change settings, read secrets or push workflow files.
+The operator MUST act only as its own GitHub App or machine user, never as the owner and never with the owner's credential or token. Its rights MUST be limited to pushing branches and opening or updating pull requests in the listed repositories. It MUST NOT hold rights to approve, merge, change settings, read secrets or push workflow files.
 
 #### Scenario: The operator pushes a branch
 
 - **WHEN** the operator pushes a branch of a listed commit to a listed repository
-- **THEN** the push is allowed and the commit shows the operator identity
+- **THEN** the push is allowed and the push and the pull request show the operator identity
 
 #### Scenario: The operator pushes any other commit
 
@@ -22,7 +22,7 @@ The operator MUST act only as its own GitHub App or machine user, never as the o
 
 ### Requirement: Shipping steps stay with the human
 
-`/ready`, `/approve`, merge and the clear of a security label MUST be actions by the owner's own account on GitHub. The operator MUST NOT post, call or script any of them, and the gate MUST refuse such a command from a bot sender or from a user without maintain rights.
+`/ready`, `/approve`, merge and the resolution of a security concern MUST be actions by the owner's own account on GitHub. The operator MUST NOT post, call or script any of them, and the gate MUST refuse such a command from a bot sender or from a user without maintain rights.
 
 #### Scenario: The operator posts an approval command
 
@@ -32,7 +32,7 @@ The operator MUST act only as its own GitHub App or machine user, never as the o
 #### Scenario: The operator tries to merge
 
 - **WHEN** the operator identity attempts to merge
-- **THEN** the merge is refused by the repository rules
+- **THEN** the merge is refused, because only the owner may push or merge to `main` and the restriction has no bypass actors
 
 ### Requirement: No other writes
 

@@ -2,15 +2,15 @@
 
 ## Context
 
-All numbers come from GitHub timelines, workflow run jobs and review records for 2026-10-25 (Pacific time). Times are in the report that accompanies this change. Two facts shape the design:
+All numbers come from GitHub timelines, workflow run jobs and review records for 2026-10-25 (Pacific time). Two facts shape the design:
 
 - The gate itself worked well once repaired. Changes with no problem took 6.5 to 16.9 minutes from `/ready` to merge, with a median last mile of 9 minutes.
-- The cost is repeated work. 24 `/ready` comments were posted for 14 merged PRs, so 10 were repeats. 9 `/approve` comments, 5 recorded decision rounds and 2 manual label clears covered one day.
+- The cost is repeated work. 24 `/ready` comments were posted for 14 merged PRs, so 10 were repeats. 9 `/approve` comments, 5 recorded decision rounds and 2 manual label clears covered one day (the label is removed with automated review).
 
 The trust model is fixed before any speed-up:
 
-- The owner is the only actor who posts `/ready` and `/approve`, merges, or clears a security label. Each is an action by the owner's own account on GitHub.
-- The operator has its own identity (a GitHub App, or a machine user with the Write role only). It can push branches and open or update PRs. The gate already refuses commands from a bot sender and from a user without maintain rights, so the operator cannot approve anything even by mistake.
+- The owner is the only actor who posts `/ready` and `/approve`, merges, or resolves a security concern. Each is an action by the owner's own account on GitHub.
+- The operator has its own identity (a GitHub App, or a machine user with the Write role only). It can push branches and open or update PRs. Only the owner may merge to `main`, enforced by a push and merge restriction with no bypass actors. The gate already refuses commands from a bot sender and from a user without maintain rights, so the operator cannot approve anything even by mistake.
 - Automated review is off. A pass from any automated reviewer is advice and is never an authorization.
 
 ## Goals / Non-Goals
@@ -40,13 +40,13 @@ Each decision lists the choices. The recommended choice is first and marked.
 
 B keeps the approval explicit and attributable. The file is signed with the owner's key, or committed in a PR the owner approves, so it is an authenticated owner action recorded in the repository, not a chat message. The file is a checklist: a script may verify it and show which items still match, but only the owner's GitHub actions ship anything. A PR whose head moves leaves the set. C removes the per-batch look at a class, so it needs a written scope from the owner and a deterministic class check. Revisit C after two weeks of B data.
 
-### D2. The security label
+### D2. Security concerns without a gate label
 
-- A. A human clears the label by hand each time. (recommended)
-- B. The operator or any automated reviewer clears it after a pass.
-- C. Make the label advisory in the gate.
+- A. The gate has no security label. A concern raised by a human reviewer is resolved only by a human on GitHub. (recommended)
+- B. The operator or any automated reviewer clears a label or concern after a pass.
+- C. Keep a label in the gate, advisory only.
 
-B is the #40 incident written down as procedure: an automated actor clearing an automated verdict. It is rejected. C removes a second opinion and changes reviewer infrastructure. A costs hours when the owner is away; the batch list in D1 shortens that by putting the evidence next to each label, so the owner clears it in one pass. Another reviewer's PASS is evidence the owner may read; it is never enough to clear the label.
+B is an automated actor clearing an automated verdict, written down as procedure. It is rejected. C keeps label machinery and a label-removal trigger that the removal of automated review deletes. A matches the gate with automated review off. If a model review or label is ever re-enabled, which needs a recorded security review first, only a human clears a block, and another reviewer's pass is evidence the owner may read but never enough to clear it.
 
 ### D3. Stale pins
 
@@ -95,12 +95,12 @@ B needs no new person or setting and is tried first. C is the fallback when a re
 
 ## Picks
 
-The owner picked on 2026-10-25: D1 B, D2 B, D3 B, D4 B, D5 B, D6 B in the first draft. This revision changes the content of D1, D2 and D6, so those picks are reopened and need to be confirmed against the text above. D7 and D8 are new. Until the owner confirms, nothing in the tasks starts.
+The owner picked on 2026-10-25: D1 B, D2 B, D3 B, D4 B, D5 B, D6 B in the first draft, when D2 B was the label clear inside the batch. This revision changes the content of D1, D2 and D6, so those picks are reopened and need to be confirmed against the text above. D7 and D8 are new. Until the owner confirms, nothing in the tasks starts.
 
 | Decision | Recommendation | Task groups |
 | --- | --- | --- |
 | D1 | B, signed batch file the owner clicks through | 2 |
-| D2 | A, human clears the label | 4 |
+| D2 | A, no gate label, human resolves concerns | 4 |
 | D3 | B, a job opens pin-only PRs when `main` moves | 5 |
 | D4 | B, one-day branches, carry-over only for an identical patch | 6 |
 | D5 | B, review before merge, deploy only on a tree-hash match | 7 |

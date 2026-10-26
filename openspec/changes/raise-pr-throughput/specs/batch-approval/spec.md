@@ -8,7 +8,7 @@ Let the owner approve a named set of changes in one pass, without weakening revi
 
 ### Requirement: A batch file names exact items and is the owner's signed action
 
-A batch file MUST list each pull request URL and its exact head commit, the review record and tree hash for each, and the deploy target if any. It MUST be signed by the owner, or committed in a pull request that the owner approves on GitHub. An OK given in chat, mail or any place outside the repository record MUST NOT count. No tool or agent MUST sign it.
+A batch file MUST list each pull request URL and its exact head commit, the review record and tree hash for each, and the deploy target if any. It MUST be signed by the owner, or committed in a pull request that the owner approves on GitHub. An OK given in chat, mail or any place outside the repository record MUST NOT count. A tool or agent MUST NOT sign it.
 
 #### Scenario: The file is unsigned
 
@@ -22,7 +22,7 @@ A batch file MUST list each pull request URL and its exact head commit, the revi
 
 ### Requirement: The batch is a list the owner clicks through
 
-The batch file MUST NOT authorize any actor but the owner. `/ready`, `/approve`, merge and any label clear MUST be performed by the owner on GitHub, one item at a time. A tool MAY read the file and show which entries still match. A tool MUST NOT post a command, approve, merge or change a label.
+The batch file MUST NOT authorize any actor but the owner. `/ready`, `/approve`, merge and the resolution of any security concern MUST be performed by the owner on GitHub, one item at a time. A tool MAY read the file and show which entries still match. A tool MUST NOT post a command, approve, merge or resolve a concern.
 
 #### Scenario: The operator reads the file
 

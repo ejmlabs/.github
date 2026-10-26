@@ -44,7 +44,7 @@ A pin PR MUST pass the gate, a fresh review and the owner's explicit approval on
 
 ### Requirement: The pin job cannot approve or merge
 
-The pin job MUST NOT hold a credential that approves, merges or clears a label. If it needs to push workflow files, it MUST use a separate short-lived credential created by the owner for that purpose, or the owner MUST push the branch.
+The pin job MUST NOT hold a credential that approves or merges. If it needs to push workflow files, it MUST use a separate short-lived credential created by the owner for that purpose, or the owner MUST push the branch.
 
 #### Scenario: The pin job needs to change a workflow file
 

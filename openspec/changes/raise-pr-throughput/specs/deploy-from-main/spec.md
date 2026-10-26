@@ -40,7 +40,7 @@ Each deploy MUST record the deployed commit, the tree hash, the time, and the pr
 
 ### Requirement: A deploy is started by the owner or by the owner's merge
 
-A deploy MUST start from the owner's merge or from a step the owner starts. No tool or agent MUST start a deploy with the owner's credential.
+A deploy MUST start from the owner's merge or from a step the owner starts. A tool or agent MUST NOT start a deploy with the owner's credential.
 
 #### Scenario: A deploy without an owner action
 

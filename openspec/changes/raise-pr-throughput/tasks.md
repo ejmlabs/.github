@@ -1,6 +1,6 @@
 # Tasks
 
-Nothing here starts until the owner confirms a choice for each decision in `design.md`. Tasks are grouped by decision. Skip the groups for choices not picked. No task adds a step that posts a command, approves, merges, or clears a label as anyone but the owner.
+Nothing here starts until the owner confirms a choice for each decision in `design.md`. Tasks are grouped by decision. Skip the groups for choices not picked. No task adds a step that posts a command, approves, merges, or resolves a security concern as anyone but the owner.
 
 ## 1. Measure first (all choices)
 
@@ -21,12 +21,11 @@ Nothing here starts until the owner confirms a choice for each decision in `desi
 - [ ] 3.1 Write the class in `docs/operations.md` in the owner's words, with the deterministic check that tests membership.
 - [ ] 3.2 Test that a PR outside the class never takes this path.
 
-## 4. Security label (D2 A)
+## 4. Security concerns (D2 A)
 
-- [ ] 4.1 Document that only a human clears a security label, and that no other reviewer's result is enough.
-- [ ] 4.2 Test that a label removal by a bot sender or by a user without maintain rights does not clear the gate.
-- [ ] 4.3 Show the evidence for each labelled PR next to its batch entry, so the clear is one pass.
-- [ ] 4.4 Record who cleared the label and when, from the GitHub event.
+- [ ] 4.1 Document in `docs/operations.md` that the gate has no security label, that a human reviewer's concern is resolved only by a human, and that no other reviewer's result is enough.
+- [ ] 4.2 Check that no caller or workflow carries a label trigger, a label override or a model key.
+- [ ] 4.3 Only if a model review or label is ever re-enabled, after a recorded security review: test that a bot sender or a user without maintain rights cannot clear it, and record who cleared it from the GitHub event.
 
 ## 5. Pin maintenance and deterministic checks (D3 B, D8 B)
 
@@ -55,9 +54,10 @@ Nothing here starts until the owner confirms a choice for each decision in `desi
 
 - [ ] 8.1 Write the identity and permission list: push branches and open or update PRs; no approval, merge, label, settings, secrets or workflow rights.
 - [ ] 8.2 Make the pre-push guard allow only branch pushes of SHAs the batch file lists, and refuse force-push.
-- [ ] 8.3 Test that the identity's `/ready`, `/approve` and label removal are refused by the gate.
+- [ ] 8.3 Test that the identity's `/ready` and `/approve` are refused by the gate.
 - [ ] 8.4 Test that a push of any other SHA, branch or repository is refused.
-- [ ] 8.5 The owner creates the identity and applies the permissions. The build never does.
+- [ ] 8.5 Restrict who can push or merge to `main` to the owner, using branch protection or a ruleset with no bypass actors, and test that the operator's merge of an approved, green PR is refused. Mirror the restriction in the identity spec.
+- [ ] 8.6 The owner creates the identity and applies the permissions. The build never does.
 
 ## 9. Gate self-repair (D7 B or C)
 

@@ -2,18 +2,18 @@
 
 ## Purpose
 
-Stop false results from blocking a change, never let a class of change skip review, and keep every security label under human control.
+Stop false results from blocking a change, never let a class of change skip review, and keep any security concern under human control.
 
 ## ADDED Requirements
 
-### Requirement: Benign-looking changes pass a deterministic check and are still reviewed
+### Requirement: Lockfile and binary changes pass a deterministic check and are still reviewed
 
-The gate MUST NOT report a blocking result for a change that only moves a full-hash pin, for a lockfile that passes the lockfile check, or for a binary asset that passes the allowlist check. Such a change MUST NOT skip review: the check result MUST be attached to the review, and a failed check MUST block. Fixtures for each case MUST run in the test suite.
+A lockfile change MUST pass the lockfile check and a binary asset MUST pass the allowlist check. Such a change MUST NOT skip review: the check result MUST be attached to the review, and a failed check MUST block. Fixtures for each case MUST run in the test suite.
 
 #### Scenario: A pins-only change
 
 - **WHEN** a PR changes only full-hash workflow pins and the value derived from them, and the diff equals the generator output
-- **THEN** the gate result is not blocked for missing context, and the change still needs review and approval
+- **THEN** the pin check passes, and the change still needs review and approval
 
 #### Scenario: A lockfile that matches its manifest
 
@@ -35,39 +35,20 @@ The gate MUST NOT report a blocking result for a change that only moves a full-h
 - **WHEN** a binary's path is not listed, or its content hash differs from the listed one
 - **THEN** the check fails and the gate blocks
 
-### Requirement: Only a human clears a security label
+### Requirement: The gate has no security label
 
-A security label that blocks merge MUST be cleared only by a human with maintain or admin rights acting on GitHub. A bot sender, the operator identity and any automated reviewer MUST NOT clear it, and the gate MUST NOT accept such a clear. A pass from another reviewer, human or automated, MUST NOT clear the label by itself; the clear is the owner's own action. A record MUST state who cleared it and when, from the GitHub event.
+The gate MUST NOT add, require, enforce or accept a security label, a label override, or a caller trigger on label removal. A security concern raised by a human reviewer MUST be handled as an ordinary review comment that only a human resolves, and no bot, operator identity or automated reviewer MUST resolve it.
 
-#### Scenario: A human clears the label
+#### Scenario: A human reviewer raises a concern
 
-- **WHEN** the owner removes the label on GitHub
-- **THEN** the record names the owner and the time, and the gate result updates
-
-#### Scenario: An automated actor removes the label
-
-- **WHEN** a bot or the operator identity removes the label
-- **THEN** the gate result stays blocked
-
-#### Scenario: Another reviewer passed
-
-- **WHEN** an automated reviewer reports a pass for the exact head and nobody has cleared the label
-- **THEN** the label stays
+- **WHEN** a human reviewer reports a security concern on a PR
+- **THEN** the owner resolves it on GitHub before approving, and no automated actor can resolve it
 
 ### Requirement: Re-enabling a model review needs a security review first
 
-An automated model review MUST NOT be turned back on as a required check or as a source of any label until a security review of that change has been done and recorded. Turning it on MUST NOT alter the rule that only a human clears a security label.
+An automated model review MUST NOT be turned back on as a required check or as a source of any label until a security review of that change has been done and recorded. Turning it on MUST NOT let any automated pass clear a block: only a human with maintain or admin rights clears one.
 
 #### Scenario: A model review is proposed
 
 - **WHEN** a change would re-enable a model review
 - **THEN** it is not merged until the security review is recorded
-
-### Requirement: The caller form can re-run the gate on a label clear
-
-The consumer workflow form MUST include the event that lets a label removal by a human re-run the gate, so that a cleared label updates the gate result without a new commit. That event MUST NOT carry secrets.
-
-#### Scenario: The label is removed
-
-- **WHEN** a human removes the label from a PR
-- **THEN** the gate result updates without a new commit
