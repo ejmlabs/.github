@@ -316,12 +316,13 @@ def native_build(text):
     """
     trigger = "on:\n  workflow_dispatch:\n  push:\n    branches: [main]\npermissions:\n  contents: read\n"
     head, _, rest = text.partition("\n")
-    if not head.startswith("name: ") or not rest.startswith(trigger):
+    if re.search(r"[\r\x0b\x0c\x1c-\x1e\x85\u2028\u2029]", text) or not re.fullmatch(r"name: [^\s\"'{}\[\]&*!|>#?%@`][^{}\[\]\t]*", head) or not rest.startswith(trigger):
         raise ValueError("Build workflow must run only on workflow_dispatch and pushes to main with contents: read")
     # Reject every spelling the canonical block style does not use, so a quoted key, a flow mapping,
     # an anchor or a tag cannot hide a permission or an action from the checks below.
     # The contents of literal block scalars (`run: |`) are script text, not YAML structure.
     block = content = None
+    top = ["on", "name", "permissions"]
     for line in rest.removeprefix(trigger).splitlines():
         indent = len(line) - len(line.lstrip(" "))
         if block is not None and not line.strip():
@@ -332,10 +333,14 @@ def native_build(text):
             continue
         block = content = None
         key = re.sub(r"\$\{\{.*?\}\}", "", line)
-        if line.lstrip().startswith("#"):
+        if not line.strip(" ") or line.lstrip().startswith("#"):
             continue
         if not re.fullmatch(r" *(?:- )?[A-Za-z][A-Za-z0-9_-]*:(?: +[^\s\"'{}\[\]&*!|>#?][^{}\[\]\t]*| +[|>][1-9]?[+-]?| *)?| *- [^\s\"'{}\[\]&*!|>#?:-][^{}\[\]\t]*", key):
             raise ValueError("Build workflow must use plain block-style YAML without quoted keys, flow collections or anchors")
+        if indent == 0 and not line.startswith("-"):
+            if line.split(":")[0] in top:
+                raise ValueError("Build workflow repeats a top-level key")
+            top.append(line.split(":")[0])
         if re.search(r": *[|>][1-9]?[+-]?$", line):
             block = len(line) - len(line.lstrip(" -"))
     if text.lower().count("permissions") != 1 or text.lower().count("uses") != len(re.findall(r"(?m)^\s*(?:- )?uses: ", text)):

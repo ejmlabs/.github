@@ -351,7 +351,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_native_build_accepts_block_lists_folded_and_indented_scalars(self):
         native_build(NATIVE_BUILD.replace("    runs-on: ubuntu-24.04\n", "    strategy:\n      matrix:\n        os:\n          - ubuntu-24.04\n          - macos-15\n    runs-on: ubuntu-24.04\n")
-                     .replace("      - run: cargo build --release --locked\n", "      # build\n      - run: >-\n          cargo build\n          --locked\n      - run: |2\n            x\n"))
+                     .replace("      - run: cargo build --release --locked\n", "\n      # build\n      - run: >-\n          cargo build\n          --locked\n      - run: |2\n            x\n"))
 
     def test_native_build_shape_is_read_only_and_secretless(self):
         native_build(NATIVE_BUILD)
@@ -378,6 +378,12 @@ class WorkflowTests(unittest.TestCase):
             "two spaces then escaped key": NATIVE_BUILD.replace("      - run: cargo build --release --locked\n", '      -  "u\\x73es": someone/x@v1\n'),
             "key after a shallow block end": NATIVE_BUILD.replace("      - run: cargo build --release --locked\n", '      - name: |\n          hi\n        "u\\x73es": someone/x@v1\n'),
             "flow key after a run block": NATIVE_BUILD.replace("      - run: cargo build --release --locked\n", "      - run: |\n          make\n        env: {A: b}\n"),
+            "carriage return in the name line": NATIVE_BUILD.replace("name: Build\n", 'name: Build\renv:\r  T: "${{ \\x73ecrets.K }}"\n', 1),
+            "next-line break in the name line": NATIVE_BUILD.replace("name: Build\n", 'name: Build\x85env:\x85  T: "${{ \\x73ecrets.K }}"\n', 1),
+            "line separator in the body": NATIVE_BUILD.replace("      - run: cargo", "      - run: cargo\u2028env: x\n      - run: cargo", 1),
+            "quoted name": NATIVE_BUILD.replace("name: Build", 'name: "Build"', 1),
+            "repeated top-level key": NATIVE_BUILD + "jobs:\n  c:\n    runs-on: x\n",
+            "repeated on": NATIVE_BUILD + "on:\n  workflow_call:\n",
             "uppercase permissions": NATIVE_BUILD.replace("    runs-on", "    PERMISSIONS: write-all\n    runs-on"),
             "matrix flow list": NATIVE_BUILD.replace("    runs-on: ubuntu-24.04\n", "    strategy:\n      matrix:\n        os: [a, b]\n    runs-on: ubuntu-24.04\n"),
         }
