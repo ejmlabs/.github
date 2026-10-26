@@ -321,18 +321,24 @@ def native_build(text):
     # Reject every spelling the canonical block style does not use, so a quoted key, a flow mapping,
     # an anchor or a tag cannot hide a permission or an action from the checks below.
     # The contents of literal block scalars (`run: |`) are script text, not YAML structure.
-    block = None
+    block = content = None
     for line in rest.removeprefix(trigger).splitlines():
         indent = len(line) - len(line.lstrip(" "))
-        if block is not None and (not line.strip() or indent > block):
+        if block is not None and not line.strip():
             continue
-        block = None
+        if block is not None and content is None and indent > block:
+            content = indent
+        if content is not None and indent >= content:
+            continue
+        block = content = None
         key = re.sub(r"\$\{\{.*?\}\}", "", line)
-        if (re.match(r"\s*(?:- )?[\"']", key) or re.search(r"[{}\[\]\t]|^---|^\s*<<:|(?:^|[:-]) +[&*!]", key)):
+        if line.lstrip().startswith("#"):
+            continue
+        if not re.fullmatch(r" *(?:- )?[A-Za-z][A-Za-z0-9_-]*:(?: +[^\s\"'{}\[\]&*!|>#?][^{}\[\]\t]*| +[|>][1-9]?[+-]?| *)?| *- [^\s\"'{}\[\]&*!|>#?:-][^{}\[\]\t]*", key):
             raise ValueError("Build workflow must use plain block-style YAML without quoted keys, flow collections or anchors")
-        if re.search(r": *[|>][+-]?$", line):
-            block = indent
-    if text.count("permissions") != 1 or text.count("uses") != len(re.findall(r"(?m)^\s*(?:- )?uses: ", text)):
+        if re.search(r": *[|>][1-9]?[+-]?$", line):
+            block = len(line) - len(line.lstrip(" -"))
+    if text.lower().count("permissions") != 1 or text.lower().count("uses") != len(re.findall(r"(?m)^\s*(?:- )?uses: ", text)):
         raise ValueError("Build workflow must use plain block-style YAML without quoted keys, flow collections or anchors")
     if len(re.findall(r"(?m)^\s*permissions:", text)) != 1:
         raise ValueError("Build workflow must set only the top-level read permission")

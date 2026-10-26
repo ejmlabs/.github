@@ -349,6 +349,10 @@ class WorkflowTests(unittest.TestCase):
     def test_native_build_scripts_may_use_shell_braces(self):
         native_build(NATIVE_BUILD.replace("      - run: cargo build --release --locked\n", "      - run: |\n          for f in out/*; do echo \"${f}\"; done\n          [ -d out ] && true\n"))
 
+    def test_native_build_accepts_block_lists_folded_and_indented_scalars(self):
+        native_build(NATIVE_BUILD.replace("    runs-on: ubuntu-24.04\n", "    strategy:\n      matrix:\n        os:\n          - ubuntu-24.04\n          - macos-15\n    runs-on: ubuntu-24.04\n")
+                     .replace("      - run: cargo build --release --locked\n", "      # build\n      - run: >-\n          cargo build\n          --locked\n      - run: |2\n            x\n"))
+
     def test_native_build_shape_is_read_only_and_secretless(self):
         native_build(NATIVE_BUILD)
         bad = {
@@ -370,6 +374,12 @@ class WorkflowTests(unittest.TestCase):
             "anchor": NATIVE_BUILD.replace("    runs-on: ubuntu-24.04", "    runs-on: &os ubuntu-24.04"),
             "tab": NATIVE_BUILD.replace("      - run: cargo", "      -\trun: cargo"),
             "second document": NATIVE_BUILD + "---\nname: other\n",
+            "explicit escaped key": NATIVE_BUILD.replace("    runs-on", '    ? "perm\\x69ssions"\n    : write-all\n    runs-on'),
+            "two spaces then escaped key": NATIVE_BUILD.replace("      - run: cargo build --release --locked\n", '      -  "u\\x73es": someone/x@v1\n'),
+            "key after a shallow block end": NATIVE_BUILD.replace("      - run: cargo build --release --locked\n", '      - name: |\n          hi\n        "u\\x73es": someone/x@v1\n'),
+            "flow key after a run block": NATIVE_BUILD.replace("      - run: cargo build --release --locked\n", "      - run: |\n          make\n        env: {A: b}\n"),
+            "uppercase permissions": NATIVE_BUILD.replace("    runs-on", "    PERMISSIONS: write-all\n    runs-on"),
+            "matrix flow list": NATIVE_BUILD.replace("    runs-on: ubuntu-24.04\n", "    strategy:\n      matrix:\n        os: [a, b]\n    runs-on: ubuntu-24.04\n"),
         }
         for name, text in bad.items():
             with self.subTest(name), self.assertRaises(ValueError):
