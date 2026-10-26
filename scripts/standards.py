@@ -34,6 +34,7 @@ UI_FONT_HASHES = {
 }
 SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$")
 MODEL_KEYS = ("XAI_API_KEY",)
+SHARED_WORKFLOWS = ("governance.yml", "draft-release.yml", "verify-build.yml", "attach-assets.yml")
 MIT_TERMS = '''Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
@@ -271,6 +272,47 @@ def _reusable_workflow(text, name, *, model_key="XAI_API_KEY"):
 "permissions": {}
 '''.replace("XAI_API_KEY", model_key)
         roots = ['"jobs":']
+    elif name == "verify-build.yml":
+        header += '''"name": "Verified build run"
+"on":
+  "workflow_call":
+    "inputs":
+      "commit":
+        "required": true
+        "type": "string"
+      "build-workflow":
+        "required": true
+        "type": "string"
+      "build-run-id":
+        "required": true
+        "type": "string"
+"permissions": {}
+'''
+        roots = ['"jobs":']
+    elif name == "attach-assets.yml":
+        header += '''"name": "Attach verified build files"
+"on":
+  "workflow_call":
+    "inputs":
+      "commit":
+        "required": true
+        "type": "string"
+      "build-workflow":
+        "required": true
+        "type": "string"
+      "build-run-id":
+        "required": true
+        "type": "string"
+      "version":
+        "required": true
+        "type": "string"
+      "attest":
+        "required": false
+        "default": false
+        "type": "boolean"
+"permissions": {}
+'''
+        roots = ['"concurrency":', '"jobs":']
     else:
         header += '''"name": "Checked draft source release"
 "on":
@@ -380,7 +422,7 @@ def workflows(root, profile):
         raise ValueError("Missing or unsafe workflows directory")
     allowed = {"pr.yml", "release.yml"}
     if profile == ".github":
-        allowed.update(("governance.yml", "draft-release.yml"))
+        allowed.update(SHARED_WORKFLOWS)
     if any(file.name not in allowed for file in directory.iterdir()):
         raise ValueError("Unexpected workflow; use only the canonical consumers and shared reusables")
     pr = read(root, ".github/workflows/pr.yml")
@@ -401,7 +443,7 @@ def workflows(root, profile):
         if read(root, ".github/workflows/" + name) != expected:
             raise ValueError("Workflow differs from the canonical consumer: " + name)
     if profile == ".github":
-        for name in ("governance.yml", "draft-release.yml"):
+        for name in SHARED_WORKFLOWS:
             if (directory / name).exists() or (directory / name).is_symlink():
                 _reusable_workflow(read(root, ".github/workflows/" + name), name, model_key=model_key[1])
 

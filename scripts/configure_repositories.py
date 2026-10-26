@@ -8,6 +8,7 @@ import subprocess
 import urllib.parse
 
 from governance import SECURITY_LABEL
+from standards import SHARED_WORKFLOWS
 
 
 NAMES = (".github", "ejmlabs", "ejm-cli", "ejm-harness", "ejm-ide")
@@ -54,7 +55,7 @@ def installed_consumers(name, revision):
     root = "repos/ejmlabs/" + name + "/contents/.github/workflows"
     entries = api(root + "?ref=main")
     expected = consumer_workflows(revision)
-    allowed = set(expected) | ({"governance.yml", "draft-release.yml"} if name == ".github" else set())
+    allowed = set(expected) | (SHARED_WORKFLOWS if name == ".github" else set())
     if {entry["name"] for entry in entries} != allowed:
         raise ValueError(name + ": unexpected or missing workflows on main")
     for filename, content in expected.items():
