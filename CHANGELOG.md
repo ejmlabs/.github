@@ -6,6 +6,7 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Added
 
+- Batch list and push check: a batch file names PRs at exact heads with their reviews, carries the owner's SSH signature over its canonical bytes (`/usr/bin/ssh-keygen -Y verify`, namespace `ejmlabs-batch`), and allows only the listed push of the listed branch; a moved head is refused and refusals can be logged. It posts, approves, merges and clears nothing.
 - Flow metrics: per-PR stage times with a fixed list of wait causes, a daily median and 90th percentile table from first `/ready` to merge, and a log of refused or prompted external writes.
 - Accept exactly one supported review model key name in canonical workflows; reject extra, unknown or fallback key forwarding.
 - Optional public UI source assembly from protected-main commit pins, with

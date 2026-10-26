@@ -512,6 +512,68 @@ times it started and was answered, so the cost of those checks can be measured:
 python3 scripts/flow_metrics.py log-write writes.jsonl push TARGET prompted START ANSWERED
 ```
 
+### Batch approval
+
+One signed batch file can name a set of PRs for the owner to click through. It
+is JSON and lists, for each PR, its URL, branch and exact head commit, plus the
+id and head of the independent review that covered it:
+
+```json
+{"items": [{"pr": "https://github.com/ejmlabs/REPO/pull/N", "branch": "NAME",
+            "head": "FULL_40_CHARACTER_SHA",
+            "pass": {"id": "REVIEW_ID", "head": "FULL_40_CHARACTER_SHA"}}]}
+```
+
+The batch authorizes no one but the owner. The owner posts `/ready` and
+`/approve` and merges on GitHub, one item at a time, and resolves any security
+concern. The gate has no security label, a concern raised by a human reviewer
+is resolved only by a human, and no other reviewer's result is enough. The
+operator never posts a command, approves, merges or resolves a concern, and
+nothing is admin-merged. The batch is only the prepared list and the evidence
+next to each item.
+
+`scripts/batch.py` is the check:
+
+- The approval is the owner's SSH signature, never a comment or a chat message.
+  `batch.py FILE canonical` prints the exact bytes that are approved: the `items`
+  and the `deploy`, sorted and compact. The owner reads that file, signs it as it
+  is (`ssh-keygen -Y sign -n ejmlabs-batch batch-to-sign.json`), and the
+  signature sits beside the batch as `FILE.sig`. What the owner reads is what the
+  owner signs; there is no digest to compare. Only this proof is built.
+- `batch.py FILE verify ALLOWED_SIGNERS IDENTITY` runs `/usr/bin/ssh-keygen -Y
+  verify -f ALLOWED_SIGNERS -I IDENTITY -n ejmlabs-batch -s FILE.sig` on those
+  bytes. It refuses when the file was edited after signing, the signature is
+  missing, from another key, over anything else (a digest line, another
+  namespace), or when the identity is not a plain name. `ALLOWED_SIGNERS` is in
+  an install directory read-only to the operator and holds the public key only;
+  nothing the operator holds can produce the signature. The verifier is a fixed
+  absolute path, never looked up on `PATH`, and the wrappers that call it use a
+  fixed environment and keep user files and variables out.
+- Only the signed file counts. No other file adds to or replaces an item, and
+  the approved file is never rewritten.
+- A push is allowed only for a listed repository and branch at the listed head,
+  and only when the item carries a review of that exact head. A PR that is
+  absent, has no review, or has a review for another commit is refused. A
+  branch may not be `main` or `master`, and a force-push or a deletion is never
+  allowed. Refusals can be logged with `BATCH_WRITE_LOG` (see Flow metrics).
+- When a head moves, `batch.py FILE reconcile PR=LIVE_HEAD...` prints which PRs
+  left the batch and why. The push check already refuses a moved head. A
+  dropped PR needs a new signed entry. The command only reads.
+
+There is no standing approval for a class of changes; every PR needs a named
+entry.
+
+### Scoped external writes
+
+The operator acts only as its own identity (a GitHub App, or a machine user with
+the Write role only), never with the owner's credential. Its one write under a
+batch is to push the exact commit the batch lists for a repository and branch
+(`batch.py FILE push REPO BRANCH SHA`, called from a pre-push guard). It holds
+no right to approve, merge, change settings, read secrets or push workflow
+files, and it comments no command the gate treats as an owner command. A
+deploy is not an operator write: see Deploy from main. The owner creates the
+identity and applies its permissions; the build never does.
+
 ## Public visibility checklist
 
 Audit current source refs and history, discussions, reviews, retained Actions
