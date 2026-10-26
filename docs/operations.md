@@ -549,14 +549,17 @@ next to each item.
   nothing the operator holds can produce the signature. The verifier is a fixed
   absolute path, never looked up on `PATH`, and the wrappers that call it use a
   fixed environment and keep user files and variables out.
-- Only the signed file counts. No other file adds to or replaces an item, and
-  the approved file is never rewritten.
+- Only the signed file counts. `push` and `reconcile` read the batch through the
+  same signature check, so an unsigned or badly signed batch is refused for every
+  caller; only `canonical`, which the owner needs before signing, reads it
+  unchecked. No other file adds to or replaces an item, and the approved file is
+  never rewritten.
 - A push is allowed only for a listed repository and branch at the listed head,
   and only when the item carries a review of that exact head. A PR that is
   absent, has no review, or has a review for another commit is refused. A
   branch may not be `main` or `master`, and a force-push or a deletion is never
   allowed. Refusals can be logged with `BATCH_WRITE_LOG` (see Flow metrics).
-- When a head moves, `batch.py FILE reconcile PR=LIVE_HEAD...` prints which PRs
+- When a head moves, `batch.py FILE reconcile ALLOWED_SIGNERS IDENTITY PR=LIVE_HEAD...` prints which PRs
   left the batch and why. The push check already refuses a moved head. A
   dropped PR needs a new signed entry. The command only reads.
 
@@ -568,7 +571,7 @@ entry.
 The operator acts only as its own identity (a GitHub App, or a machine user with
 the Write role only), never with the owner's credential. Its one write under a
 batch is to push the exact commit the batch lists for a repository and branch
-(`batch.py FILE push REPO BRANCH SHA`, called from a pre-push guard). It holds
+(`batch.py FILE push ALLOWED_SIGNERS IDENTITY REPO BRANCH SHA`, called from a pre-push guard). It holds
 no right to approve, merge, change settings, read secrets or push workflow
 files, and it comments no command the gate treats as an owner command. A
 deploy is not an operator write: see Deploy from main. The owner creates the

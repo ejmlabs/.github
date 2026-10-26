@@ -53,29 +53,56 @@ class BatchTests(unittest.TestCase):
         with self.assertRaisesRegex(Refused, "covers " + A):
             push(batch(**{"pass": {"id": "r2", "head": A}}), "ejmlabs/ejm-ide", "two", B)
 
+    @needs_ssh_keygen
     def test_the_command_exits_nonzero_on_a_refusal_and_logs_it(self):
-        with tempfile.TemporaryDirectory() as directory:
-            file, log = Path(directory) / "batch.json", Path(directory) / "writes.jsonl"
-            file.write_text(json.dumps({"items": [{"pr": ONE, "branch": "one", "head": A, "pass": {"id": "r1", "head": A}}]}))
-            script = str(Path(__file__).resolve().parents[1] / "scripts/batch.py")
-
-            def run(*args):
-                return subprocess.run([sys.executable, script, str(file), *args], capture_output=True, text=True, env={**os.environ, "BATCH_WRITE_LOG": str(log)})
-            self.assertEqual(run("push", "ejmlabs/ejm-cli", "one", A).returncode, 0)
-            self.assertFalse(log.exists())
-            refused = run("push", "ejmlabs/ejm-cli", "one", C, "--force")
-            self.assertEqual(refused.returncode, 1)
-            self.assertIn("Force-push", refused.stderr)
-            self.assertEqual(json.loads(log.read_text())["outcome"], "refused")
+        signer, file = self.signed()
+        log = signer.root / "writes.jsonl"
+        self.assertEqual(self.command(file, "push", signer.signers, "owner", "ejmlabs/ejm-cli", "one", A, BATCH_WRITE_LOG=str(log)).returncode, 0)
+        self.assertFalse(log.exists())
+        refused = self.command(file, "push", signer.signers, "owner", "ejmlabs/ejm-cli", "one", C, "--force", BATCH_WRITE_LOG=str(log))
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("Force-push", refused.stderr)
+        self.assertEqual(json.loads(log.read_text())["outcome"], "refused")
 
     def test_the_refusal_log_is_written_when_python_runs_isolated(self):
         with tempfile.TemporaryDirectory() as directory:
             file, log = Path(directory) / "batch.json", Path(directory) / "writes.jsonl"
             file.write_text(json.dumps({"items": [{"pr": ONE, "branch": "one", "head": A, "pass": {"id": "r1", "head": A}}]}))
             script = str(Path(__file__).resolve().parents[1] / "scripts/batch.py")
-            done = subprocess.run([sys.executable, "-I", script, str(file), "push", "ejmlabs/ejm-cli", "one", C], capture_output=True, text=True, env={"BATCH_WRITE_LOG": str(log)})
+            done = subprocess.run([sys.executable, "-I", script, str(file), "push", "signers", "owner", "ejmlabs/ejm-cli", "one", C], capture_output=True, text=True, env={"BATCH_WRITE_LOG": str(log)})
             self.assertEqual(done.returncode, 1)
             self.assertEqual(json.loads(log.read_text())["outcome"], "refused")
+
+    @needs_ssh_keygen
+    def test_push_and_reconcile_treat_an_unsigned_or_badly_signed_batch_as_empty(self):
+        signer, file = self.signed()
+        other = Signer()
+        self.addCleanup(other.cleanup)
+        operations = (("push", "ejmlabs/ejm-cli", "one", A), ("reconcile", ONE + "=" + A))
+        for op, *rest in operations:
+            self.assertEqual(self.command(file, op, signer.signers, "owner", *rest).returncode, 0)
+        for op, *rest in operations:
+            with self.subTest(op=op, case="wrong key"):
+                done = self.command(file, op, other.signers, "owner", *rest)
+                self.assertEqual(done.returncode, 1)
+                self.assertIn("not signed by the owner", done.stderr)
+            with self.subTest(op=op, case="wrong identity"):
+                self.assertEqual(self.command(file, op, signer.signers, "operator", *rest).returncode, 1)
+        edited = json.loads(file.read_text())
+        edited["items"][0]["head"] = C
+        edited["items"][0]["pass"]["head"] = C
+        file.write_text(json.dumps(edited))
+        for op, *rest in operations:
+            with self.subTest(op=op, case="edited"):
+                done = self.command(file, op, signer.signers, "owner", *rest)
+                self.assertEqual(done.returncode, 1)
+        self.assertEqual(self.command(file, "push", signer.signers, "owner", "ejmlabs/ejm-cli", "one", C).returncode, 1)
+        Path(str(file) + ".sig").unlink()
+        for op, *rest in operations:
+            with self.subTest(op=op, case="unsigned"):
+                done = self.command(file, op, signer.signers, "owner", *rest)
+                self.assertEqual(done.returncode, 1)
+                self.assertIn("needs", done.stderr)
 
     def test_a_default_branch_is_never_listed_or_pushed(self):
         item = {"pr": ONE, "branch": "main", "head": A, "pass": {"id": "r1", "head": A}}
@@ -188,9 +215,9 @@ class BatchTests(unittest.TestCase):
         self.assertFalse(hasattr(batch_module, "load_effective"))
         self.assertEqual(self.command(file, "verify", signer.signers, "owner").returncode, 0)
         for head in (C, A):
-            done = self.command(file, "push", "ejmlabs/ejm-cli", "one", head)
+            done = self.command(file, "push", signer.signers, "owner", "ejmlabs/ejm-cli", "one", head)
             self.assertEqual(done.returncode, 0 if head == A else 1, done.stderr)
-        self.assertIn("not " + C, self.command(file, "push", "ejmlabs/ejm-cli", "one", C).stderr)
+        self.assertIn("not " + C, self.command(file, "push", signer.signers, "owner", "ejmlabs/ejm-cli", "one", C).stderr)
 
     def test_the_digest_covers_the_items_and_the_deploy_but_not_later_records(self):
         group = batch()
@@ -198,30 +225,31 @@ class BatchTests(unittest.TestCase):
         self.assertNotEqual(digest(group), digest({**group, "items": group["items"][:1]}))
         self.assertNotEqual(digest(group), digest({**group, "deploy": {"repo": "ejmlabs/x", "tree": A}}))
 
+    @needs_ssh_keygen
     def test_the_approved_file_stays_as_signed(self):
-        with tempfile.TemporaryDirectory() as directory:
-            file = Path(directory) / "batch.json"
-            file.write_text(json.dumps({"items": [{"pr": ONE, "branch": "one", "head": A, "pass": {"id": "r1", "head": A}}]}))
-            before = file.read_bytes()
-            file.chmod(0o444)
-            for args in (("push", "ejmlabs/ejm-cli", "one", A), ("reconcile", ONE + "=" + C), ("canonical",)):
-                self.assertEqual(self.command(file, *args).returncode, 0)
-            self.assertEqual(file.read_bytes(), before)
+        signer, file = self.signed()
+        before = file.read_bytes()
+        file.chmod(0o444)
+        for args in (("push", signer.signers, "owner", "ejmlabs/ejm-cli", "one", A), ("reconcile", signer.signers, "owner", ONE + "=" + C), ("canonical",)):
+            self.assertEqual(self.command(file, *args).returncode, 0)
+        self.assertEqual(file.read_bytes(), before)
 
+    @needs_ssh_keygen
     def test_stray_arguments_and_malformed_shapes_are_refusals_not_tracebacks(self):
-        with tempfile.TemporaryDirectory() as directory:
-            file = Path(directory) / "batch.json"
-            script = str(Path(__file__).resolve().parents[1] / "scripts/batch.py")
-            for text in ('{"items": [{"pr": "%s", "branch": "one", "head": "%s", "pass": 3}]}' % (ONE, A), '{"items": 5}', "[]"):
-                file.write_text(text)
-                done = subprocess.run([sys.executable, script, str(file), "push", "ejmlabs/ejm-cli", "one", A], capture_output=True, text=True)
-                self.assertEqual((done.returncode, "Traceback" in done.stderr), (1, False))
-            file.write_text(json.dumps({"approval": "m"}))
-            done = subprocess.run([sys.executable, script, str(file), "push", "ejmlabs/ejm-cli", "one", A], capture_output=True, text=True)
-            self.assertEqual((done.returncode, "lists no push" in done.stderr), (1, True))
-            file.write_text(json.dumps({"items": [{"pr": ONE, "branch": "one", "head": A, "pass": {"id": "r", "head": A}}]}))
-            done = subprocess.run([sys.executable, script, str(file), "push", "ejmlabs/ejm-cli", "one", A, "--fast"], capture_output=True, text=True)
-            self.assertEqual(done.returncode, 1)
+        for text in ('{"items": [{"pr": "%s", "branch": "one", "head": "%s", "pass": 3}]}' % (ONE, A), '{"items": 5}', "[]"):
+            signer = Signer()
+            self.addCleanup(signer.cleanup)
+            file = signer.root / "batch.json"
+            file.write_text(text)
+            Path(str(file) + ".sig").write_text("junk")
+            done = self.command(file, "push", signer.signers, "owner", "ejmlabs/ejm-cli", "one", A)
+            self.assertEqual((done.returncode, "Traceback" in done.stderr), (1, False))
+        signer, file = self.signed(json.dumps({"approval": "m"}))
+        done = self.command(file, "push", signer.signers, "owner", "ejmlabs/ejm-cli", "one", A)
+        self.assertEqual((done.returncode, "lists no push" in done.stderr), (1, True))
+        signer, file = self.signed()
+        self.assertEqual(self.command(file, "push", signer.signers, "owner", "ejmlabs/ejm-cli", "one", A, "--fast").returncode, 1)
+        self.assertEqual(self.command(file, "push", signer.signers, "owner", "ejmlabs/ejm-cli", "one").returncode, 1)
 
     def test_malformed_files_are_rejected(self):
         good = {"items": [{"pr": ONE, "branch": "x", "head": A}]}

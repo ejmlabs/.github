@@ -155,27 +155,28 @@ def load_approved(path, signers, identity):
 
 def main(argv):
     if len(argv) < 2:
-        raise SystemExit("usage: batch.py BATCH.json canonical | verify ALLOWED_SIGNERS IDENTITY | reconcile PR=HEAD... | push REPO BRANCH SHA [--force]")
+        raise SystemExit("usage: batch.py BATCH.json canonical | verify SIGNERS IDENTITY | reconcile SIGNERS IDENTITY PR=HEAD... | push SIGNERS IDENTITY REPO BRANCH SHA [--force]")
     try:
-        if argv[1] == "verify" and len(argv) == 4:
-            load_approved(argv[0], *argv[2:])
-            return
         if argv[1] == "canonical" and len(argv) == 2:
             sys.stdout.buffer.write(canonical(load(Path(argv[0]).read_text())))
             return
-        batch = load(Path(argv[0]).read_text())
+        if argv[1] not in ("verify", "reconcile", "push") or len(argv) < 4:
+            raise SystemExit("unknown operation")
+        # Every operation reads the file through the signature check, so an unsigned or badly signed batch is refused for all callers.
+        batch = load_approved(argv[0], *argv[2:4])
+        rest = argv[4:]
         if argv[1] == "reconcile":
-            print("\n".join(reconcile(batch, dict(pair.split("=", 1) for pair in argv[2:]))[1]))
-        elif argv[1] == "push" and (len(argv) == 5 or argv[5:] == ["--force"]):
-            push(batch, *argv[2:5], force=len(argv) == 6)
-        else:
+            print("\n".join(reconcile(batch, dict(pair.split("=", 1) for pair in rest))[1]))
+        elif argv[1] == "push" and (len(rest) == 3 or rest[3:] == ["--force"]):
+            push(batch, *rest[:3], force=len(rest) == 4)
+        elif argv[1] != "verify" or rest:
             raise SystemExit("unknown operation")
     except (Refused, ValueError, KeyError, TypeError, OSError) as refusal:
         print("Refused: " + str(refusal), file=sys.stderr)
         if os.environ.get("BATCH_WRITE_LOG"):
             sys.path.insert(0, str(Path(__file__).resolve().parent))  # isolated mode (-I) leaves the script directory off the path
             from flow_metrics import log_write
-            log_write(os.environ["BATCH_WRITE_LOG"], argv[1], " ".join(argv[2:]), "refused", datetime.now(timezone.utc).isoformat())
+            log_write(os.environ["BATCH_WRITE_LOG"], argv[1], " ".join(argv[4:]), "refused", datetime.now(timezone.utc).isoformat())
         sys.exit(1)
 
 
