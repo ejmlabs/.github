@@ -37,7 +37,9 @@ Trusted main handles issue-comment events. Bot and unrelated comments are
 filtered before a runner starts. Admission checks the human's current
 maintain/admin role, full current head, non-draft PR, main target and original
 command. Decisions must be separate, unedited comments. New commits require
-new decisions.
+new decisions. Wait for Human readiness to turn green before posting
+`/approve`, and never post `/ready` and `/approve` together or on the same head
+within seconds.
 The head repository must match the base repository. Fork PRs and deleted-fork
 heads require manual review instead of automated admission.
 
