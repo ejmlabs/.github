@@ -8,7 +8,7 @@ Make the time spent at each stage a query, not an investigation.
 
 ### Requirement: Record every stage time
 
-For each PR the system MUST record the times of opening, each `/ready`, each review result, each security PASS, `/approve`, merge, and each deploy.
+For each PR the system MUST record the times of opening, each `/ready`, each review result, each review result, `/approve`, merge, and each deploy.
 
 #### Scenario: A PR merges
 
@@ -26,7 +26,7 @@ A daily table MUST show, for PRs merged that day, the median and 90th percentile
 
 ### Requirement: Name the cause of each wait
 
-Each wait longer than five minutes MUST be tagged with one cause from a fixed list: gate result, gate or pin rework, head drift, serial hold, security label, or maintainer.
+Each wait longer than five minutes MUST be tagged with one cause from a fixed list: gate result, gate or pin rework, head drift, serial hold, security label, or owner.
 
 #### Scenario: A wait is tagged
 

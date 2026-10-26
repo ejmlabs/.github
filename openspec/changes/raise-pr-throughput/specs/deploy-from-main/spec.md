@@ -8,12 +8,12 @@ Deploy reviewed code soon after it merges.
 
 ### Requirement: The reviewed tree is recorded before merge
 
-Before a merge that will deploy, the security review MUST cover the exact tree that `main` will hold after the merge, and the tree hash MUST be recorded with the PASS.
+Before a merge that will deploy, a review MUST cover the exact tree that `main` will hold after the merge, and the tree hash MUST be recorded with the review record.
 
-#### Scenario: A PASS is recorded
+#### Scenario: A review is recorded
 
-- **WHEN** a security review passes on the tree that main would hold
-- **THEN** the PASS record includes that tree hash
+- **WHEN** a review passes on the tree that main would hold
+- **THEN** the review record includes that tree hash
 
 ### Requirement: Deploy only a matching tree
 
@@ -21,7 +21,7 @@ After the merge, the deploy step MUST compare the `main` tree hash with the reco
 
 #### Scenario: The trees match
 
-- **WHEN** the hashes are equal and the batch OK names the deploy
+- **WHEN** the hashes are equal and the batch file names the deploy and the owner has started it
 - **THEN** the site deploys from `main` at that commit
 
 #### Scenario: The trees differ
@@ -37,3 +37,12 @@ Each deploy MUST record the deployed commit, the tree hash, the time, and the pr
 
 - **WHEN** a deploy finishes
 - **THEN** the record lets the previous version be restored
+
+### Requirement: A deploy is started by the owner or by the owner's merge
+
+A deploy MUST start from the owner's merge or from a step the owner starts. No tool or agent MUST start a deploy with the owner's credential.
+
+#### Scenario: A deploy without an owner action
+
+- **WHEN** nothing the owner did started the deploy
+- **THEN** it does not run

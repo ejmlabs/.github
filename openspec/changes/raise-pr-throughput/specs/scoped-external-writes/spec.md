@@ -2,32 +2,46 @@
 
 ## Purpose
 
-Allow the operator to do exactly what an approved batch names, and nothing more.
+Give the operator exactly the rights it needs to prepare work, and none of the rights that ship it.
 
 ## ADDED Requirements
 
-### Requirement: Four writes, bound to the batch file
+### Requirement: The operator has its own narrow identity
 
-A permission rule MUST allow only these external writes, and only for items in the approved batch file: pushing an exact commit, posting `/ready` or `/approve` on a named PR at a named commit, squash-merging a named PR, and deploying a named commit.
+The operator MUST act only as its own GitHub App or machine user, never as the owner and never with the owner's credential or token. Its rights MUST be limited to pushing branches and opening or updating pull requests in the listed repositories. It MUST NOT hold rights to approve, merge, change labels, change settings, read secrets or push workflow files.
 
-#### Scenario: A push of a listed commit
+#### Scenario: The operator pushes a branch
 
-- **WHEN** the operator pushes a commit that the batch file lists for that branch
-- **THEN** the push is allowed
+- **WHEN** the operator pushes a branch of a listed commit to a listed repository
+- **THEN** the push is allowed and the commit shows the operator identity
 
-#### Scenario: A push of any other commit
+#### Scenario: The operator pushes any other commit
 
-- **WHEN** the operator pushes a commit the file does not list
+- **WHEN** the operator pushes a commit that the batch file or task does not list
 - **THEN** the push is refused
+
+### Requirement: Shipping steps stay with the human
+
+`/ready`, `/approve`, merge and the clear of a security label MUST be actions by the owner's own account on GitHub. The operator MUST NOT post, call or script any of them, and the gate MUST refuse such a command from a bot sender or from a user without maintain rights.
+
+#### Scenario: The operator posts an approval command
+
+- **WHEN** the operator identity posts `/approve` or `/ready`
+- **THEN** the gate refuses it and no state changes
+
+#### Scenario: The operator tries to merge
+
+- **WHEN** the operator identity attempts to merge
+- **THEN** the merge is refused by the repository rules
 
 ### Requirement: No other writes
 
-The rule MUST NOT allow force-push, branch deletion outside a merged PR, settings changes, secret access, or comments other than the two commands above.
+The operator MUST NOT force-push, delete branches outside a merged PR, change settings, access secrets, or comment commands the gate treats as owner commands.
 
 #### Scenario: A force-push is tried
 
 - **WHEN** a force-push is attempted
-- **THEN** it is refused whatever the batch file says
+- **THEN** it is refused whatever any file says
 
 ### Requirement: Blocked writes are logged
 
