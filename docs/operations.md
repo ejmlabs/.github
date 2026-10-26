@@ -411,6 +411,28 @@ The shared workflow creates source drafts from an exact checked protected
 main commit, the repository's SemVer `VERSION` and dated release notes. See
 [Releasing](../RELEASING.md) for the dispatch and artifact contract.
 
+## Attaching built files
+
+A product that ships native builds runs its build and smoke jobs as their own
+workflow (`workflow_dispatch` or a push on main, `contents: read`, no secrets),
+then calls two shared workflows from `release.yml`:
+
+1. `verify-build.yml` (`actions: read`) before Draft release. It requires a
+   completed, successful run of the named build workflow whose `head_sha` is the
+   release commit, on main in the same repository, so a failed smoke check never
+   burns the tag.
+2. `attach-assets.yml` after Draft release (`needs`). It holds the release write
+   token and checks out and runs no project code. It re-verifies the run, the
+   lightweight `vVERSION` tag and the single draft release, downloads that run's
+   artifacts, recomputes every SHA-256 against the build's `build-sha256.txt`
+   (`sha256sum` format), and uploads the files, then an extended `SHA256SUMS`, to
+   the draft. It refuses a changed digest, an extra, missing or linked file, and a
+   built file that would replace an existing asset. `attest: true` adds build
+   provenance attestation; this is provenance, not code signing.
+
+Pin both to a reviewed commit of this repository, as with the other shared
+workflows. Signing and notarization are not claimed by either workflow.
+
 This revision's canonical PR and release callers both pin
 `6717b433c462e01abaed86e2118e4843827598cb`. Its archive validator preserves
 committed notice bytes. The earlier `c4f2873ef0eef5bc3c7d75cf71fa3489a911d134`
