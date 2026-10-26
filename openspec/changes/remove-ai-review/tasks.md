@@ -1,5 +1,5 @@
 ## 1. Stop requiring the status (owner only, first)
-- [ ] 1.1 In each of .github, ejm-ui, ejm-cli, ejm-ide, ejm-harness and ejmlabs, remove "AI review" from the required status checks on main (repository settings or the settings script with the owner's admin token).
+- [ ] 1.1 In each of .github, ejm-ui, ejm-cli, ejm-ide, ejm-harness and ejmlabs, remove "AI review" from the required status checks on main (repository settings UI, or the settings script from the removal commit's tree with the owner's admin token; do not run main's script until the removal has merged, because it still sets five contexts).
 - [ ] 1.2 Read back each repository's required checks and confirm exactly four remain.
 
 ## 2. Stop running the review (shared gate, one revision)
@@ -16,7 +16,7 @@
 - [ ] 3.3 Read back all six mains on the new pin and form.
 
 ## 4. Retire the key (owner only, after 3.2)
-- [ ] 4.1 Remove the model key secret from the organisation or repositories.
+- [ ] 4.1 Delete the `legacy-review` environment (its secret and branch rule) in each repository.
 - [ ] 4.2 Close or empty the prepaid provider account.
 
 ## 5. Clean up
