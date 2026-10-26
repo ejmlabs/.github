@@ -1,12 +1,15 @@
 import hashlib
+import os
+import sys
 import tempfile
 import unittest
 import urllib.error
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 namespace = {"__name__": "attach_test_library"}
-for name in ("governance.py", "attach.py"):
+for name in ("governance.py", "standards.py", "attach.py"):
     text = (ROOT / "scripts" / name).read_text().split('\nif __name__ == "__main__":')[0]
     exec(compile(text, name, "exec"), namespace)
 SHA, OTHER = "a" * 40, "b" * 40
@@ -20,11 +23,15 @@ class API:
         self.run = {"path": ".github/workflows/build.yml@refs/heads/main", "event": "push", "head_branch": "main", "head_sha": SHA,
                     "head_repository": {"full_name": self.repo}, "status": "completed", "conclusion": "success"}
         self.tag = {"object": {"type": "commit", "sha": SHA}}
+        self.main_tag, self.artifacts = False, [{"name": "release-files", "expired": False}]
         self.release = {"tag_name": "v0.1.0", "draft": True, "assets": []}
         self.__dict__.update(changes)
 
     def request(self, path):
         if path == "/actions/runs/7": return self.run
+        if path == "/actions/runs/7/artifacts?name=release-files": return {"artifacts": self.artifacts}
+        if path == "/git/ref/tags/main" and not self.main_tag: raise urllib.error.HTTPError(path, 404, "Not Found", None, None)
+        if path == "/git/ref/tags/main": return {}
         if path == "/git/ref/tags/v0.1.0":
             if self.tag is None: raise urllib.error.HTTPError(path, 404, "Not Found", None, None)
             return self.tag
@@ -37,7 +44,7 @@ class API:
 
 class RunTests(unittest.TestCase):
     def check(self, **run):
-        api = API()
+        api = API(**run.pop("api", {}))
         api.run.update(run)
         namespace["verify_run"](api, "build.yml", "7", SHA)
 
@@ -54,6 +61,10 @@ class RunTests(unittest.TestCase):
             "fork": {"head_repository": {"full_name": "someone/ejm-cli"}},
             "failed": {"conclusion": "failure"},
             "unfinished": {"status": "in_progress", "conclusion": None},
+            "branch is a tag named main": {"api": {"main_tag": True}},
+            "no release-files artifact": {"api": {"artifacts": []}},
+            "expired artifact": {"api": {"artifacts": [{"name": "release-files", "expired": True}]}},
+            "two release-files artifacts": {"api": {"artifacts": [{"name": "release-files", "expired": False}] * 2}},
         }.items():
             with self.subTest(name), self.assertRaises(ValueError):
                 self.check(**change)
@@ -130,13 +141,25 @@ class DigestTests(unittest.TestCase):
         self.assertEqual(self.calls, [])
 
     def test_missing_or_unsafe_manifest_is_refused(self):
-        for text in ("", "short  name\n", f"{digest(b'x')}  ../escape\n", f"{digest(b'x')}  SHA256SUMS\n"):
+        for text in ("", "short  name\n", f"{digest(b'x')}  ../escape\n", f"{digest(b'x')}  SHA256SUMS\n", f"{digest(b'x')}  a+b\n"):
             (self.built / "build-sha256.txt").write_text(text)
             with self.subTest(text), self.assertRaises(ValueError):
                 self.attach()
         (self.built / "build-sha256.txt").unlink()
         with self.assertRaisesRegex(ValueError, "no digest manifest"):
             self.attach()
+
+    def test_subdirectory_in_the_artifact_is_refused(self):
+        (self.built / "nested").mkdir()
+        with self.assertRaisesRegex(ValueError, "differ from the manifest"):
+            self.attach()
+        (self.built / "nested").rmdir()
+        self.data["nested"] = b""
+        (self.built / "nested").mkdir()
+        self.write_manifest()
+        with self.assertRaisesRegex(ValueError, "regular files"):
+            self.attach()
+        self.assertEqual(self.calls, [])
 
     def test_existing_assets_are_never_replaced_and_existing_sums_are_extended(self):
         with self.assertRaisesRegex(ValueError, "replace an existing"):
@@ -154,6 +177,61 @@ class DigestTests(unittest.TestCase):
         self.assertEqual(len(sums), 3)
         with self.assertRaisesRegex(ValueError, "replace an existing"):
             namespace["merge_sums"](f"{digest(b'x')}  ejm-cli-0.1.0-linux-x86_64.tar.gz\n", {"ejm-cli-0.1.0-linux-x86_64.tar.gz": digest(b"y")})
+
+
+class DispatchTests(unittest.TestCase):
+    """main() runs the right checks for each workflow step."""
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.old_cwd, self.old_env, self.old_argv = Path.cwd(), dict(os.environ), list(sys.argv)
+        self.addCleanup(lambda: (os.chdir(self.old_cwd), os.environ.clear(), os.environ.update(self.old_env), sys.argv.__setitem__(slice(None), self.old_argv)))
+        os.chdir(self.directory.name)
+        os.environ.update(RELEASE_COMMIT=SHA, BUILD_WORKFLOW="build.yml", BUILD_RUN_ID="7", RELEASE_VERSION="0.1.0")
+        self.api = API()
+        self.calls = []
+        self.patches = [patch.dict(namespace, GitHub=lambda: self.api, gh=lambda *args: self.calls.append(args))]
+        for item in self.patches: item.start(); self.addCleanup(item.stop)
+
+    def run_main(self, mode):
+        sys.argv[1:] = [mode]
+        namespace["main"]()
+
+    def test_verify_needs_neither_tag_nor_draft(self):
+        self.api.tag, self.api.release = None, {"tag_name": "v0.1.0", "draft": False, "assets": []}
+        self.run_main("verify")
+
+    def test_check_verifies_run_and_draft_without_touching_files(self):
+        self.run_main("check")
+        self.api.run["head_sha"] = OTHER
+        with self.assertRaisesRegex(ValueError, "different commit"):
+            self.run_main("check")
+        self.api.run["head_sha"], self.api.release["draft"] = SHA, False
+        with self.assertRaisesRegex(ValueError, "draft"):
+            self.run_main("check")
+        self.assertEqual(self.calls, [])
+
+    def test_attach_reverifies_before_any_digest_or_upload(self):
+        self.api.run["head_sha"] = OTHER
+        with self.assertRaisesRegex(ValueError, "different commit"):
+            self.run_main("attach")
+        self.api.run["head_sha"], self.api.tag = SHA, {"object": {"type": "commit", "sha": OTHER}}
+        with self.assertRaisesRegex(ValueError, "Tag"):
+            self.run_main("attach")
+        self.assertEqual(self.calls, [])
+
+    def test_attach_uploads_verified_files_and_bad_modes_or_versions_are_refused(self):
+        built = Path("built")
+        built.mkdir()
+        (built / "tool.tar.gz").write_bytes(b"x")
+        (built / "build-sha256.txt").write_text(f"{digest(b'x')}  tool.tar.gz\n")
+        self.run_main("attach")
+        self.assertEqual(len(self.calls), 2)
+        with self.assertRaises(ValueError):
+            self.run_main("other")
+        os.environ["RELEASE_VERSION"] = "1.0"
+        with self.assertRaisesRegex(ValueError, "SemVer"):
+            self.run_main("check")
 
 
 if __name__ == "__main__":

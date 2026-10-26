@@ -275,23 +275,23 @@ def build_env(inputs):
 def verify_build_workflow():
     """Pre-tag gate: no checkout, no project code, read-only."""
     inputs = build_inputs()
-    code = source("governance.py", True) + "\n" + source("attach.py")
+    code = source("governance.py", True) + "\n" + source("standards.py", True) + "\n" + source("attach.py")
     return {"name": "Verified build run", "on": {"workflow_call": {"inputs": inputs}}, "permissions": {},
             "jobs": {"verify": {"runs-on": "ubuntu-24.04", "timeout-minutes": 3, "permissions": {"actions": "read"}, "env": build_env(inputs),
-                                "steps": [run("Require a successful build of this commit from main", python(code, "verify"))]}}}
+                                "steps": [run("Require a successful build of this commit from main", python(code, "verify", "python3 -I"))]}}}
 
 
 def attach_workflow():
     """The only job that holds the release write token. It checks out and runs no project code."""
     inputs = build_inputs("version", "attest")
-    code = source("governance.py", True) + "\n" + source("attach.py")
+    code = source("governance.py", True) + "\n" + source("standards.py", True) + "\n" + source("attach.py")
     return {"name": "Attach verified build files", "on": {"workflow_call": {"inputs": inputs}}, "permissions": {},
             "concurrency": {"group": "attach-assets-${{ github.repository }}", "cancel-in-progress": False},
             "jobs": {"attach": {"runs-on": "ubuntu-24.04", "timeout-minutes": 10,
                                 "permissions": {"contents": "write", "actions": "read", "id-token": "write", "attestations": "write"}, "env": build_env(inputs),
-                                "steps": [run("Require the build run, tag and draft release to match", python(code, "check")),
-                                          {"uses": DOWNLOAD, "with": {"run-id": "${{ inputs.build-run-id }}", "github-token": "${{ github.token }}", "merge-multiple": True, "path": "built"}},
-                                          run("Recompute digests and attach to the draft", python(code, "attach")),
+                                "steps": [run("Require the build run, tag and draft release to match", python(code, "check", "python3 -I")),
+                                          {"uses": DOWNLOAD, "with": {"name": "release-files", "run-id": "${{ inputs.build-run-id }}", "github-token": "${{ github.token }}", "path": "built"}},
+                                          run("Recompute digests and attach to the draft", python(code, "attach", "python3 -I")),
                                           {"uses": ATTEST, "if": "${{ inputs.attest }}", "with": {"subject-path": "built/*", "show-summary": False}}]}}}
 
 

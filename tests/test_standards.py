@@ -5,8 +5,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from standards import MIT_TERMS, consumer_workflows, licenses, missing_model_key_workflows, read, semver, versions, workflows
-from build_workflows import governance, release_workflow, yaml
+from standards import MIT_TERMS, consumer_workflows, native_build, licenses, missing_model_key_workflows, read, semver, versions, workflows
+from build_workflows import attach_workflow, governance, release_workflow, verify_build_workflow, yaml
 
 
 class StandardTests(unittest.TestCase):
@@ -46,6 +46,26 @@ class StandardTests(unittest.TestCase):
             (root / "Cargo.toml").write_text('[workspace]\nmembers=[]\n[workspace.package]\nlicense="MIT"\n')
             (root / "LICENSE").write_text("MIT License\nCopyright (c) 2026 Example\nOnly a fragment.")
             with self.assertRaises(ValueError): licenses(root, "ejm-cli")
+
+
+NATIVE_BUILD = """name: Build
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@""" + "1" * 40 + """
+      - run: cargo build --release --locked
+      - uses: actions/upload-artifact@""" + "2" * 40 + """
+        with:
+          name: release-files
+          path: out/
+"""
 
 
 class WorkflowTests(unittest.TestCase):
@@ -274,9 +294,76 @@ class WorkflowTests(unittest.TestCase):
     def test_shared_profile_accepts_both_full_generated_reusables(self):
         self.add_reusable("governance.yml", governance())
         self.add_reusable("draft-release.yml", release_workflow())
+        self.add_reusable("verify-build.yml", verify_build_workflow())
+        self.add_reusable("attach-assets.yml", attach_workflow())
         workflows(self.root, ".github")
         with self.assertRaises(ValueError):
             workflows(self.root, "ejm-cli")
+
+    def test_new_reusables_must_match_the_generated_scaffold(self):
+        for name, data in (("verify-build.yml", verify_build_workflow()), ("attach-assets.yml", attach_workflow())):
+            self.add_reusable("governance.yml", governance())
+            self.add_reusable(name, data)
+            workflows(self.root, ".github")
+            data["on"]["workflow_call"]["inputs"]["extra"] = {"required": False, "type": "string"}
+            self.add_reusable(name, data)
+            with self.subTest(name), self.assertRaises(ValueError):
+                workflows(self.root, ".github")
+            (self.directory / name).unlink()
+
+    def native(self, repository="ejm-cli", build=None):
+        self.reset_callers()
+        (self.directory / "release.yml").write_text(consumer_workflows(self.revision, native=True)["release.yml"])
+        (self.directory / "build.yml").write_text(NATIVE_BUILD if build is None else build)
+        workflows(self.root, repository)
+
+    def test_native_release_is_selected_by_a_build_workflow_in_an_eligible_repository(self):
+        self.native()
+        self.native("ejm-harness")
+        with self.assertRaises(ValueError):
+            self.native("ejm-ui")
+        with self.assertRaises(ValueError):
+            self.native("ejmlabs")
+        # A plain release.yml with a build.yml, or the native one without it, is not canonical.
+        self.reset_callers()
+        (self.directory / "build.yml").write_text(NATIVE_BUILD)
+        with self.assertRaises(ValueError):
+            workflows(self.root, "ejm-cli")
+        (self.directory / "build.yml").unlink()
+        (self.directory / "release.yml").write_text(consumer_workflows(self.revision, native=True)["release.yml"])
+        with self.assertRaises(ValueError):
+            workflows(self.root, "ejm-cli")
+        self.reset_callers()
+        workflows(self.root, "ejm-cli")
+
+    def test_native_release_orders_verify_release_attach_on_one_pin_and_commit(self):
+        text = consumer_workflows(self.revision, native=True)["release.yml"]
+        self.assertLess(text.index("  verify:"), text.index("  release:"))
+        self.assertLess(text.index("  release:"), text.index("  attach:"))
+        self.assertIn("    needs: verify\n", text)
+        self.assertIn("    needs: release\n", text)
+        self.assertEqual(text.count("      commit: ${{ inputs.commit }}\n"), 3)
+        self.assertEqual(set(__import__("re").findall(r"@([0-9a-f]{40})", text)), {self.revision})
+        self.assertNotIn("secrets", text)
+
+    def test_native_build_shape_is_read_only_and_secretless(self):
+        native_build(NATIVE_BUILD)
+        bad = {
+            "write permission": NATIVE_BUILD.replace("contents: read", "contents: write"),
+            "job permissions": NATIVE_BUILD.replace("  build:\n", "  build:\n    permissions:\n      contents: read\n"),
+            "secret": NATIVE_BUILD.replace("run: cargo", "env:\n          K: ${{ secrets.K }}\n        run: cargo"),
+            "token": NATIVE_BUILD.replace("run: cargo", "env:\n          T: ${{ github.token }}\n        run: cargo"),
+            "pull request": NATIVE_BUILD.replace("  workflow_dispatch:\n", "  workflow_dispatch:\n  pull_request:\n"),
+            "mutable action": NATIVE_BUILD.replace("@" + "1" * 40, "@v4"),
+            "local action": NATIVE_BUILD.replace("actions/checkout@" + "1" * 40, "./.github/actions/x"),
+            "other branches": NATIVE_BUILD.replace("[main]", "[main, topic]"),
+            "no artifact": NATIVE_BUILD.replace("release-files", "files"),
+            "second artifact": NATIVE_BUILD + "      - name: release-files\n",
+            "environment": NATIVE_BUILD.replace("    runs-on", "    environment: prod\n    runs-on"),
+        }
+        for name, text in bad.items():
+            with self.subTest(name), self.assertRaises(ValueError):
+                native_build(text)
 
     def test_review_job_requires_its_exclusive_protected_environment(self):
         for case in ("valid", "step input", "missing", "wrong name", "other job", "indented other job", "moved", "mapping", "literal lookalike", "duplicate job", "duplicate environment"):

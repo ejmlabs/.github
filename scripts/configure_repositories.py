@@ -8,7 +8,7 @@ import subprocess
 import urllib.parse
 
 from governance import SECURITY_LABEL
-from standards import SHARED_WORKFLOWS
+from standards import NATIVE_RELEASE, SHARED_WORKFLOWS, native_build
 
 
 NAMES = (".github", "ejmlabs", "ejm-cli", "ejm-harness", "ejm-ide")
@@ -54,10 +54,17 @@ def installed_consumers(name, revision):
         raise ValueError("Activation requires --standards-revision with a full immutable SHA")
     root = "repos/ejmlabs/" + name + "/contents/.github/workflows"
     entries = api(root + "?ref=main")
-    expected = consumer_workflows(revision)
-    allowed = set(expected) | (SHARED_WORKFLOWS if name == ".github" else set())
+    # A native-release repository opts in by having build.yml on main.
+    native = name in NATIVE_RELEASE and any(entry["name"] == "build.yml" for entry in entries)
+    expected = consumer_workflows(revision, native=native)
+    allowed = set(expected) | (set(SHARED_WORKFLOWS) if name == ".github" else set()) | ({"build.yml"} if native else set())
     if {entry["name"] for entry in entries} != allowed:
         raise ValueError(name + ": unexpected or missing workflows on main")
+    if native:
+        remote = api(root + "/build.yml?ref=main")
+        if remote.get("encoding") != "base64":
+            raise ValueError(name + ": cannot read build.yml")
+        native_build(base64.b64decode(remote["content"]).decode())
     for filename, content in expected.items():
         remote = api(root + "/" + filename + "?ref=main")
         if remote.get("encoding") != "base64" or base64.b64decode(remote["content"]).decode() != content:

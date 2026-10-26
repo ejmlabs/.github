@@ -8,7 +8,8 @@ import sys
 import urllib.error
 from pathlib import Path
 
-# The workflow generator embeds the governance.py library (GitHub) first.
+# The workflow generator embeds the governance.py (GitHub) and standards.py (semver) libraries first.
+ARTIFACT = "release-files"
 MANIFEST = "build-sha256.txt"
 SUMS = "SHA256SUMS"
 
@@ -29,6 +30,17 @@ def verify_run(api, workflow, run_id, sha):
         raise ValueError("Run was built from a different commit than the release")
     if run.get("status") != "completed" or run.get("conclusion") != "success":
         raise ValueError("Build run has not completed successfully")
+    # head_branch also names a tag; a tag called main must not pass as the branch.
+    try:
+        api.request("/git/ref/tags/main")
+    except urllib.error.HTTPError as error:
+        if error.code != 404:
+            raise
+    else:
+        raise ValueError("A tag named main makes the run's branch ambiguous")
+    found = [item for item in api.request(f"/actions/runs/{run_id}/artifacts?name={ARTIFACT}")["artifacts"] if item["name"] == ARTIFACT and not item["expired"]]
+    if len(found) != 1:
+        raise ValueError("Build run must upload exactly one artifact named " + ARTIFACT)
 
 
 def verify_draft(api, tag, sha):
@@ -45,7 +57,7 @@ def verify_draft(api, tag, sha):
 def read_digests(text):
     digests = {}
     for line in text.splitlines():
-        match = re.fullmatch(r"([0-9a-f]{64})  ([A-Za-z0-9][A-Za-z0-9._+-]*)", line)
+        match = re.fullmatch(r"([0-9a-f]{64})  ([A-Za-z0-9][A-Za-z0-9._-]*)", line)
         if not match or match[2] in (MANIFEST, SUMS) or match[2] in digests:
             raise ValueError("Malformed or duplicate digest line")
         digests[match[2]] = match[1]
@@ -83,7 +95,7 @@ def gh(*args):
     subprocess.run(["gh", *args], check=True)
 
 
-def attach(api, directory, tag, release, run_gh=gh):
+def attach(api, directory, tag, release, run_gh):
     built = verify_files(directory)
     assets = {asset["name"] for asset in release["assets"]}
     if assets & set(built):
@@ -109,12 +121,12 @@ def main():
     verify_run(api, workflow, run_id, sha)
     if mode == "verify":
         return
+    if not semver(os.environ["RELEASE_VERSION"]):
+        raise ValueError("Supply a SemVer version")
     tag = "v" + os.environ["RELEASE_VERSION"]
     release = verify_draft(api, tag, sha)
     if mode == "attach":
-        attach(api, Path("built"), tag, release)
-    elif mode != "check":
-        raise ValueError("Unknown operation")
+        attach(api, Path("built"), tag, release, gh)
 
 
 if __name__ == "__main__":

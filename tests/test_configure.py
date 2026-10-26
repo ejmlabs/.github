@@ -55,6 +55,26 @@ class SettingsSafetyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "full immutable SHA"):
             settings.installed_consumers("ejm-cli", "main")
 
+    def test_native_release_is_checked_on_main_only_where_build_workflow_exists(self):
+        import base64
+        from standards import consumer_workflows
+
+        revision, build = "a" * 40, "name: Build\non:\n  workflow_dispatch:\n  push:\n    branches: [main]\npermissions:\n  contents: read\njobs: {}\n"
+        files = {**consumer_workflows(revision, native=True), "build.yml": "name: Build\n" + build.split("\n", 1)[1].replace("jobs: {}", "jobs:\n  b:\n    steps:\n      - uses: actions/checkout@" + "1" * 40 + "\n      - uses: actions/upload-artifact@" + "2" * 40 + "\n        with:\n          name: release-files")}
+
+        def remote(path, *args, **kwargs):
+            if path.endswith("?ref=main") and "/contents/.github/workflows/" in path:
+                return {"encoding": "base64", "content": base64.b64encode(files[path.rsplit("/", 1)[1].split("?")[0]].encode()).decode()}
+            return [{"name": name} for name in files]
+
+        with patch.object(settings, "api", side_effect=remote):
+            settings.installed_consumers("ejm-cli", revision)
+            files["build.yml"] = files["build.yml"].replace("contents: read", "contents: write")
+            with self.assertRaises(ValueError):
+                settings.installed_consumers("ejm-cli", revision)
+            with self.assertRaisesRegex(ValueError, "unexpected or missing"):
+                settings.installed_consumers("ejm-ui", revision)
+
 
 if __name__ == "__main__":
     unittest.main()
