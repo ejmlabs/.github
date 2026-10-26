@@ -394,7 +394,10 @@ with no administrator bypass:
 
 1. The owner removes **AI review** from the required checks on main in all six
    repositories and reads back that exactly four remain. This comes first so
-   no repository ever requires a status the gate no longer publishes.
+   no repository ever requires a status the gate no longer publishes. Do it in
+   the repository settings UI, or with the settings script from the removal
+   commit's tree. Do not run `scripts/configure_repositories.py` from main
+   until the removal has merged: main's script still sets five contexts.
 2. Merge the standards change here first (the commit that accepts both caller
    forms and a shared workflow with or without the review job), then change
    this repository's own `pr.yml` pins to it. The previous standards reject a
@@ -408,7 +411,8 @@ with no administrator bypass:
 5. Once main runs the new pin, change each caller to the new form (no
    `pull_request_target` trigger, no `XAI_API_KEY` forward). A pin change and a
    form change in one PR fail the previous standards, so they are separate PRs.
-6. The owner removes the model key secret and closes the prepaid provider
+6. The owner deletes the `legacy-review` environment (its secret and branch
+   rule) in each repository and closes the prepaid provider
    account.
 7. The next shared revision removes the previous caller form, the optional
    secret declaration and the fixture form from the standards check.
