@@ -346,6 +346,32 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(set(__import__("re").findall(r"@([0-9a-f]{40})", text)), {self.revision})
         self.assertNotIn("secrets", text)
 
+    def test_everything_the_lint_accepts_is_structurally_read_only(self):
+        """Backstop: PyYAML is not a dependency of the standards check, so this runs where it is installed."""
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is not installed")
+        hostile = ["  actions: write", "    permissions: write-all", "      - uses: x/y@v1", "id-token: write", "ON: {workflow_call: {}}", "  env:", "    T: secrets.K",
+                   "permissions: write-all", "secrets: inherit", "concurrency:", "    id-token: write", "- uses: x/y@v1", "run-name: x", "env:", "name: x"]
+        lines = NATIVE_BUILD.splitlines()
+        accepted = 0
+        for text in [NATIVE_BUILD, *("\n".join(lines[:i] + [extra] + lines[i:]) + "\n" for i in range(len(lines) + 1) for extra in hostile)]:
+            try:
+                native_build(text)
+            except ValueError:
+                continue
+            try:
+                data = yaml.safe_load(text)
+            except yaml.YAMLError:
+                continue  # an unparsable file is not a workflow GitHub would run
+            accepted += 1
+            self.assertEqual(data["permissions"], {"contents": "read"}, text)
+            self.assertLessEqual({"on" if key is True else key for key in data}, {"name", "on", "permissions", "run-name", "env", "defaults", "concurrency", "jobs"}, text)
+            self.assertTrue(all("permissions" not in job for job in (data["jobs"] or {}).values() if isinstance(job, dict)), text)
+            self.assertNotRegex(text.lower(), "secrets|id-token")
+        self.assertGreaterEqual(accepted, 1)
+
     def test_native_build_scripts_may_use_shell_braces(self):
         native_build(NATIVE_BUILD.replace("      - run: cargo build --release --locked\n", "      - run: |\n          for f in out/*; do echo \"${f}\"; done\n          [ -d out ] && true\n"))
 
@@ -384,6 +410,8 @@ class WorkflowTests(unittest.TestCase):
             "quoted name": NATIVE_BUILD.replace("name: Build", 'name: "Build"', 1),
             "repeated top-level key": NATIVE_BUILD + "jobs:\n  c:\n    runs-on: x\n",
             "repeated on": NATIVE_BUILD + "on:\n  workflow_call:\n",
+            "uppercase on": NATIVE_BUILD + "ON:\n  workflow_call:\n",
+            "permission after the header": NATIVE_BUILD.replace("  contents: read\n", "  contents: read\n\n  # more\n  actions: write\n", 1),
             "uppercase permissions": NATIVE_BUILD.replace("    runs-on", "    PERMISSIONS: write-all\n    runs-on"),
             "matrix flow list": NATIVE_BUILD.replace("    runs-on: ubuntu-24.04\n", "    strategy:\n      matrix:\n        os: [a, b]\n    runs-on: ubuntu-24.04\n"),
         }

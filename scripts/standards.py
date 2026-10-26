@@ -322,7 +322,8 @@ def native_build(text):
     # an anchor or a tag cannot hide a permission or an action from the checks below.
     # The contents of literal block scalars (`run: |`) are script text, not YAML structure.
     block = content = None
-    top = ["on", "name", "permissions"]
+    top = {"run-name", "env", "defaults", "concurrency", "jobs"}
+    current = None
     for line in rest.removeprefix(trigger).splitlines():
         indent = len(line) - len(line.lstrip(" "))
         if block is not None and not line.strip():
@@ -338,9 +339,12 @@ def native_build(text):
         if not re.fullmatch(r" *(?:- )?[A-Za-z][A-Za-z0-9_-]*:(?: +[^\s\"'{}\[\]&*!|>#?][^{}\[\]\t]*| +[|>][1-9]?[+-]?| *)?| *- [^\s\"'{}\[\]&*!|>#?:-][^{}\[\]\t]*", key):
             raise ValueError("Build workflow must use plain block-style YAML without quoted keys, flow collections or anchors")
         if indent == 0 and not line.startswith("-"):
-            if line.split(":")[0] in top:
-                raise ValueError("Build workflow repeats a top-level key")
-            top.append(line.split(":")[0])
+            current = line.split(":")[0]
+            if current not in top:
+                raise ValueError("Build workflow repeats a top-level key or uses an unknown one")
+            top.remove(current)
+        elif current is None:
+            raise ValueError("Build workflow must set only the top-level read permission")
         if re.search(r": *[|>][1-9]?[+-]?$", line):
             block = len(line) - len(line.lstrip(" -"))
     if text.lower().count("permissions") != 1 or text.lower().count("uses") != len(re.findall(r"(?m)^\s*(?:- )?uses: ", text)):
