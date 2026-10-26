@@ -38,7 +38,7 @@ Each decision lists the choices. The recommended choice is first and marked.
 - B. A signed batch file that names PR URLs at exact head SHAs and an optional deploy. The owner reviews the list and then clicks through `/ready`, `/approve` and merge on GitHub, one item at a time. (recommended)
 - C. B plus a standing class for named low-risk changes (patch dependency bumps, docs, copy).
 
-B keeps the approval explicit and attributable. The file is signed with the owner's key, or committed in a PR the owner approves, so it is an authenticated owner action recorded in the repository, not a chat message. The file is a checklist: a script may verify it and show which items still match, but only the owner's GitHub actions ship anything. A PR whose head moves leaves the set. C removes the per-batch look at a class, so it needs a written scope from the owner and a deterministic class check. Revisit C after two weeks of B data.
+B keeps the approval explicit and attributable. The file carries the owner's SSH signature over its canonical bytes, so it is an authenticated owner action recorded in the repository, not a chat message. Only the signature proof is built; committing the file in a PR the owner approves is an open option that would need its own build and review. The file is a checklist: a script may verify it and show which items still match, but only the owner's GitHub actions ship anything. A PR whose head moves leaves the set until the owner signs a new batch that carries the new head. C removes the per-batch look at a class, so it needs a written scope from the owner and a deterministic class check. Revisit C after two weeks of B data.
 
 ### D2. Security concerns without a gate label
 
@@ -59,7 +59,7 @@ C is rejected: every consumer would run unreviewed gate code. B keeps pins and r
 ### D4. Head drift and serial merges
 
 - A. Re-ask the owner each time `main` moves (today).
-- B. Short-lived branches (one day), disjoint files in a batch, and a carry-over rule: if only `main` moved, the PR's own patch is identical (same patch id), and a fresh review passes on the new exact tree, the batch entry still covers the PR. (recommended)
+- B. Short-lived branches (one day), disjoint files in a batch, and a carry-over rule: if only `main` moved, the PR's own patch is identical (same patch id), and a fresh review passes on the new exact tree, a new batch with the carried head is proposed and takes effect only when the owner signs it. (recommended)
 - C. A merge queue.
 
 The carry-over rule is safe because the fresh review still runs on the exact code shipped and the owner still approves on GitHub. C needs a repository settings change by the owner and gate support for the queue event, so it is a later step.
@@ -128,6 +128,6 @@ The owner picked on 2026-10-25: D1 B, D2 B, D3 B, D4 B, D5 B, D6 B in the first 
 
 - Does the owner want a standing class for low-risk changes (D1 C)? If so, what is the exact class and its deterministic check?
 - Which check-in times does the owner prefer?
-- Which signing method for the batch file: a key the owner holds, or a PR the owner approves?
+- Should the owner-approved-PR proof be built later? Only the SSH signature proof is built now.
 - For D3, does the owner prefer to push workflow-file branches, or to create a short-lived credential for the pin job?
 - For D7, who is the second human if the infrastructure ruleset is needed?

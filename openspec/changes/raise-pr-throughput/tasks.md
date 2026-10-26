@@ -11,7 +11,7 @@ Starts after remove-ai-review tasks 3.2 and 5.1 are done. Nothing here starts un
 ## 2. Batch list (D1 B)
 
 - [ ] 2.1 Define the batch file: PR URLs, exact head SHAs, review ids, tree hashes and the deploy target.
-- [ ] 2.2 Define how the owner signs it, and record the signer and time in the repository.
+- [ ] 2.2 Define the owner's SSH signature over the canonical bytes (the only proof built), and record the signer and time in the repository.
 - [ ] 2.3 Write a read-only script that verifies the signature and shows, per entry, whether the head and review still match. It posts nothing.
 - [ ] 2.4 Drop any PR from the list when its head moves, and say so in the report.
 - [ ] 2.5 Test: an unsigned file, a bad signature, a moved head, a missing review and a PR not in the file are each refused.

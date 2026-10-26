@@ -8,7 +8,7 @@ Let the owner approve a named set of changes in one pass, without weakening revi
 
 ### Requirement: A batch file names exact items and is the owner's signed action
 
-A batch file MUST list each pull request URL and its exact head commit, the review record and tree hash for each, and the deploy target if any. It MUST be signed by the owner, or committed in a pull request that the owner approves on GitHub. An OK given in chat, mail or any place outside the repository record MUST NOT count. A tool or agent MUST NOT sign it.
+A batch file MUST list each pull request URL and its exact head commit, the review record and tree hash for each, and the deploy target if any. It MUST carry the owner's SSH signature over its canonical bytes. Only this signature proof is built. Committing the file in a pull request that the owner approves on GitHub is an open option that would need its own build and review. An OK given in chat, mail or any place outside the repository record MUST NOT count. A tool or agent MUST NOT sign it.
 
 #### Scenario: The file is unsigned
 
@@ -40,12 +40,12 @@ An item MUST NOT be offered for approval unless a review passed on the exact com
 
 ### Requirement: A moved head ends the entry
 
-If a pull request head changes after the file is signed, the entry MUST stop covering that item. The only exception is the carry-over rule: only the base branch moved, the pull request's own patch is identical, and a fresh review passes on the new exact tree. Even then the owner still approves on GitHub.
+If a pull request head changes after the file is signed, the entry MUST stop covering that item. The only path forward is the carry-over rule: only the base branch moved, the pull request's own patch is identical, and a fresh review passes on the new exact tree. Then a new batch with the carried head is proposed. It MUST NOT take effect until the owner signs it, and the owner still approves on GitHub.
 
 #### Scenario: Only the base branch moved
 
 - **WHEN** a merge of the base branch leaves the patch id unchanged and a fresh review passes on the new tree
-- **THEN** the entry still covers the item
+- **THEN** a new batch with the carried head is proposed, and it takes effect only when the owner signs it; the existing entry does not cover the moved head
 
 #### Scenario: The patch changed
 
