@@ -346,6 +346,9 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(set(__import__("re").findall(r"@([0-9a-f]{40})", text)), {self.revision})
         self.assertNotIn("secrets", text)
 
+    def test_native_build_scripts_may_use_shell_braces(self):
+        native_build(NATIVE_BUILD.replace("      - run: cargo build --release --locked\n", "      - run: |\n          for f in out/*; do echo \"${f}\"; done\n          [ -d out ] && true\n"))
+
     def test_native_build_shape_is_read_only_and_secretless(self):
         native_build(NATIVE_BUILD)
         bad = {
@@ -360,6 +363,13 @@ class WorkflowTests(unittest.TestCase):
             "no artifact": NATIVE_BUILD.replace("release-files", "files"),
             "second artifact": NATIVE_BUILD + "      - name: release-files\n",
             "environment": NATIVE_BUILD.replace("    runs-on", "    environment: prod\n    runs-on"),
+            "quoted job permissions": NATIVE_BUILD.replace("    runs-on", '    "permissions": write-all\n    runs-on'),
+            "flow job permissions": NATIVE_BUILD.replace("    runs-on: ubuntu-24.04\n", "    other: {permissions: write-all, runs-on: x}\n    runs-on: ubuntu-24.04\n"),
+            "quoted local action": NATIVE_BUILD.replace("      - run: cargo build --release --locked\n", '      - "uses": ./.github/actions/x\n'),
+            "flow mutable action": NATIVE_BUILD.replace("      - run: cargo build --release --locked\n", "      - {uses: someone/x@v1}\n"),
+            "anchor": NATIVE_BUILD.replace("    runs-on: ubuntu-24.04", "    runs-on: &os ubuntu-24.04"),
+            "tab": NATIVE_BUILD.replace("      - run: cargo", "      -\trun: cargo"),
+            "second document": NATIVE_BUILD + "---\nname: other\n",
         }
         for name, text in bad.items():
             with self.subTest(name), self.assertRaises(ValueError):

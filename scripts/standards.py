@@ -312,12 +312,28 @@ jobs:
 def native_build(text):
     """Lint a product build workflow: read-only token, no secrets, pinned actions, one release-files artifact.
 
-    This is a line-based check of the shape, not a YAML parser. Review still covers what the build runs.
+    This is a line-based check of the shape, not a YAML parser: it accepts only plain block-style YAML. Review still covers what the build runs.
     """
     trigger = "on:\n  workflow_dispatch:\n  push:\n    branches: [main]\npermissions:\n  contents: read\n"
     head, _, rest = text.partition("\n")
     if not head.startswith("name: ") or not rest.startswith(trigger):
         raise ValueError("Build workflow must run only on workflow_dispatch and pushes to main with contents: read")
+    # Reject every spelling the canonical block style does not use, so a quoted key, a flow mapping,
+    # an anchor or a tag cannot hide a permission or an action from the checks below.
+    # The contents of literal block scalars (`run: |`) are script text, not YAML structure.
+    block = None
+    for line in rest.removeprefix(trigger).splitlines():
+        indent = len(line) - len(line.lstrip(" "))
+        if block is not None and (not line.strip() or indent > block):
+            continue
+        block = None
+        key = re.sub(r"\$\{\{.*?\}\}", "", line)
+        if (re.match(r"\s*(?:- )?[\"']", key) or re.search(r"[{}\[\]\t]|^---|^\s*<<:|(?:^|[:-]) +[&*!]", key)):
+            raise ValueError("Build workflow must use plain block-style YAML without quoted keys, flow collections or anchors")
+        if re.search(r": *[|>][+-]?$", line):
+            block = indent
+    if text.count("permissions") != 1 or text.count("uses") != len(re.findall(r"(?m)^\s*(?:- )?uses: ", text)):
+        raise ValueError("Build workflow must use plain block-style YAML without quoted keys, flow collections or anchors")
     if len(re.findall(r"(?m)^\s*permissions:", text)) != 1:
         raise ValueError("Build workflow must set only the top-level read permission")
     if re.search(r"(?i)secrets|github\.token|GITHUB_TOKEN|id-token|environment:|pull_request|workflow_run|persist-credentials: *true", text):
