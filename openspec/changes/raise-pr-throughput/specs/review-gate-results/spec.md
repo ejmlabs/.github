@@ -6,7 +6,7 @@ Stop false results from blocking a change, never let a class of change skip revi
 
 ## ADDED Requirements
 
-### Requirement: Lockfile and binary changes pass a deterministic check and are still reviewed
+### Requirement: Pins-only, lockfile and binary changes pass a deterministic check and are still reviewed
 
 A lockfile change MUST pass the lockfile check and a binary asset MUST pass the allowlist check. Such a change MUST NOT skip review: the check result MUST be attached to the review, and a failed check MUST block. Fixtures for each case MUST run in the test suite.
 
@@ -37,7 +37,7 @@ A lockfile change MUST pass the lockfile check and a binary asset MUST pass the 
 
 ### Requirement: The gate has no security label
 
-The gate MUST NOT add, require, enforce or accept a security label, a label override, or a caller trigger on label removal. A security concern raised by a human reviewer MUST be handled as an ordinary review comment that only a human resolves, and no bot, operator identity or automated reviewer MUST resolve it.
+The gate MUST NOT add, require, enforce or accept a security label, a label override, or a caller trigger on label removal. A security concern raised by a human reviewer MUST be handled as an ordinary review comment that only a human resolves, and a bot, the operator identity or an automated reviewer MUST NOT resolve it.
 
 #### Scenario: A human reviewer raises a concern
 

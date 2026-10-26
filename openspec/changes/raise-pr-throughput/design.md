@@ -10,7 +10,7 @@ All numbers come from GitHub timelines, workflow run jobs and review records for
 The trust model is fixed before any speed-up:
 
 - The owner is the only actor who posts `/ready` and `/approve`, merges, or resolves a security concern. Each is an action by the owner's own account on GitHub.
-- The operator has its own identity (a GitHub App, or a machine user with the Write role only). It can push branches and open or update PRs. Only the owner may merge to `main`, enforced by a push and merge restriction with no bypass actors. The gate already refuses commands from a bot sender and from a user without maintain rights, so the operator cannot approve anything even by mistake.
+- The operator has its own identity (a GitHub App, or a machine user with the Write role only). It can push branches and open or update PRs. Only the owner may merge to `main`; this will be enforced (task 8.5) by branch protection restrictions listing the owner as the only user. The gate already refuses commands from a bot sender and from a user without maintain rights, so the operator cannot approve anything even by mistake.
 - Automated review is off. A pass from any automated reviewer is advice and is never an authorization.
 
 ## Goals / Non-Goals
@@ -24,7 +24,7 @@ Goals:
 Non-Goals:
 
 - No weaker review. Fewer waits, not fewer checks.
-- No change to branch protection in this change. Admin enforcement stays on.
+- No weakening of branch protection. The only addition is the owner-only push restriction (task 8.5), applied by the owner. Admin enforcement stays on.
 - No new merge method.
 - No automation that holds the owner's credential or posts as the owner.
 

@@ -1,6 +1,6 @@
 # Tasks
 
-Nothing here starts until the owner confirms a choice for each decision in `design.md`. Tasks are grouped by decision. Skip the groups for choices not picked. No task adds a step that posts a command, approves, merges, or resolves a security concern as anyone but the owner.
+Starts after remove-ai-review tasks 3.2 and 5.1 are done. Nothing here starts until the owner confirms a choice for each decision in `design.md`. Tasks are grouped by decision. Skip the groups for choices not picked. No task adds a step that posts a command, approves, merges, or resolves a security concern as anyone but the owner.
 
 ## 1. Measure first (all choices)
 
@@ -56,7 +56,7 @@ Nothing here starts until the owner confirms a choice for each decision in `desi
 - [ ] 8.2 Make the pre-push guard allow only branch pushes of SHAs the batch file lists, and refuse force-push.
 - [ ] 8.3 Test that the identity's `/ready` and `/approve` are refused by the gate.
 - [ ] 8.4 Test that a push of any other SHA, branch or repository is refused.
-- [ ] 8.5 Restrict who can push or merge to `main` to the owner, using branch protection or a ruleset with no bypass actors, and test that the operator's merge of an approved, green PR is refused. Mirror the restriction in the identity spec.
+- [ ] 8.5 Owner action: restrict who can push or merge to `main` with classic branch protection restrictions that list the owner as the only user, with admin enforcement on. Set it in `scripts/configure_repositories.py` so a settings run sets it and never resets it, and assert it in the standards or readback check. Test that the operator's merge of an approved, green PR is refused. Mirror the restriction in the identity spec.
 - [ ] 8.6 The owner creates the identity and applies the permissions. The build never does.
 
 ## 9. Gate self-repair (D7 B or C)

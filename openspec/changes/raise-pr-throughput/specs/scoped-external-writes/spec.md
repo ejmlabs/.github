@@ -32,7 +32,7 @@ The operator MUST act only as its own GitHub App or machine user, never as the o
 #### Scenario: The operator tries to merge
 
 - **WHEN** the operator identity attempts to merge
-- **THEN** the merge is refused, because only the owner may push or merge to `main` and the restriction has no bypass actors
+- **THEN** the merge is refused, because only the owner may push or merge to `main` under the branch protection restriction
 
 ### Requirement: No other writes
 
