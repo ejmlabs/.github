@@ -14,7 +14,7 @@ The override path MUST start only for a `pull_request_target` `unlabeled` event 
 
 - **WHEN** a maintainer removes `acceptance:missing-model-key` or any other label
 - **THEN** the caller `override` job does not start
-- **AND** if a shared job is reached by another caller, its condition skips it
+- **AND** a caller that reaches the shared job anyway finds its condition false and the job skipped
 
 #### Scenario: A label differing only in case is removed
 
@@ -23,7 +23,7 @@ The override path MUST start only for a `pull_request_target` `unlabeled` event 
 
 ### Requirement: The override path holds no secret and no PR code
 
-The caller `override` job MUST NOT set `secrets:`. The shared `override.yml` MUST declare no `secrets` and no `inputs` under `workflow_call`, contain no `uses:` step and no checkout, and grant only `contents: read`, `pull-requests: read` and `statuses: write`. The `governance` and `missing_model_key` caller jobs MUST NOT run for `pull_request_target`.
+The caller `override` job MUST NOT set `secrets:`. The `override` job in `governance.yml` MUST NOT reference `secrets.`, MUST contain no `uses:` step and no checkout, and MUST grant itself only `contents: read`, `pull-requests: read` and `statuses: write`. The `governance` and `missing_model_key` caller jobs MUST NOT run for `pull_request_target`.
 
 #### Scenario: A label is removed
 
@@ -57,7 +57,7 @@ The override MUST change **AI review** only when the sender is a human with live
 
 ### Requirement: The standards check accepts the new caller and, for one generation, the previous one
 
-**Repository standards** MUST accept the new canonical caller. For the pin generation that introduces it, the check MUST also accept the #40 caller exactly. A caller that matches neither, or that passes `secrets:` on a `pull_request_target` job, MUST fail with a message naming the file.
+**Repository standards** MUST accept the new canonical caller. For the pin generation that introduces it, the check MUST also accept the #40 caller exactly. A caller that matches neither MUST fail with a message naming the file. This includes any caller other than the exact previous form that passes `secrets:` on a `pull_request_target` job.
 
 #### Scenario: A repository is on the previous caller after the new pin lands
 

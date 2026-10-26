@@ -8,15 +8,14 @@ Callers trigger on `pull_request_target` `unlabeled` (added in #40) through the 
 - The job passes `XAI_API_KEY` and `EJM_HARNESS_TOKEN` on the `pull_request_target` event. Today the shared `override` job reads neither, but `secrets:` is set per calling job, so nothing but the shared file's current content keeps them out.
 - The job condition tests `github.event.issue.*`, which a `pull_request_target` payload does not contain. On that path `!contains(github.event.issue.labels.*.name, ...)` is always true, so a repository staged for a missing model key would send an unlabeled event to the keyed job.
 
-The reviewer raised the second and third points on #40 (a "Possible security concern"). The Opus review found them harmless today. The next PR that edits a caller or the shared gate meets the same flag, and the docs promise an override path "with no secrets" that the caller does not enforce.
+The reviewer raised the second and third points on #40 (a "Possible security concern"). An independent review found them harmless today. The next PR that edits a caller or the shared gate meets the same flag, and the docs promise an override path "with no secrets" that the caller does not enforce.
 
-This change builds on the earlier `secretless-override-caller` draft. It keeps its two-job split and adds what that draft left out: a label test, a shared workflow that cannot receive secrets at all, a transitional standards check that removes the rollout gap, and the event-field change.
+This change builds on the earlier `secretless-override-caller` draft. It keeps its two-job split and adds what that draft left out: a label test, a transitional standards check that removes the rollout gap, and the event-field change.
 
 ## What Changes
 
-- Split the canonical `pr.yml` into `governance` (and, in this repository only, `missing_model_key`), both `issue_comment` only, and a new `override` job that runs only for `pull_request_target` when `github.event.label.name` is `Possible security concern`. The `override` job has no `secrets:` block and `contents: read`, `pull-requests: read`, `statuses: write`.
-- Add a shared reusable workflow `override.yml` containing only the override job. Its `workflow_call` declares no secrets and no inputs. The job moves out of `governance.yml` after a transition (see design).
-- Test the label name in two places: the caller `if:` and the shared job `if:`; make `relabel` compare the removed label exactly.
+- Split the canonical `pr.yml` into `governance` (and, in this repository only, `missing_model_key`), both `issue_comment` only, and a new `override` job that runs only for `pull_request_target` when `github.event.label.name` is `Possible security concern`. The `override` job has no `secrets:` block and the permissions `governance.yml` needs (its jobs cannot exceed the calling job's grant), but no secrets.
+- Test the label name in two places: the caller `if:` and the `override` job `if:` in `governance.yml`; make `relabel` compare the removed label exactly.
 - Read `github.event.pull_request.number` and `head.sha` from the payload; read labels live.
 - Teach **Repository standards** to accept the new caller, and for one pin generation also the #40 caller, so no repository is stuck between rollout steps.
 - Update `docs/operations.md`.
@@ -31,5 +30,5 @@ Every consumer needs the rollout again. That cost is the point of the design fil
 
 ## Impact
 
-- `scripts/standards.py`, `scripts/build_workflows.py`, `scripts/governance.py`, `scripts/configure_repositories.py`, `.github/workflows/{pr,governance,override}.yml`, `docs/operations.md`, tests.
+- `scripts/standards.py`, `scripts/build_workflows.py`, `scripts/governance.py`, `scripts/configure_repositories.py`, `.github/workflows/{pr,governance}.yml`, `docs/operations.md`, tests.
 - All six callers (`.github`, `ejm-ui`, `ejm-cli`, `ejm-ide`, `ejm-harness`, `ejmlabs`) change in the rollout. No change to required checks, admission, budgets or secrets.
