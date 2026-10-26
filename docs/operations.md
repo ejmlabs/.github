@@ -477,6 +477,41 @@ Between steps 2 and 3, other PRs in that repository fail **Repository
 standards** and the label override is unavailable, because label removal
 starts no workflow. Keep that window short and land step 3 first.
 
+## Throughput
+
+Shipping time is mostly waiting, not machine work. The controls below remove
+repeated waits and keep every existing requirement: a fresh independent review
+on the exact code shipped, the owner's explicit approval on GitHub, no
+force-push and no admin merge. They change no required check or admission rule.
+Only the owner posts `/ready` and `/approve`, merges, or resolves a security
+concern; no tool does any of those. The change is specified in
+`openspec/changes/raise-pr-throughput/`.
+
+### Flow metrics
+
+`scripts/flow_metrics.py` keeps one record per PR: a list of events with a
+UTC time, each of type `opened`, `ready`, `review`, `approve`, `merge` or
+`deploy`. Record every `/ready`, so repeats are countable. A gap over five
+minutes before an event, other than the gate's own review result, needs a
+`cause` on that event, one of: gate result, gate or pin rework, head drift,
+serial hold, owner. An untagged wait is an error.
+
+```sh
+python3 scripts/flow_metrics.py table records.json 2026-10-25
+```
+
+The daily table lists the PRs merged that day (UTC): the median and 90th
+percentile minutes from the first `/ready` to merge, the count of repeat
+`/ready` comments and the waiting minutes by cause. Publish it once a day. The
+operator assembles `records.json` from the PR timelines.
+
+Log each external write that was refused or waited for a prompt, with the
+times it started and was answered, so the cost of those checks can be measured:
+
+```sh
+python3 scripts/flow_metrics.py log-write writes.jsonl push TARGET prompted START ANSWERED
+```
+
 ## Public visibility checklist
 
 Audit current source refs and history, discussions, reviews, retained Actions

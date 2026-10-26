@@ -6,6 +6,7 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Added
 
+- Flow metrics: per-PR stage times with a fixed list of wait causes, a daily median and 90th percentile table from first `/ready` to merge, and a log of refused or prompted external writes.
 - Accept exactly one supported review model key name in canonical workflows; reject extra, unknown or fallback key forwarding.
 - Optional public UI source assembly from protected-main commit pins, with
   static reviewer source and credential-free consumer installation.

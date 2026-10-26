@@ -4,9 +4,9 @@ Starts after remove-ai-review tasks 3.2 and 5.1 are done. Nothing here starts un
 
 ## 1. Measure first (all choices)
 
-- [ ] 1.1 Record `/ready`, review result, `/approve`, merge and deploy times for every PR and deploy in one place.
+- [x] 1.1 Record `/ready`, review result, `/approve`, merge and deploy times for every PR and deploy in one place. (Script and table only: the operator assembles `records.json` from the PR timelines.)
 - [ ] 1.2 Log every external write that was blocked or prompted, with its wait, for one day.
-- [ ] 1.3 Publish a daily table with median and 90th percentile time from first `/ready` to merge.
+- [x] 1.3 Publish a daily table with median and 90th percentile time from first `/ready` to merge.
 
 ## 2. Batch list (D1 B)
 
