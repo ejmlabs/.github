@@ -603,6 +603,36 @@ review is missing or names another head or tree, or no patch id was recorded,
 nothing is written and the item needs a new signed entry. The owner still
 approves the new head on GitHub.
 
+### Deploy from main
+
+A site may deploy from `main` right after a merge, with no extra wait, when the
+reviewed code is exactly what `main` now holds. The deploy starts from the
+owner's merge (a job the merge triggers) or from a step the owner starts; no
+tool or agent starts it with the owner's credential, and this repository adds no
+deploy credential to CI. What this repository provides is the check that step
+runs:
+
+1. Before the merge, compute the tree `main` will hold with
+   `scripts/deploy_record.py tree REPO main HEAD`, and have the independent
+   review cover that tree. Record it as the batch's `deploy.tree` and the review
+   id as `deploy.pass`, with the deploy repository and the protected pin of each
+   sibling input (`deploy.siblings`). The batch the owner signs must name the
+   deploy.
+2. After the merge, fetch `origin`, then the owner's deploy step runs
+   `scripts/deploy_record.py BATCH decide ALLOWED_SIGNERS IDENTITY REPO CHECKOUT
+   COMMIT NAME=SHA...` with the sibling pins as found. It first checks the
+   owner's signature on the approved file, as `verify` does, and refuses an
+   unsigned or edited batch. It then refuses unless the batch names that deploy
+   with a review (`deploy.pass`, whose tree equals `deploy.tree`), `COMMIT` is
+   the current `origin/main`, the tree git computes for `COMMIT` equals the
+   reviewed tree and every sibling is at its protected pin. With several PRs in
+   one batch the tree is the one after all the merges; a single-PR prediction
+   that differs is a refusal. On a mismatch nothing deploys and the reason is
+   reported; deploy only after a fresh review.
+3. After each deploy, run `scripts/deploy_record.py record LOG REPO COMMIT TREE
+   PREVIOUS|none TIME`. The log keeps the deployed commit, tree, time and the
+   previous version, which is what to restore on a rollback.
+
 ## Public visibility checklist
 
 Audit current source refs and history, discussions, reviews, retained Actions

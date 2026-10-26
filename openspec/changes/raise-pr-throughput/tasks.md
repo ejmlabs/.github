@@ -46,9 +46,9 @@ Starts after remove-ai-review tasks 3.2 and 5.1 are done. Nothing here starts un
 
 ## 7. Deploy from main (D5 B)
 
-- [ ] 7.1 Record the tree hash that the pre-merge review covered.
-- [ ] 7.2 After merge, compare the `main` tree hash with the record and deploy only on a match.
-- [ ] 7.3 Record the deployed version and the previous one, for rollback.
+- [x] 7.1 Record the tree hash that the pre-merge review covered.
+- [x] 7.2 After merge, compare the `main` tree hash with the record and deploy only on a match. (`deploy_record.py decide`, run by the owner's deploy step.)
+- [x] 7.3 Record the deployed version and the previous one, for rollback.
 
 ## 8. Operator identity (D6 B, proposal only)
 

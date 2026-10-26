@@ -6,6 +6,7 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Added
 
+- Deploy check: the owner's deploy step may deploy from `main` only when the signed batch names the deploy with a review, the commit is the tip of `main`, git computes its tree as the reviewed tree, and sibling inputs sit at their protected pins; each deploy records the commit, tree, time and previous version.
 - Head-drift carry-over: after a merge of `main`, a carried head is proposed only for an identical verbatim patch id (computed from the repository) with a fresh review on the new head and tree, computed against `origin/main`, as a new batch file the owner signs again; overlapping files in a batch are reported.
 - Batch list and push check: a batch file names PRs at exact heads with their reviews, carries the owner's SSH signature over its canonical bytes (`/usr/bin/ssh-keygen -Y verify`, namespace `ejmlabs-batch`), and allows only the listed push of the listed branch; a moved head is refused and refusals can be logged. It posts, approves, merges and clears nothing.
 - Flow metrics: per-PR stage times with a fixed list of wait causes, a daily median and 90th percentile table from first `/ready` to merge, and a log of refused or prompted external writes.
