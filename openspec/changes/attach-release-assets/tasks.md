@@ -7,3 +7,8 @@
 
 - [x] 2.1 Tests refuse a changed digest, an extra or missing file, a wrong-SHA run, a wrong workflow or trigger, a wrong tag, and a non-draft release.
 - [x] 2.2 `python3 -m unittest discover -s tests` and `python3 scripts/build_workflows.py --check` pass.
+
+## 3. Adoption
+
+- [x] 3.1 Canonical native `release.yml`, `build.yml` lint, per-repository selection in `standards.py` and `configure_repositories.py`.
+- [x] 3.2 Tests for the consumer variant, the lint and `main()` dispatch.

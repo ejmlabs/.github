@@ -6,7 +6,8 @@ The shared draft-release flow produces source archives only. The first public re
 
 - Add a shared reusable workflow `verify-build.yml` that checks, before the tag exists, that a named build workflow run succeeded on the exact main commit about to be tagged.
 - Add a shared reusable workflow `attach-assets.yml` that, after Draft release, re-verifies the run and the tag, downloads only that run's artifacts, recomputes every digest, and attaches the files and an extended `SHA256SUMS` to the draft release, with optional build attestations.
-- Generate both from `scripts/build_workflows.py` and allow them in the repository standards check. `draft-release.yml` and the consumer templates are unchanged, so existing consumers keep working.
+- Generate both from `scripts/build_workflows.py` and allow them in the repository standards check.
+- Add a canonical native-release `release.yml` (verify, Draft release, attach, one commit input, one pin) and an allowed read-only `build.yml` shape. `ejm-cli` and `ejm-harness` may adopt them by adding `build.yml`; every other repository keeps the plain consumer, and `draft-release.yml` is unchanged.
 - `RELEASING.md` is unchanged: it already requires platform builds, signing and notarization where relevant, and smoke tests, and forbids claiming artifacts before they are verified.
 
 ## Capabilities
@@ -17,4 +18,4 @@ The shared draft-release flow produces source archives only. The first public re
 
 ## Impact
 
-`scripts/attach.py`, `scripts/build_workflows.py`, `scripts/standards.py`, `scripts/configure_repositories.py`, two generated workflows, tests and `docs/operations.md`. Product repositories adopt the workflows later through their own changes and pin updates.
+`scripts/attach.py`, `scripts/build_workflows.py`, `scripts/standards.py`, `scripts/configure_repositories.py`, two generated workflows, tests and `docs/operations.md`. Eligible product repositories adopt the flow through their own changes and a pin update.

@@ -24,3 +24,21 @@ The attach job SHALL hold the write token, check out and run no project code, an
 #### Scenario: Published or mismatched release
 - **WHEN** the release is not a draft, or the tag points elsewhere
 - **THEN** the job fails and attaches nothing
+
+### Requirement: Native products use one canonical release flow
+A repository that opts in with a `build.yml` SHALL use the canonical native `release.yml`, whose jobs run verify, Draft release and attach in that order on one pin and one commit input, and a `build.yml` that runs only on `workflow_dispatch` and pushes to main with read-only permissions, no secrets and pinned actions.
+
+#### Scenario: Mismatched pair
+- **WHEN** a repository has `build.yml` with the plain `release.yml`, or the native `release.yml` without `build.yml`
+- **THEN** the repository standards check fails
+
+#### Scenario: Build with write access
+- **WHEN** `build.yml` requests a write permission, a secret or a mutable action reference
+- **THEN** the repository standards check fails
+
+### Requirement: One combined manifest
+The build run SHALL upload one artifact named `release-files` holding the release files and one `build-sha256.txt`.
+
+#### Scenario: Missing artifact
+- **WHEN** the run has no unexpired `release-files` artifact
+- **THEN** the gate fails before the tag exists
