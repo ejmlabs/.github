@@ -1,1 +1,23 @@
-* @everettmorgan
+# Maintainers own everything by default. Governance paths are owned by the
+# security team only, so a maintainer approval alone never satisfies code-owner
+# review there. The last matching pattern wins. The governance list lives in
+# scripts/governance_paths.py; LICENSE, README.md and CHANGELOG.md are left to
+# maintainers on purpose.
+* @ejmlabs/maintainers
+
+/.github/ @ejmlabs/security
+/scripts/ @ejmlabs/security
+/review/ @ejmlabs/security
+/templates/community/ @ejmlabs/security
+/openspec/ @ejmlabs/security
+/docs/operations.md @ejmlabs/security
+/tests/ @ejmlabs/security
+/VERSION @ejmlabs/security
+/RELEASING.md @ejmlabs/security
+/CONTRIBUTING.md @ejmlabs/security
+/SECURITY.md @ejmlabs/security
+/SUPPORT.md @ejmlabs/security
+/CODE_OF_CONDUCT.md @ejmlabs/security
+/THIRD_PARTY_NOTICES.md @ejmlabs/security
+/.gitignore @ejmlabs/security
+/.gitattributes @ejmlabs/security

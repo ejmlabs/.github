@@ -1,0 +1,23 @@
+schema: spec-driven
+
+# Project context (optional)
+# Constraints an agent cannot infer by reading the code.
+context: |
+  This repository holds the shared PR governance, standards and release workflows
+  used by every public ejmlabs repository (.github, ejm-ui, ejm-cli, ejm-ide,
+  ejm-harness, ejmlabs, ejm-chess). Changes here change merge policy everywhere.
+  Artifacts are public history: never name agents, tools, models or vendors, and
+  never name people. Use roles: the owner, maintainers, maintainer agents, the
+  automated reviewer, the security lead, the Board, the Chief of Staff. GitHub and
+  its features may be named.
+  Fork and outside code must never run with secrets, write tokens or paid review.
+  GitHub settings that only the owner can change must be listed explicitly in any
+  proposal that depends on them.
+
+# Per-artifact rules (optional)
+rules:
+  proposal:
+    - Start with a short plain-English summary of what changes day to day
+    - List owner-only GitHub settings, migration steps and open questions
+  tasks:
+    - Use numbered checkbox groups
