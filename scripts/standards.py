@@ -371,16 +371,8 @@ def _reusable_workflow(text, name):
                 raise ValueError("Reusable workflow action must use an immutable SHA or the scoped CLI setup hook: " + name)
 
     visible = "\n".join(structural) + "\n"
-    if name == "governance.yml":
-        review = re.findall(r'(?ms)^  "ai":\n(.*?)(?=^  "[^\"]+":|\Z)', visible)
-        expected = '    "environment": "legacy-review"'
-        # The review job is accepted for one generation while it is being removed.
-        if review and (len(review) != 1 or environments != [expected] or expected not in review[0].splitlines()):
-            raise ValueError("Only the review job must declare the legacy-review environment: " + name)
-        if not review and environments:
-            raise ValueError("Only the review job must declare the legacy-review environment: " + name)
-    elif environments:
-        raise ValueError("Only the governance review job may declare an environment: " + name)
+    if environments:
+        raise ValueError("Reusable workflows must not declare an environment: " + name)
 
     if local_uses:
         # Comments and literal block contents are data. Bind the exception to

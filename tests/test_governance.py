@@ -8,7 +8,8 @@ import urllib.error
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from governance import LABEL_BLOCKED, admit, command, current_pr, dismiss_bot_approvals, finish, human, labels, live_ready, relabel
+import governance
+from governance import admit, command, current_pr, dismiss_bot_approvals, finish, human, live_ready
 
 SHA = "a" * 40
 USER = {"id": 1, "login": "maintainer", "type": "User"}
@@ -92,7 +93,7 @@ class AdmissionTests(unittest.TestCase):
         return event
 
     def finish_environment(self):
-        os.environ.update(PR_NUMBER="1", PR_HEAD=SHA, ADMISSION_ID="7", JOB_RESULTS='{"quality":{"result":"success"},"registry":{"result":"success"},"standards":{"result":"success"},"ai":{"result":"success"},"labels":{"result":"success"}}')
+        os.environ.update(PR_NUMBER="1", PR_HEAD=SHA, ADMISSION_ID="7", JOB_RESULTS='{"quality":{"result":"success"},"registry":{"result":"success"},"standards":{"result":"success"}}')
 
     def test_command_rejects_short_sha_multiline_and_injection(self):
         for text in ("/ready abc", "/ready " + SHA + "\n/approve " + SHA, "/ready $(id)", "/ready " + "A" * 40):
@@ -121,154 +122,43 @@ class AdmissionTests(unittest.TestCase):
         self.assertIn("run=true", Path(os.environ["GITHUB_OUTPUT"]).read_text())
         self.assertEqual(live_ready(self.api, 1, SHA, 7), self.api.pr)
 
-    def test_automated_results_never_approve_and_only_ai_success_passes_its_gate(self):
+    def test_automated_results_never_approve_and_only_success_passes_a_check(self):
         for state in ("success", "failure", "cancelled", "skipped", None):
-            with self.subTest(state=state):
-                self.api = API()
-                admit(self.api, self.event)
-                self.assertEqual(self.api.statuses(SHA)["AI review"]["state"], "pending")
-                self.finish_environment()
-                results = json.loads(os.environ["JOB_RESULTS"])
-                if state is None:
-                    results.pop("ai")
-                else:
-                    results["ai"]["result"] = state
-                os.environ["JOB_RESULTS"] = json.dumps(results)
-                finish(self.api)
-                statuses = self.api.statuses(SHA)
-                self.assertEqual(statuses["AI review"]["state"], "success" if state == "success" else "failure")
-                terminal = [status for status in self.api.log if status["context"] == "AI review"
-                            and status["state"] in ("success", "failure")]
-                self.assertEqual(len(terminal), 1)
-                self.assertEqual(statuses["Maintainer approval"]["state"], "pending")
-                self.assertFalse(self.api.reviews)
+            for job, context in (("quality", "Quality"), ("registry", "Quality"), ("standards", "Repository standards")):
+                with self.subTest(job=job, state=state):
+                    self.api = API()
+                    admit(self.api, self.event)
+                    self.assertEqual(self.api.statuses(SHA)[context]["state"], "pending")
+                    self.finish_environment()
+                    results = json.loads(os.environ["JOB_RESULTS"])
+                    if state is None:
+                        results.pop(job)
+                    else:
+                        results[job]["result"] = state
+                    os.environ["JOB_RESULTS"] = json.dumps(results)
+                    finish(self.api)
+                    statuses = self.api.statuses(SHA)
+                    self.assertEqual(statuses[context]["state"], "success" if state == "success" else "failure")
+                    terminal = [status for status in self.api.log if status["context"] == context
+                                and status["state"] in ("success", "failure")]
+                    self.assertEqual(len(terminal), 1)
+                    self.assertEqual(statuses["Maintainer approval"]["state"], "pending")
+                    self.assertFalse(self.api.reviews)
 
-    def test_review_labels_block_only_a_completed_review_and_say_how_to_override(self):
-        for ai, label, state, description in (
-                ("success", "failure", "failure", LABEL_BLOCKED),
-                ("success", "skipped", "failure", "Failed, cancelled, missing, or incomplete"),
-                ("failure", "skipped", "failure", "Failed, cancelled, missing, or incomplete"),
-                ("success", "success", "success", "Passed for admitted commit")):
-            with self.subTest(ai=ai, labels=label):
-                self.api = API()
-                admit(self.api, self.event)
-                self.finish_environment()
-                results = json.loads(os.environ["JOB_RESULTS"])
-                results["ai"]["result"], results["labels"]["result"] = ai, label
-                os.environ["JOB_RESULTS"] = json.dumps(results)
-                finish(self.api)
-                review = self.api.statuses(SHA)["AI review"]
-                self.assertEqual((review["state"], review["description"]), (state, description))
-                self.assertLessEqual(len(review["description"]), 140)
-
-    def test_label_job_fails_only_on_the_reviewer_security_label(self):
-        os.environ.update(PR_NUMBER="1", REVIEW_OUTPUT=json.dumps({"security_concerns": "No"}))
-        for names, blocked in (([], False), (["Review effort 3/5"], False), (["Possible security concern"], True),
-                               (["possible security concern", "Review effort 5/5"], True)):
-            with self.subTest(names=names):
-                self.api.pr["labels"] = [{"name": name} for name in names]
-                if blocked:
-                    with self.assertRaisesRegex(ValueError, "Blocking review label"):
-                        labels(self.api)
-                else:
-                    labels(self.api)
-        self.assertFalse(self.api.log)
-
-    def test_label_job_fails_on_this_runs_verdict_even_after_the_label_is_removed(self):
-        os.environ["PR_NUMBER"] = "1"
-        # (a) The label was removed before this job ran, but the run's own verdict reports a concern.
-        for concern in ("Yes, the token is logged", "SQL injection in the query builder", True):
-            with self.subTest(concern=concern):
-                os.environ["REVIEW_OUTPUT"] = json.dumps({"security_concerns": concern, "key_issues_to_review": []})
-                with self.assertRaisesRegex(ValueError, "security concern"):
-                    labels(self.api)
-        # (b) Missing, unparsable or verdict-free output fails closed.
-        for output in (None, "", "not json", "[]", json.dumps({"key_issues_to_review": []}), json.dumps({"security_concerns": None})):
-            with self.subTest(output=output):
-                os.environ.pop("REVIEW_OUTPUT", None)
-                if output is not None:
-                    os.environ["REVIEW_OUTPUT"] = output
-                with self.assertRaisesRegex(ValueError, "review output|security verdict"):
-                    labels(self.api)
-        # The reviewer's own negative answers pass when no blocking label is present.
-        for answer in ("No", " none ", "FALSE", ""):
-            with self.subTest(answer=answer):
-                os.environ["REVIEW_OUTPUT"] = json.dumps({"security_concerns": answer})
-                labels(self.api)
-        self.assertFalse(self.api.log)
-
-    def label_blocked(self):
+    def test_the_gate_has_four_statuses_and_no_review_status_or_label_handling(self):
+        self.assertEqual(governance.CONTEXTS, ("Human readiness", "Maintainer approval", "Quality", "Repository standards"))
         admit(self.api, self.event)
         self.finish_environment()
-        results = json.loads(os.environ["JOB_RESULTS"])
-        results["labels"]["result"] = "failure"
-        os.environ["JOB_RESULTS"] = json.dumps(results)
         finish(self.api)
-        return {"action": "unlabeled", "pull_request": {"number": 1}, "label": {"name": "Possible security concern"}, "sender": USER}
-
-    def test_maintainer_label_removal_passes_a_label_blocked_review(self):
-        event = self.label_blocked()
-        relabel(self.api, event)
-        review = self.api.statuses(SHA)["AI review"]
-        self.assertEqual(review["state"], "success")
-        self.assertIn("@maintainer", review["description"])
-        self.assertFalse(self.api.reviews)
-
-    def test_maintainer_removing_a_non_blocking_label_cannot_override(self):
-        event = self.label_blocked()
-        for name in ("Review effort 3/5", "triage", None):
-            with self.subTest(label=name):
-                removed = {**event, "label": {"name": name}} if name else {k: v for k, v in event.items() if k != "label"}
-                before = copy.deepcopy(self.api.log)
-                relabel(self.api, removed)
-                self.assertEqual(self.api.log, before)
-        self.assertEqual(self.api.statuses(SHA)["AI review"]["description"], LABEL_BLOCKED)
-
-    def test_label_removal_cannot_pass_before_a_completed_review_or_without_a_maintainer(self):
-        event = {"action": "unlabeled", "pull_request": {"number": 1}, "label": {"name": "Possible security concern"}, "sender": USER}
-        admit(self.api, self.event)
-        for review in (None, ("pending", "Admitted checks queued"), ("failure", "Failed, cancelled, missing, or incomplete")):
-            with self.subTest(review=review):
-                if review:
-                    self.api.status(SHA, "AI review", *review)
-                before = copy.deepcopy(self.api.log)
-                relabel(self.api, event)
-                self.assertEqual(self.api.log, before)
-        self.api = API()
-        event = self.label_blocked()
-        self.api.pr["labels"] = [{"name": "Possible security concern"}]
-        with self.assertRaisesRegex(ValueError, "Blocking review label"):
-            relabel(self.api, event)
-        self.api.pr["labels"] = []
-        for sender, role in ({**USER, "type": "Bot"}, "maintain"), (USER, "write"), (USER, "triage"):
-            with self.subTest(sender=sender, role=role):
-                self.api.role = role
-                with self.assertRaisesRegex(ValueError, "maintainer"):
-                    relabel(self.api, {**event, "sender": sender})
-        self.assertEqual(self.api.statuses(SHA)["AI review"]["description"], LABEL_BLOCKED)
-
-    def test_finish_replaces_an_old_review_before_publishing_other_successes(self):
-        self.api.status(SHA, "AI review", "success", "Previous admitted review")
-        admit(self.api, self.event)
-        self.finish_environment()
-        results = json.loads(os.environ["JOB_RESULTS"])
-        results["ai"]["result"] = "failure"
-        os.environ["JOB_RESULTS"] = json.dumps(results)
-        status = self.api.status
-
-        def publish(sha, context, state, description):
-            if context in ("Quality", "Repository standards") and state == "success":
-                self.assertEqual(self.api.statuses(sha)["AI review"]["state"], "failure")
-            status(sha, context, state, description)
-
-        self.api.status = publish
-        finish(self.api)
+        self.assertEqual(set(self.api.statuses(SHA)), set(governance.CONTEXTS))
+        for name in ("labels", "relabel", "blocking_labels", "is_value_no", "SECURITY_LABEL", "BLOCKING_LABELS", "LABEL_BLOCKED"):
+            self.assertFalse(hasattr(governance, name), name)
 
     def test_readmission_resets_old_successes_before_a_run_can_be_cancelled(self):
         admit(self.api, self.event)
         self.finish_environment()
         finish(self.api)
-        self.assertEqual(self.api.statuses(SHA)["AI review"]["state"], "success")
+        self.assertEqual(self.api.statuses(SHA)["Quality"]["state"], "success")
         revoke = copy.deepcopy(self.event)
         revoke["comment"].update(id=9, body="/revoke " + SHA)
         admit(self.api, revoke)
@@ -277,7 +167,7 @@ class AdmissionTests(unittest.TestCase):
         self.api.comments[10] = copy.deepcopy(readmit["comment"])
         admit(self.api, readmit)
         # A cancelled run may never call finish; its old review must stay blocked.
-        for context in ("Maintainer approval", "Quality", "Repository standards", "AI review"):
+        for context in ("Maintainer approval", "Quality", "Repository standards"):
             self.assertEqual(self.api.statuses(SHA)[context]["state"], "pending")
 
     def test_admit_rejects_fork_and_deleted_fork_heads_with_manual_review_message(self):
@@ -365,7 +255,7 @@ class AdmissionTests(unittest.TestCase):
                     finish(self.api)
                 for context in ("Human readiness", "Maintainer approval"):
                     self.assertEqual(self.api.statuses(SHA)[context]["state"], "failure")
-                self.assertNotIn("AI review", {k for k, v in self.api.statuses(SHA).items() if v["state"] == "success"})
+                self.assertNotIn("Quality", {k for k, v in self.api.statuses(SHA).items() if v["state"] == "success"})
                 self.assertEqual(self.api.reviews[0]["state"], "DISMISSED")
 
     def test_edited_or_deleted_decisions_are_invalidated_on_fork_prs(self):
@@ -553,7 +443,7 @@ class AdmissionTests(unittest.TestCase):
                 with self.assertRaises((ValueError, urllib.error.HTTPError)):
                     finish(self.api)
                 self.assertEqual(self.api.statuses(SHA)["Maintainer approval"]["state"], "failure")
-                self.assertEqual(self.api.statuses(SHA)["AI review"]["state"], "pending")
+                self.assertEqual(self.api.statuses(SHA)["Quality"]["state"], "pending")
                 self.assertTrue(all(review["state"] == "DISMISSED" for review in self.api.reviews))
 
     def test_finish_allows_approval_after_checks_complete(self):
@@ -561,7 +451,7 @@ class AdmissionTests(unittest.TestCase):
         self.finish_environment()
         finish(self.api)
         self.assertEqual(self.api.statuses(SHA)["Maintainer approval"]["state"], "pending")
-        self.assertEqual(self.api.statuses(SHA)["AI review"]["state"], "success")
+        self.assertEqual(self.api.statuses(SHA)["Quality"]["state"], "success")
         admit(self.api, self.approval())
         self.assertEqual(self.api.statuses(SHA)["Maintainer approval"]["state"], "success")
 
@@ -570,7 +460,7 @@ class AdmissionTests(unittest.TestCase):
         admit(self.api, self.approval())
         self.finish_environment()
         finish(self.api)
-        for context in ("Maintainer approval", "Quality", "Repository standards", "AI review"):
+        for context in ("Maintainer approval", "Quality", "Repository standards"):
             self.assertEqual(self.api.statuses(SHA)[context]["state"], "success")
 
     def test_finish_dismisses_approval_when_readiness_was_deleted(self):
@@ -607,11 +497,11 @@ class AdmissionTests(unittest.TestCase):
         self.assertEqual(self.api.reviews[0]["state"], "DISMISSED")
         self.assertEqual(self.api.reviews[1]["state"], "APPROVED")
 
-    def test_results_fail_closed_on_missing_review_and_changed_head(self):
+    def test_results_fail_closed_on_an_incomplete_check_and_changed_head(self):
         admit(self.api, self.event)
-        os.environ.update(PR_NUMBER="1", PR_HEAD=SHA, ADMISSION_ID="7", JOB_RESULTS='{"quality":{"result":"success"},"registry":{"result":"success"},"standards":{"result":"success"},"ai":{"result":"skipped"}}')
+        os.environ.update(PR_NUMBER="1", PR_HEAD=SHA, ADMISSION_ID="7", JOB_RESULTS='{"quality":{"result":"success"},"registry":{"result":"success"},"standards":{"result":"skipped"}}')
         finish(self.api)
-        self.assertEqual(self.api.statuses(SHA)["AI review"]["state"], "failure")
+        self.assertEqual(self.api.statuses(SHA)["Repository standards"]["state"], "failure")
         self.api.pr["head"]["sha"] = "c" * 40
         with self.assertRaises(ValueError): finish(self.api)
 

@@ -50,7 +50,7 @@ class API:
         statuses = {key: {"state": "success", "description": "passed"} for key in namespace["CONTEXTS"]}
         statuses["Human readiness"]["description"] = "[ready:1]"
         statuses["Maintainer approval"]["description"] = "[approve:2]"
-        if not self.checks: statuses["AI review"]["state"] = "failure"
+        if not self.checks: statuses["Quality"]["state"] = "failure"
         return statuses
 
 

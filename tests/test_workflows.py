@@ -291,26 +291,10 @@ class WorkflowSecurityTests(unittest.TestCase):
                             continue
                         script = step["run"]
                         self.assertNotIn("${{", script, "Embedded source must not expose GitHub expressions")
-                        if name == "ai" and step["name"] in {"Install the pinned reviewer", "Automated review", "Require the review model key"}:
-                            if step["name"] == "Install the pinned reviewer":
-                                self.assert_data_only_python(embedded_source(script))
-                                shell = script.split("TRUSTED_PYTHON\n", 1)[1]
-                                self.assertEqual(script.splitlines()[0], 'cd "$RUNNER_TEMP"')
-                                commands = {"set", "{", "python3", "$RUNNER_TEMP/reviewer-venv/bin/python", "}", "reviewer_status=$?", "if", "printf", "exit", "fi"}
-                            elif step["name"] == "Automated review":
-                                self.assertIsNone(embedded_source(script))
-                                shell = script
-                                commands = {"printf", "cd", "GITHUB_EVENT_NAME=pull_request"}
-                            else:
-                                shell = script
-                                commands = {"test"}
-                            for line in shell.splitlines():
-                                self.assertIn(shlex.split(line)[0], commands)
-                            continue
                         source = embedded_source(script)
                         if source is not None:
                             self.assertIn(source, trusted_sources)
-                            self.assertRegex(script.splitlines()[0], r'^python3 - (?:admit|verify|finish|labels|relabel|select-harness|ui-pin)? <<\x27TRUSTED_PYTHON\x27$')
+                            self.assertRegex(script.splitlines()[0], r'^python3 - (?:admit|verify|finish|select-harness|ui-pin)? <<\x27TRUSTED_PYTHON\x27$')
                             encoded = base64.b64encode(source.encode()).decode()
                             self.assertEqual(script.splitlines()[1:], [
                                 "import base64",
@@ -348,36 +332,10 @@ class WorkflowSecurityTests(unittest.TestCase):
                     filters = [item.value for item in node.keywords if item.arg == "filter"]
                     self.assertEqual([ast.literal_eval(value) for value in filters], ["data"])
 
-    def test_ai_runs_the_pinned_action_runner_before_the_label_gate(self):
-        jobs = self.governance["jobs"]
-        ai = jobs["ai"]
-        self.assertNotIn("strategy", ai)
-        reviews = [step for step in ai["steps"] if step.get("name") == "Automated review"]
-        self.assertEqual(len(reviews), 1)
-        settings = reviews[0]["env"]
-        self.assertEqual(workflows.REVIEWER_MODEL, "xai/grok-4.5")
-        self.assertEqual(workflows.REVIEWER_FALLBACK_MODELS, '[]')
-        self.assertEqual(settings["CONFIG__MODEL"], workflows.REVIEWER_MODEL)
-        self.assertEqual(settings["CONFIG__FALLBACK_MODELS"], workflows.REVIEWER_FALLBACK_MODELS)
-        for name in ("OPENAI" + "__KEY", "OPENAI" + "__API_BASE", "LITELLM__EXTRA_HEADERS", "CONFIG__CUSTOM_MODEL_MAX_TOKENS"):
-            self.assertNotIn(name, settings)
-        self.assertFalse(any("API_BASE" in name for name in settings))
-        self.assertEqual(settings["CONFIG__REASONING_EFFORT"], "high")
-        self.assertIn("-I -m pr_agent.servers.github_action_runner", reviews[0]["run"])
-        self.assertEqual(ai["needs"], "admission")
-        # The label gate runs only after the review job succeeded for this admission.
-        self.assertEqual(jobs["labels"]["needs"], ["admission", "ai"])
-        self.assertNotIn("always()", jobs["labels"]["if"])
-        self.assertIn("needs.admission.outputs.run == 'true'", jobs["labels"]["if"])
-        self.assertEqual(jobs["labels"]["permissions"], {"pull-requests": "read"})
-        self.assertNotIn("secrets.", json.dumps(jobs["labels"]))
-        self.assertTrue({"ai", "labels"} <= set(jobs["finish"]["needs"]))
-
     def test_public_reviewer_text_uses_neutral_names(self):
         denied = ("gpt", "glm-5.3", "kimi-k2.7-code", "opencode", "codex", "pr-agent", "pr_agent", "xai", "grok",
                   "openai", "litellm", "setup-uv", "actions/*")
         texts = {name: (workflows.ROOT / name).read_text() for name in ("docs/operations.md", "CHANGELOG.md")}
-        texts.update({str(file.relative_to(workflows.ROOT)): file.read_text() for file in (workflows.ROOT / "review").glob("*.md")})
         texts.update({f"step {document['name']}.{job}.{index}": step["name"] for document in (self.governance, self.release)
                       for job, config in document["jobs"].items()
                       for index, step in enumerate(config["steps"]) if "name" in step})
@@ -388,25 +346,7 @@ class WorkflowSecurityTests(unittest.TestCase):
                     self.assertNotIn(term, text)
                 self.assertNotRegex(text, r"\b(?:sol|python|pip)\b")
 
-    def test_review_step_gets_only_the_job_token_and_preserves_admission_rechecks(self):
-        ai = self.governance["jobs"]["ai"]
-        review = next(step for step in ai["steps"] if step.get("name") == "Automated review")
-        self.assertEqual(review["env"]["GITHUB_TOKEN"], "${{ github.token }}")
-        self.assertEqual(ai["env"]["GH_TOKEN"], "${{ github.token }}")
-        checks = [step for step in ai["steps"] if step.get("name") == "Recheck current human admission"]
-        self.assertEqual(len(checks), 2)
-        self.assertEqual(ai["steps"][1], checks[0])
-        self.assertEqual(ai["steps"][-1], checks[-1])
-        self.assertLess(ai["steps"].index(checks[0]), ai["steps"].index(review))
-        for step in checks:
-            self.assertNotIn("GH_TOKEN", step.get("env", {}))
-            self.assertNotIn("GITHUB_TOKEN", step.get("env", {}))
-
-    def test_automated_review_can_only_gate_and_never_create_an_approval(self):
-        ai = self.governance["jobs"]["ai"]
-        # Comments and labels only: no source writes, statuses, or PR code checkout next to the model key.
-        self.assertEqual(ai["permissions"], {"contents": "read", "pull-requests": "write", "statuses": "read"})
-        self.assertFalse(any("uses" in step for step in ai["steps"]))
+    def test_only_a_human_command_creates_an_approval_and_four_statuses_are_required(self):
         tree = ast.parse(workflows.source("governance.py"))
         approvals = [node for node in ast.walk(tree) if isinstance(node, ast.Dict) and any(
             isinstance(key, ast.Constant) and key.value == "event" and isinstance(value, ast.Constant) and value.value == "APPROVE"
@@ -415,9 +355,10 @@ class WorkflowSecurityTests(unittest.TestCase):
         admit = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "admit")
         human_approval = next(node for node in ast.walk(admit) if isinstance(node, ast.If) and ast.unparse(node.test) == "action == 'approve'")
         self.assertIn(approvals[0], list(ast.walk(human_approval)))
-        contexts = next(node for node in tree.body if isinstance(node, ast.Assign) and any(
-            isinstance(target, ast.Name) and target.id == "CONTEXTS" for target in node.targets))
-        self.assertIn("AI review", ast.literal_eval(contexts.value))
+        for name in ("governance.py", "configure_repositories.py"):
+            contexts = next(node for node in ast.parse(workflows.source(name)).body if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == "CONTEXTS" for target in node.targets))
+            self.assertEqual(ast.literal_eval(contexts.value), ("Human readiness", "Maintainer approval", "Quality", "Repository standards"))
 
     def test_ui_source_is_a_fixed_owner_checkout_before_the_credential_free_handoff(self):
         steps = self.governance["jobs"]["prepare"]["steps"]
@@ -431,36 +372,20 @@ class WorkflowSecurityTests(unittest.TestCase):
         archive = next(step for step in steps if step.get("name") == "Archive admitted source")
         self.assertLess(steps.index(owner), steps.index(archive))
 
-    def test_generated_workflow_retains_only_the_admitted_review_route(self):
+    def test_generated_workflow_admits_only_issue_comments(self):
         self.assertEqual(self.governance, workflows.governance())
         self.assertEqual(set(self.governance["on"]), {"workflow_call"})
         self.assertNotIn("codex" + "-action", json.dumps(self.governance))
-        ai = self.governance["jobs"]["ai"]
-        self.assertIn("needs.admission.outputs.run == 'true'", ai["if"])
-        caller = consumer_workflows("a" * 40, current=True)["pr.yml"]
+        caller = consumer_workflows("a" * 40)["pr.yml"]
         triggers = re.search(r"(?ms)^on:\n(.*?)(?=^\S)", caller)[1]
-        self.assertEqual(re.findall(r"(?m)^  (\w+):", triggers), ["issue_comment", "pull_request_target"])
-        # Label removal only re-evaluates; it runs base-branch workflow code and never admits.
-        self.assertIn("  pull_request_target:\n    types: [unlabeled]\n", triggers)
-        self.assertNotRegex(caller, r"(?m)^\s+pull_request:")
-        triggers = re.search(r"(?ms)^on:\n(.*?)(?=^\S)", consumer_workflows("a" * 40)["pr.yml"])[1]
         self.assertEqual(re.findall(r"(?m)^  (\w+):", triggers), ["issue_comment"])
+        self.assertNotRegex(caller, r"(?m)^\s+pull_request:")
+        self.assertNotIn("XAI_API_KEY", caller)
+        # The previous form stays accepted for one generation and runs no job on a label event.
+        previous = consumer_workflows("a" * 40, current=True)["pr.yml"]
+        self.assertIn("  pull_request_target:\n    types: [unlabeled]\n", previous)
         admission = self.governance["jobs"]["admission"]["if"]
         self.assertIn("github.event_name == 'issue_comment'", admission)
-
-    def test_label_override_job_reads_state_only_and_never_runs_pr_code(self):
-        jobs = self.governance["jobs"]
-        override = jobs["override"]
-        self.assertEqual(override["if"], "${{ github.run_attempt == 1 && github.event_name == 'pull_request_target' && github.event.action == 'unlabeled' }}")
-        self.assertNotIn("needs", override)
-        self.assertEqual(override["permissions"], {"contents": "read", "pull-requests": "read", "statuses": "write"})
-        self.assertNotIn("secrets.", json.dumps(override))
-        self.assertFalse(any("uses" in step for step in override["steps"]))
-        self.assertEqual(override["concurrency"]["group"], "human-command-${{ github.repository }}-${{ github.event.pull_request.number }}")
-        self.assertEqual([shlex.split(step["run"].splitlines()[0])[2] for step in override["steps"]], ["relabel"])
-        for name, job in jobs.items():
-            if name != "override":
-                self.assertNotIn("pull_request_target", job["if"])
 
     def test_tracked_sources_exclude_retired_review_configuration(self):
         repository = subprocess.run(["git", "rev-parse", "--git-dir"], cwd=workflows.ROOT, capture_output=True)
@@ -472,17 +397,15 @@ class WorkflowSecurityTests(unittest.TestCase):
             files = [os.fsdecode(raw) for raw in tracked.split(b"\0") if raw]
         retired = ("codex" + "-action", "OPENAI" + "_API_KEY", "OPENAI" + "__")
         for name in files:
-            if name == "review/reviewer-requirements.txt":
-                continue
             content = (workflows.ROOT / name).read_bytes()
             for value in retired:
                 with self.subTest(file=name, value=value):
                     self.assertNotIn(value.encode(), content)
 
-    def test_only_finish_and_the_label_override_publish_the_ai_review_result(self):
+    def test_only_finish_publishes_the_check_results(self):
         finish = self.governance["jobs"]["finish"]
         self.assertEqual(finish["env"]["JOB_RESULTS"], "${{ toJSON(needs) }}")
-        self.assertIn("ai", finish["needs"])
+        self.assertEqual(finish["needs"], ["admission", "prepare", "quality", "registry", "standards"])
         publishers = []
         for document in (self.governance, self.release):
             for job, config in document["jobs"].items():
@@ -490,141 +413,29 @@ class WorkflowSecurityTests(unittest.TestCase):
                     script = step.get("run", "")
                     if embedded_source(script) == workflows.source("governance.py"):
                         entry = shlex.split(script.splitlines()[0])[2]
-                        self.assertIn(entry, ("admit", "verify", "finish", "labels", "relabel"))
-                        if entry in ("finish", "relabel"):
+                        self.assertIn(entry, ("admit", "verify", "finish"))
+                        if entry == "finish":
                             publishers.append((document["name"], job, entry))
-        self.assertEqual(publishers, [(self.governance["name"], "finish", "finish"), (self.governance["name"], "override", "relabel")])
+        self.assertEqual(publishers, [(self.governance["name"], "finish", "finish")])
 
-    def test_model_key_is_confined_to_the_single_review_step_environment(self):
-        locations = []
-
-        def find(value, path=()):
-            if isinstance(value, dict):
-                for key, item in value.items():
-                    find(item, (*path, key))
-            elif isinstance(value, list):
-                for index, item in enumerate(value):
-                    find(item, (*path, index))
-            elif isinstance(value, str) and re.search(r"\$\{\{\s*secrets\.XAI_API_KEY\s*\}\}", value):
-                locations.append(path)
-
-        find(self.governance)
-        steps = self.governance["jobs"]["ai"]["steps"]
-        index = next(index for index, step in enumerate(steps) if step.get("name") == "Automated review")
-        self.assertEqual(locations, [("jobs", "ai", "steps", index, "env", "XAI__KEY")])
-        guard = next(step for step in steps if "HAS_MODEL_KEY" in step.get("env", {}))
-        self.assertEqual(guard["env"]["HAS_MODEL_KEY"], "${{ secrets.XAI_API_KEY != '' }}")
+    def test_no_job_receives_the_model_key_and_no_review_job_remains(self):
+        text = json.dumps(self.governance)
+        self.assertNotRegex(text, r"secrets\.XAI_API_KEY")
+        self.assertNotIn("OPENAI" + "_API_KEY", text)
+        self.assertEqual(set(self.governance["jobs"]), {"admission", "prepare", "quality", "registry", "standards", "finish"})
+        # The key stays declared, optional and unused, so callers in the previous form can still pass it.
         self.assertEqual(self.governance["on"]["workflow_call"]["secrets"]["XAI_API_KEY"], {"required": False})
-        self.assertNotIn("OPENAI" + "_API_KEY", json.dumps(self.governance))
-        self.assertEqual(guard["run"], 'test "$HAS_MODEL_KEY" = true\n')
-        self.assertLess(steps.index(guard), index)
+        for job in self.governance["jobs"].values():
+            self.assertNotIn("pull_request_target", job.get("if", ""))
 
-    def test_only_the_review_job_declares_the_protected_environment(self):
+    def test_no_job_declares_an_environment(self):
         environments = [(document["name"], name, job["environment"])
                         for document in (self.governance, self.release)
                         for name, job in document["jobs"].items() if "environment" in job]
-        self.assertEqual(environments, [(self.governance["name"], "ai", "legacy-review")])
+        self.assertEqual(environments, [])
 
-    def test_review_settings_keep_the_model_and_otherwise_documented_defaults(self):
-        ai = self.governance["jobs"]["ai"]
-        review = next(step for step in ai["steps"] if step.get("name") == "Automated review")
-        self.assertEqual(review["env"], {
-            "GITHUB_TOKEN": "${{ github.token }}", "XAI__KEY": "${{ secrets.XAI_API_KEY }}",
-            "CONFIG__MODEL": "xai/grok-4.5", "CONFIG__FALLBACK_MODELS": "[]", "CONFIG__REASONING_EFFORT": "high",
-            "CONFIG__AI_TIMEOUT": "225", "CONFIG__MAX_MODEL_TOKENS": "160000", "CONFIG__MAX_OUTPUT_TOKENS": "16000",
-            "CONFIG__LOG_LEVEL": "INFO", "LITELLM_LOCAL_MODEL_COST_MAP": "True",
-            "CONFIG__USE_REPO_SETTINGS_FILE": "false", "CONFIG__USE_GLOBAL_SETTINGS_FILE": "false",
-            "GITHUB_ACTION_CONFIG__AUTO_REVIEW": "true", "GITHUB_ACTION_CONFIG__AUTO_DESCRIBE": "false",
-            "GITHUB_ACTION_CONFIG__AUTO_IMPROVE": "false", "GITHUB_ACTION_CONFIG__ENABLE_OUTPUT": "true",
-            "PR_REVIEWER__ENABLE_REVIEW_LABELS_SECURITY": "true", "PR_REVIEWER__ENABLE_REVIEW_LABELS_EFFORT": "true",
-            "PR_REVIEWER__REQUIRE_MERGE_RECOMMENDATION": "true",
-            "PR_REVIEWER__EXTRA_INSTRUCTIONS": workflows.REVIEWER_EXTRA_INSTRUCTIONS,
-        })
-        # Fail-on-tool-errors stays at its default (true), so a run without a review fails the job.
-        self.assertNotIn("FAIL_ON_TOOL_ERRORS", json.dumps(self.governance))
-        self.assertNotIn("DEBUG", json.dumps(ai))
-        self.assertEqual(ai["timeout-minutes"], 12)
-
-    def test_review_instruction_covers_only_full_hash_pins_of_this_repository(self):
-        text = workflows.REVIEWER_EXTRA_INSTRUCTIONS
-        for required in ("ejmlabs/.github/.github/workflows/", "40 hex characters", "`standards-ref`", "not a full 40-character commit hash",
-                         "another repository or path", "older revision", "new permissions, secrets or triggers"):
-            self.assertIn(required, text)
-        # The wording is neutral, contains no expression and stays one bounded paragraph.
-        self.assertNotIn("${{", text)
-        self.assertNotIn("\n", text)
-        self.assertLess(len(text), 1000)
-        lowered = text.lower()
-        for term in ("gpt", "grok", "xai", "openai", "litellm", "pr-agent", "pr_agent"):
-            self.assertNotIn(term, lowered)
-
-    def test_review_verdict_reaches_the_label_gate_only_through_env(self):
-        jobs = self.governance["jobs"]
-        review = next(step for step in jobs["ai"]["steps"] if step.get("name") == "Automated review")
-        self.assertEqual(review["id"], "review")
-        self.assertEqual(jobs["ai"]["outputs"], {"review": "${{ steps.review.outputs.review }}"})
-        self.assertEqual(jobs["labels"]["env"]["REVIEW_OUTPUT"], "${{ needs.ai.outputs.review }}")
-        # Model output is never interpolated into a script or any other field.
-        for name, job in jobs.items():
-            for step in job["steps"]:
-                self.assertNotIn("outputs.review", json.dumps({k: v for k, v in step.items() if k != "env"}))
-            if name not in ("ai", "labels"):
-                self.assertNotIn("outputs.review", json.dumps(job))
-        self.assertEqual(json.dumps(jobs["labels"]).count("outputs.review"), 1)
-        self.assertEqual([shlex.split(step["run"].splitlines()[0])[2] for step in jobs["labels"]["steps"]], ["labels"])
-
-    def test_review_step_runs_the_documented_runner_on_an_opened_event_and_fails_closed(self):
-        review = next(step for step in self.governance["jobs"]["ai"]["steps"] if step.get("name") == "Automated review")
-        for status in (0, 1):
-            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
-                temporary = Path(directory)
-                binary = temporary / "reviewer-venv/bin/python"
-                binary.parent.mkdir(parents=True)
-                binary.write_text("#!" + sys.executable + "\n" + """import json, os, sys
-from pathlib import Path
-assert sys.argv[1:] == ['-I', '-m', 'pr_agent.servers.github_action_runner']
-assert Path.cwd() == Path(os.environ['RUNNER_TEMP'])
-assert os.environ['GITHUB_EVENT_NAME'] == 'pull_request'
-Path(os.environ['RUNNER_TEMP'], 'seen.json').write_text(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
-sys.exit(int(os.environ['REVIEW_EXIT']))
-""")
-                binary.chmod(0o755)
-                env = {**os.environ, "RUNNER_TEMP": str(temporary), "GITHUB_REPOSITORY": "ejmlabs/ejm-cli", "PR_NUMBER": "12",
-                       "GITHUB_EVENT_NAME": "issue_comment", "REVIEW_EXIT": str(status)}
-                completed = subprocess.run(["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", review["run"]],
-                                           cwd=directory, env=env, capture_output=True, text=True)
-                self.assertEqual(completed.returncode, status, completed.stderr)
-                self.assertEqual(json.loads((temporary / "seen.json").read_text()), {
-                    "action": "opened", "pull_request": {"url": "https://api.github.com/repos/ejmlabs/ejm-cli/pulls/12"}})
-
-    def test_install_embeds_the_complete_hash_lock_without_credentials(self):
-        steps = self.governance["jobs"]["ai"]["steps"]
-        install = next(step for step in steps if step.get("name") == "Install the pinned reviewer")
-        review = next(step for step in steps if step.get("name") == "Automated review")
-        self.assertFalse(any(step.get("uses", "").startswith("astral-sh/setup-uv@") for step in steps))
-        self.assertLess(steps.index(install), steps.index(review))
-        self.assertNotIn("secrets.", json.dumps(install))
-        self.assertEqual(install["env"], {"GH_TOKEN": "", "GITHUB_TOKEN": "", "PIP_CONFIG_FILE": "/dev/null"})
-        script = install["run"]
-        self.assertTrue(script.startswith('cd "$RUNNER_TEMP"\n'))
-        self.assertIn('python3 -m venv "$RUNNER_TEMP/reviewer-venv"', script)
-        self.assertIn('"$RUNNER_TEMP/reviewer-venv/bin/python" -m pip install --isolated --no-cache-dir --require-hashes --no-deps --only-binary=:all:', script)
-        self.assertIn('> "$RUNNER_TEMP/reviewer-install.log" 2>&1', script)
-        lock = (workflows.ROOT / "review/reviewer-requirements.txt").read_text()
-        calls = [node for node in ast.walk(ast.parse(embedded_source(script))) if isinstance(node, ast.Call)
-                 and isinstance(node.func, ast.Attribute) and node.func.attr == "write_text"]
-        self.assertEqual([ast.literal_eval(node.args[0]) for node in calls], [lock])
-        pins = [line for line in lock.splitlines() if line and not line.startswith("#")]
-        self.assertEqual(len(pins), 100)
-        for pin in pins:
-            self.assertRegex(pin, r"^[a-z0-9_.-]+==\S+ --hash=sha256:[0-9a-f]{64}$")
-        for package, version in (("pr-agent", "0.48.0"), ("litellm", "1.105.0")):
-            matches = [pin for pin in pins if pin.startswith(package + "==")]
-            self.assertEqual(len(matches), 1)
-            self.assertRegex(matches[0], rf"^{package}=={re.escape(version)} --hash=sha256:[0-9a-f]{{64}}$")
-
-    def test_prepare_and_review_reject_runner_debug_before_other_steps(self):
-        for name in ("prepare", "ai"):
+    def test_prepare_rejects_runner_debug_before_other_steps(self):
+        for name in ("prepare",):
             with self.subTest(job=name):
                 job = self.governance["jobs"][name]
                 self.assertNotIn("runner.", job["if"])
@@ -640,43 +451,6 @@ sys.exit(int(os.environ['REVIEW_EXIT']))
         for workflow in (self.governance, self.release):
             for job in workflow["jobs"].values():
                 self.assertNotIn("runner.", job.get("if", ""))
-
-    def test_generated_install_logs_are_private_on_success_and_failure(self):
-        install = next(step for step in self.governance["jobs"]["ai"]["steps"] if step.get("name") == "Install the pinned reviewer")
-        marker = "PRIVATE_INSTALL_LOG_SENTINEL_2138"
-        for status in (0, 42):
-            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
-                root = Path(directory)
-                bin_dir = root / "bin"
-                bin_dir.mkdir()
-                bootstrap = bin_dir / "python3"
-                bootstrap.write_text("#!" + sys.executable + "\n" + """import os, sys
-from pathlib import Path
-if sys.argv[1:] == ['-m', 'venv', str(Path(os.environ['RUNNER_TEMP'], 'reviewer-venv'))]:
-    assert Path.cwd() == Path(os.environ['RUNNER_TEMP'])
-    assert os.environ['PIP_CONFIG_FILE'] == '/dev/null'
-    target = Path(sys.argv[-1], 'bin/python')
-    target.parent.mkdir(parents=True)
-    target.write_text('#!' + sys.executable + '\\nimport os, sys\\n' +
-        'print(os.environ["INSTALL_MARKER"])\\nprint(os.environ["INSTALL_MARKER"], file=sys.stderr)\\n' +
-        'assert sys.argv[1:5] == ["-m", "pip", "install", "--isolated"]\\n' +
-        'sys.exit(int(os.environ["INSTALL_EXIT"]))\\n')
-    target.chmod(0o755)
-    print(os.environ['INSTALL_MARKER'])
-else:
-    os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
-""")
-                bootstrap.chmod(0o755)
-                env = {**os.environ, **install["env"], "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
-                       "RUNNER_TEMP": str(root), "INSTALL_MARKER": marker, "INSTALL_EXIT": str(status)}
-                completed = subprocess.run(["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", install["run"]],
-                                           cwd=root, env=env, capture_output=True, text=True)
-                self.assertEqual(completed.returncode, status, completed.stderr)
-                self.assertEqual(completed.stdout, f"reviewer install exit {status}\n" if status else "")
-                self.assertEqual(completed.stderr, "")
-                self.assertNotIn(marker, completed.stdout + completed.stderr)
-                self.assertIn(marker, (root / "reviewer-install.log").read_text())
-                self.assertEqual((root / "reviewer-requirements.txt").read_bytes(), (workflows.ROOT / "review/reviewer-requirements.txt").read_bytes())
 
     def test_release_draft_classifies_prereleases_without_replacing_existing_assets(self):
         script = self.release["jobs"]["draft"]["steps"][-1]["run"]

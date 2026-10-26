@@ -11,23 +11,7 @@ NODE = "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020"
 UV = "astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e"
 UPLOAD = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
 DOWNLOAD = "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
-# Provider settings are confined to these constants and the review-step key env.
-REVIEWER_MODEL = "xai/grok-4.5"
-REVIEWER_FALLBACK_MODELS = '[]'
-REVIEWER_REASONING_EFFORT = "high"
-REVIEWER_AI_TIMEOUT = 225
-REVIEWER_MAX_MODEL_TOKENS = 160000
-REVIEWER_MAX_OUTPUT_TOKENS = 16000
-REVIEWER_JOB_TIMEOUT_MINUTES = 12
-# The review sees only the PR diff, never the shared workflows a caller pin selects. Pins to this repository's
-# workflows are therefore not missing context; any other reference or change keeps the default handling.
-REVIEWER_EXTRA_INSTRUCTIONS = (
-    "A changed `uses: ejmlabs/.github/.github/workflows/<name>.yml@<40 hex characters>` reference, or a `standards-ref` "
-    "value equal to such a pin, selects a shared workflow that is maintained and reviewed in its own repository and is "
-    "not part of this diff. Do not report its absence, or the inability to verify what that workflow does, as missing "
-    "context or as a security concern. Still report a reference that is not a full 40-character commit hash, that names "
-    "another repository or path, or that moves to an older revision, or whose surrounding workflow changes grant new permissions, secrets or triggers."
-)
+
 
 def yaml(value, indent=0):
     """Emit the limited maps, lists and strings used here, without dependencies."""
@@ -177,63 +161,14 @@ fi
         "env": {"PROFILE": "${{ needs.admission.outputs.profile }}"},
         "steps": [ARTIFACT, EXTRACT, run("Validate shared public standards and version metadata", python(standards_check, 'product "$PROFILE"'))],
     }
-    requirements = (ROOT / "review/reviewer-requirements.txt").read_text()
-    install = 'cd "$RUNNER_TEMP"\n' + python("import os\nfrom pathlib import Path\nPath(os.environ['RUNNER_TEMP'], 'reviewer-requirements.txt').write_text(" + repr(requirements) + ")\n") + """set +e
-{
-  python3 -m venv "$RUNNER_TEMP/reviewer-venv" &&
-  "$RUNNER_TEMP/reviewer-venv/bin/python" -m pip install --isolated --no-cache-dir --require-hashes --no-deps --only-binary=:all: -r "$RUNNER_TEMP/reviewer-requirements.txt"
-} > "$RUNNER_TEMP/reviewer-install.log" 2>&1
-reviewer_status=$?
-set -e
-if [ "$reviewer_status" -ne 0 ]; then
-  printf 'reviewer install exit %s\\n' "$reviewer_status"
-  exit "$reviewer_status"
-fi
-"""
-    # The documented action runner reviews the admitted PR through the API; no PR code is checked out here.
-    review = """printf '{"action":"opened","pull_request":{"url":"https://api.github.com/repos/%s/pulls/%s"}}' "$GITHUB_REPOSITORY" "$PR_NUMBER" > "$RUNNER_TEMP/review-event.json"
-cd "$RUNNER_TEMP"
-GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="$RUNNER_TEMP/review-event.json" "$RUNNER_TEMP/reviewer-venv/bin/python" -I -m pr_agent.servers.github_action_runner
-"""
-    ai = {
-        "needs": "admission", "if": "${{ github.run_attempt == 1 && needs.admission.outputs.run == 'true' }}", "runs-on": "ubuntu-24.04", "timeout-minutes": REVIEWER_JOB_TIMEOUT_MINUTES,
-        "environment": "legacy-review",
-        "permissions": {"contents": "read", "pull-requests": "write", "statuses": "read"}, "env": ENV,
-        # The documented action output carries this run's review verdict to the label gate.
-        "outputs": {"review": "${{ steps.review.outputs.review }}"},
-        "steps": [REJECT_DEBUG, VERIFY,
-                  run("Require the review model key", 'test "$HAS_MODEL_KEY" = true\n', env={"HAS_MODEL_KEY": "${{ secrets.XAI_API_KEY != '' }}"}),
-                  run("Install the pinned reviewer", install, env={"GH_TOKEN": "", "GITHUB_TOKEN": "", "PIP_CONFIG_FILE": "/dev/null"}),
-                  run("Automated review", review, id="review", env={
-                      "GITHUB_TOKEN": "${{ github.token }}", "XAI__KEY": "${{ secrets.XAI_API_KEY }}",
-                      "CONFIG__MODEL": REVIEWER_MODEL, "CONFIG__FALLBACK_MODELS": REVIEWER_FALLBACK_MODELS,
-                      "CONFIG__REASONING_EFFORT": REVIEWER_REASONING_EFFORT, "CONFIG__AI_TIMEOUT": str(REVIEWER_AI_TIMEOUT),
-                      "CONFIG__MAX_MODEL_TOKENS": str(REVIEWER_MAX_MODEL_TOKENS), "CONFIG__MAX_OUTPUT_TOKENS": str(REVIEWER_MAX_OUTPUT_TOKENS),
-                      "CONFIG__LOG_LEVEL": "INFO", "LITELLM_LOCAL_MODEL_COST_MAP": "True",
-                      "CONFIG__USE_REPO_SETTINGS_FILE": "false", "CONFIG__USE_GLOBAL_SETTINGS_FILE": "false",
-                      "GITHUB_ACTION_CONFIG__AUTO_REVIEW": "true", "GITHUB_ACTION_CONFIG__AUTO_DESCRIBE": "false",
-                      "GITHUB_ACTION_CONFIG__AUTO_IMPROVE": "false", "GITHUB_ACTION_CONFIG__ENABLE_OUTPUT": "true",
-                      "PR_REVIEWER__ENABLE_REVIEW_LABELS_SECURITY": "true", "PR_REVIEWER__ENABLE_REVIEW_LABELS_EFFORT": "true",
-                      "PR_REVIEWER__REQUIRE_MERGE_RECOMMENDATION": "true",
-                      "PR_REVIEWER__EXTRA_INSTRUCTIONS": REVIEWER_EXTRA_INSTRUCTIONS}),
-                  VERIFY],
-    }
-    labels = {"needs": ["admission", "ai"], "if": "${{ github.run_attempt == 1 && needs.admission.outputs.run == 'true' }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
-              "permissions": {"pull-requests": "read"}, "env": {"PR_NUMBER": "${{ needs.admission.outputs.pr }}", "GH_TOKEN": "${{ github.token }}",
-                                                               "REVIEW_OUTPUT": "${{ needs.ai.outputs.review }}"},
-              "steps": [run("Fail on a security verdict or blocking review label", python(source("governance.py"), "labels"))]}
-    # Removing a review label is the logged maintainer override; re-evaluate only a completed, label-blocked review.
-    override = {"if": "${{ github.run_attempt == 1 && github.event_name == 'pull_request_target' && github.event.action == 'unlabeled' }}",
-                "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
-                "permissions": {"contents": "read", "pull-requests": "read", "statuses": "write"},
-                "concurrency": {"group": "human-command-${{ github.repository }}-${{ github.event.pull_request.number }}", "cancel-in-progress": False},
-                "steps": [run("Re-evaluate the review after a label removal", python(source("governance.py"), "relabel"), env={"GH_TOKEN": "${{ github.token }}"})]}
-    finish = {"needs": ["admission", "prepare", "quality", "registry", "standards", "ai", "labels"],
+    finish = {"needs": ["admission", "prepare", "quality", "registry", "standards"],
               "if": "${{ github.run_attempt == 1 && always() && needs.admission.outputs.run == 'true' }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
               "permissions": {"contents": "read", "pull-requests": "write", "statuses": "write"},
               "env": {**ENV, "JOB_RESULTS": "${{ toJSON(needs) }}"},
               "steps": [run("Publish required results only after live admission validation", python(source("governance.py"), "finish"))]}
-    return {"name": "Human-admitted PR checks", "on": {"workflow_call": {"secrets": {"XAI_API_KEY": {"required": False}, "EJM_HARNESS_TOKEN": {"required": False}}}}, "permissions": {}, "jobs": {"admission": admission, "prepare": prepare, "quality": quality, "registry": registry, "standards": standards, "ai": ai, "labels": labels, "finish": finish, "override": override}}
+    # XAI_API_KEY is declared but unused so callers in the previous form can still pass it; the next revision drops it.
+    secrets = {"XAI_API_KEY": {"required": False}, "EJM_HARNESS_TOKEN": {"required": False}}
+    return {"name": "Human-admitted PR checks", "on": {"workflow_call": {"secrets": secrets}}, "permissions": {}, "jobs": {"admission": admission, "prepare": prepare, "quality": quality, "registry": registry, "standards": standards, "finish": finish}}
 
 
 def release_workflow():

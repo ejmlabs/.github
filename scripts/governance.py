@@ -9,12 +9,8 @@ import urllib.request
 from pathlib import Path
 
 REPOS = {"ejmlabs/" + name for name in (".github", "ejmlabs", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui")}
-CONTEXTS = ("Human readiness", "Maintainer approval", "Quality", "Repository standards", "AI review")
+CONTEXTS = ("Human readiness", "Maintainer approval", "Quality", "Repository standards")
 COMMAND = re.compile(r"^/(ready|approve|revoke) ([0-9a-f]{40})$")
-# The reviewer's own security label; removing it is the maintainer override.
-SECURITY_LABEL = "Possible security concern"
-BLOCKING_LABELS = {SECURITY_LABEL.lower()}
-LABEL_BLOCKED = "Blocked by the review's security verdict or label; a maintainer may remove the label to override"
 
 
 def command(text):
@@ -246,62 +242,8 @@ def finish(api):
     results = json.loads(os.environ["JOB_RESULTS"])
     quality = all(results.get(job, {}).get("result") == "success" for job in ("quality", "registry"))
     standards = results.get("standards", {}).get("result") == "success"
-    reviewed = results.get("ai", {}).get("result") == "success"
-    reviews = reviewed and results.get("labels", {}).get("result") == "success"
-    labelled = reviewed and results.get("labels", {}).get("result") == "failure"
-    # Publish the model job result before the other terminal check results.
-    for context, ok in (("AI review", reviews), ("Quality", quality), ("Repository standards", standards)):
-        failed = LABEL_BLOCKED if context == "AI review" and labelled else "Failed, cancelled, missing, or incomplete"
-        api.status(sha, context, "success" if ok else "failure", "Passed for admitted commit" if ok else failed)
-
-
-def blocking_labels(api, number):
-    pr = api.request(f"/pulls/{int(number)}")
-    return pr, [label["name"] for label in pr["labels"] if label["name"].lower() in BLOCKING_LABELS]
-
-
-def is_value_no(value):
-    """The reviewer's own rule for a negative answer (pr_agent.algo.utils.is_value_no, 0.48.0)."""
-    if not value:
-        return True
-    value_str = str(value).strip().lower()
-    if value_str == 'no' or value_str == 'none' or value_str == 'false':
-        return True
-    return False
-
-
-def labels(api):
-    # Decide from this run's documented action output, so removing the label early cannot pass.
-    try:
-        review = json.loads(os.environ.get("REVIEW_OUTPUT", ""))
-    except ValueError:
-        raise ValueError("Missing or unparsable review output") from None
-    if not isinstance(review, dict) or review.get("security_concerns") is None:
-        raise ValueError("Review output has no security verdict")
-    if not is_value_no(review["security_concerns"]):
-        raise ValueError("Review reported a security concern")
-    found = blocking_labels(api, os.environ["PR_NUMBER"])[1]
-    if found:
-        raise ValueError("Blocking review label present: " + ", ".join(found))
-
-
-def relabel(api, event):
-    """Re-evaluate a completed, label-blocked review after a label is removed."""
-    if ((event.get("label") or {}).get("name") or "").lower() not in BLOCKING_LABELS:
-        print("A non-blocking label was removed; nothing to re-evaluate")
-        return
-    pr, found = blocking_labels(api, event["pull_request"]["number"])
-    sha = pr["head"]["sha"]
-    review = api.statuses(sha).get("AI review", {})
-    if review.get("state") != "failure" or review.get("description") != LABEL_BLOCKED:
-        print("No label-blocked review for the current head; nothing to re-evaluate")
-        return
-    sender = event["sender"]
-    if not human(sender, api.permission(sender["login"])):
-        raise ValueError("Only a current human maintainer may override a review label")
-    if found:
-        raise ValueError("Blocking review label present: " + ", ".join(found))
-    api.status(sha, "AI review", "success", f"Review label override by maintainer @{sender['login']}")
+    for context, ok in (("Quality", quality), ("Repository standards", standards)):
+        api.status(sha, context, "success" if ok else "failure", "Passed for admitted commit" if ok else "Failed, cancelled, missing, or incomplete")
 
 
 def main():
@@ -313,10 +255,6 @@ def main():
         live_ready(api, os.environ["PR_NUMBER"], os.environ["PR_HEAD"], os.environ["ADMISSION_ID"])
     elif mode == "finish":
         finish(api)
-    elif mode == "labels":
-        labels(api)
-    elif mode == "relabel":
-        relabel(api, json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text()))
     else:
         raise ValueError("Unknown operation")
 

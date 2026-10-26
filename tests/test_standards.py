@@ -72,7 +72,7 @@ class WorkflowTests(unittest.TestCase):
 
     def reusable(self):
         data = governance()
-        data["jobs"] = {"ai": {"runs-on": "ubuntu-24.04", "environment": "legacy-review", "steps": [{"uses": "actions/checkout@" + self.revision}]}}
+        data["jobs"] = {"quality": {"runs-on": "ubuntu-24.04", "steps": [{"uses": "actions/checkout@" + self.revision}]}}
         return self.add_reusable("governance.yml", data)
 
     def test_exact_callers_accept_one_immutable_revision(self):
@@ -278,56 +278,35 @@ class WorkflowTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             workflows(self.root, "ejm-cli")
 
-    def test_review_job_requires_its_exclusive_protected_environment(self):
-        for case in ("valid", "step input", "missing", "wrong name", "other job", "indented other job", "moved", "mapping", "literal lookalike", "duplicate job", "duplicate environment"):
+    def test_shared_scaffold_cannot_declare_an_environment(self):
+        for case in ("none", "step input", "literal lookalike", "job", "retired review job", "mapping", "indented job", "duplicate"):
             with self.subTest(case=case):
                 data = governance()
-                review = data["jobs"]["ai"]
-                review["environment"] = "legacy-review"
-                if case in ("missing", "moved", "literal lookalike", "duplicate job"):
-                    del review["environment"]
-                if case == "wrong name":
-                    review["environment"] = "unprotected"
-                elif case in ("other job", "moved"):
-                    data["jobs"]["quality"]["environment"] = "legacy-review"
-                elif case == "mapping":
-                    review["environment"] = {"name": "unprotected"}
+                job = data["jobs"]["quality"]
+                if case == "step input":
+                    job["steps"].append({"uses": "actions/example@" + self.revision, "with": {"environment": "value"}})
                 elif case == "literal lookalike":
-                    review["steps"].append({"run": '  "ai":\n    "environment": "legacy-review"\n'})
-                elif case == "duplicate job":
-                    data["jobs"]["shadow"] = {**review, "environment": "legacy-review"}
-                elif case == "indented other job":
+                    job["steps"].append({"run": '  "ai":\n    "environment": "legacy-review"\n'})
+                elif case == "job":
+                    job["environment"] = "legacy-review"
+                elif case == "retired review job":
+                    data["jobs"]["ai"] = {"runs-on": "ubuntu-24.04", "environment": "legacy-review", "steps": [{"run": "true"}]}
+                elif case == "mapping":
+                    job["environment"] = {"name": "unprotected"}
+                elif case == "indented job":
                     data["jobs"]["shadow"] = {"runs-on": "ubuntu-24.04", "environment": "unprotected", "steps": [{"run": "true"}]}
-                elif case == "step input":
-                    review["steps"].append({"uses": "actions/example@" + self.revision, "with": {"environment": "value"}})
                 text = self.add_reusable("governance.yml", data)
-                if case == "duplicate job":
-                    text = text.replace('  "shadow":\n', '  "ai":\n')
-                elif case == "duplicate environment":
-                    text = text.replace('    "environment": "legacy-review"\n', '    "environment": "legacy-review"\n' * 2)
-                elif case == "indented other job":
+                if case == "duplicate":
+                    text = text.replace('  "quality":\n', '  "quality":\n    "environment": "legacy-review"\n    "environment": "legacy-review"\n', 1)
+                elif case == "indented job":
                     prefix, body = text.split('  "shadow":\n')
                     text = prefix + '  "shadow":\n' + "\n".join("  " + line for line in body.splitlines()) + "\n"
                 (self.directory / "governance.yml").write_text(text)
-                if case in ("valid", "step input"):
+                if case in ("none", "step input", "literal lookalike"):
                     workflows(self.root, ".github")
                 else:
                     with self.assertRaisesRegex(ValueError, "environment"):
                         workflows(self.root, ".github")
-
-    def test_shared_scaffold_is_accepted_with_or_without_the_review_job(self):
-        data = governance()
-        del data["jobs"]["ai"]
-        self.add_reusable("governance.yml", data)
-        workflows(self.root, ".github")
-        for job in ("quality", "shadow"):
-            with self.subTest(job=job):
-                data = governance()
-                del data["jobs"]["ai"]
-                data["jobs"][job] = {**data["jobs"].get(job, {"runs-on": "ubuntu-24.04", "steps": [{"run": "true"}]}), "environment": "legacy-review"}
-                self.add_reusable("governance.yml", data)
-                with self.assertRaisesRegex(ValueError, "environment"):
-                    workflows(self.root, ".github")
 
     def test_release_jobs_cannot_declare_an_environment(self):
         for extra_indent in (0, 2):
@@ -375,8 +354,8 @@ class WorkflowTests(unittest.TestCase):
 
     def test_workflow_lookalikes_inside_literal_script_are_data(self):
         data = governance()
-        data["jobs"] = {"ai": {"runs-on": "ubuntu-24.04", "environment": "legacy-review",
-                               "steps": [{"run": 'on: [push]\n"uses": "actions/checkout@main"\n  "ai":\n    "environment": "unprotected"\n---\n'}]}}
+        data["jobs"] = {"quality": {"runs-on": "ubuntu-24.04",
+                                    "steps": [{"run": 'on: [push]\n"uses": "actions/checkout@main"\n  "quality":\n    "environment": "unprotected"\n---\n'}]}}
         self.add_reusable("governance.yml", data)
         workflows(self.root, ".github")
 
