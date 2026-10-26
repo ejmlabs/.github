@@ -574,6 +574,35 @@ files, and it comments no command the gate treats as an owner command. A
 deploy is not an operator write: see Deploy from main. The owner creates the
 identity and applies its permissions; the build never does.
 
+### Head drift
+
+Each merge moves `main`, so every other open PR must merge `main` and gets a
+new head. Keep this small:
+
+- Branches live one day. Re-cut a branch that is older instead of carrying it.
+- PRs in one batch change disjoint files. Before a batch, list each PR's changed
+  files; `carry_over.py` reports overlaps, and an overlapping PR waits for the
+  earlier merge instead of sharing the batch.
+- When listing a PR, record its `patch_id` from
+  `scripts/carry_over.py patch-id REPO BASE HEAD`: the verbatim id (whitespace
+  counts) of what the PR adds on top of its merge base with `main`.
+
+After `main` moved and was merged into a PR branch, the entry no longer covers
+the new head. A new batch can propose it only if the PR's own patch id is
+unchanged **and** a fresh independent review passes on the new exact head and
+tree. Get the head and tree to review with `scripts/carry_over.py request REPO
+PR HEAD`, review that tree, then run `scripts/carry_over.py carry BATCH REPO PR
+NEW_HEAD REVIEW_JSON OUT`, where `REVIEW_JSON` is `{"id": ..., "head":
+NEW_HEAD, "tree": ...}`. Fetch `origin` first. It computes the patch id
+against `origin/main` and the tree itself from the repository; the caller
+cannot name a base. It writes a new, unsigned batch file `OUT` (never over an
+existing file) in which the item has the new head and review. That file
+approves nothing: the owner reads it with `batch.py OUT canonical`, signs it
+like any batch, and only the signed file is used. If the patch id differs, the
+review is missing or names another head or tree, or no patch id was recorded,
+nothing is written and the item needs a new signed entry. The owner still
+approves the new head on GitHub.
+
 ## Public visibility checklist
 
 Audit current source refs and history, discussions, reviews, retained Actions

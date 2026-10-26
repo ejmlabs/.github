@@ -39,10 +39,10 @@ Starts after remove-ai-review tasks 3.2 and 5.1 are done. Nothing here starts un
 
 ## 6. Head drift (D4 B)
 
-- [ ] 6.1 Write the one-day branch rule and the disjoint-files rule for a batch.
-- [ ] 6.2 Add a script that compares patch ids before and after a merge of `main`.
-- [ ] 6.3 Require a fresh review on the new exact tree before the entry is offered again.
-- [ ] 6.4 Test that a changed patch drops the PR from the list.
+- [x] 6.1 Write the one-day branch rule and the disjoint-files rule for a batch.
+- [x] 6.2 Add a script that compares patch ids before and after a merge of `main`.
+- [x] 6.3 Require a fresh review on the new exact tree before the entry is offered again.
+- [x] 6.4 Test that a changed patch drops the PR from the list.
 
 ## 7. Deploy from main (D5 B)
 
