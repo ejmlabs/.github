@@ -61,7 +61,7 @@ class API:
         statuses["Human readiness"]["description"] = "[ready:1]"
         statuses["Maintainer approval"]["description"] = "[approve:2]"
         if not self.checks:
-            statuses["AI review"]["state"] = "failure"
+            statuses["Quality"]["state"] = "failure"
         return statuses
 
 
