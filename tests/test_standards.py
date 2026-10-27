@@ -1,10 +1,13 @@
+import hashlib
 import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import standards
 from standards import MIT_TERMS, consumer_workflows, native_build, licenses, missing_model_key_workflows, read, semver, versions, workflows
 from build_workflows import attach_workflow, governance, release_workflow, verify_build_workflow, yaml
 
@@ -104,6 +107,32 @@ class WorkflowTests(unittest.TestCase):
         self.reset_callers("1" * 40)
         workflows(self.root, "ejm-ide")
         self.assertIn('      standards-ref: "' + "1" * 40 + '"\n', (self.directory / "release.yml").read_text())
+
+    def publish(self, text=None, repository="ejm-ui"):
+        reviewed = "name: Publish\n"
+        with patch.object(standards, "UI_PUBLISH_SHA256", hashlib.sha256(reviewed.encode()).hexdigest()):
+            (self.directory / "publish.yml").write_text(reviewed if text is None else text)
+            workflows(self.root, repository)
+
+    def test_ui_publish_workflow_is_allowed_only_at_the_reviewed_hash_in_the_ui_repository(self):
+        self.publish()
+        for changed in ("name: Publish\n# changed\n", "", "name: Publish\r\n"):
+            with self.subTest(content=changed), self.assertRaisesRegex(ValueError, "differs from the reviewed"):
+                self.publish(changed)
+        for repository in ("ejm-cli", "ejm-harness", "ejm-ide", "ejmlabs", ".github"):
+            with self.subTest(repository=repository), self.assertRaisesRegex(ValueError, "Unexpected workflow"):
+                self.publish(repository=repository)
+
+    def test_ui_publish_workflow_cannot_be_a_symlink(self):
+        reviewed = "name: Publish\n"
+        (self.root / "target.yml").write_text(reviewed)
+        (self.directory / "publish.yml").symlink_to(self.root / "target.yml")
+        with patch.object(standards, "UI_PUBLISH_SHA256", hashlib.sha256(reviewed.encode()).hexdigest()):
+            with self.assertRaisesRegex(ValueError, "Unexpected workflow"):
+                workflows(self.root, "ejm-ui")
+
+    def test_reviewed_ui_publish_workflow_hash_is_recorded(self):
+        self.assertRegex(standards.UI_PUBLISH_SHA256, r"^[0-9a-f]{64}$")
 
     def test_revision_must_be_a_lowercase_full_sha(self):
         for caller in (consumer_workflows, missing_model_key_workflows):

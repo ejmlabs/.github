@@ -209,7 +209,20 @@ dated `CHANGELOG.md` entry. Root npm metadata, all eight owned npm packages
 and nested test fixtures are consumers and do not set the owner's release
 version. Adding an owned package requires a reviewed inventory update.
 
-The root and owned npm packages must keep `private: true` and
+The root and the `demos`, `ink`, `shots` and `site` packages must keep
+`private: true`. `core`, `ssg`, `tokens` and `ui` are the public npm set: each may
+omit `private` only with `publishConfig` of exactly
+`{"access": "public", "provenance": true}`, and `"private": false` is refused. Each
+public package must also carry exactly the reviewed `name`, `files`, `main`,
+`types`, `exports` and other packing fields (`bin`, `browser`, `module`,
+`directories`, `man`, bundled or workspace lists and the pack, publish and install
+lifecycle scripts must be absent unless reviewed); the validator checks a digest of them in `scripts/standards.py`, so any
+change to a public package's packing manifest needs a new shared revision. The reviewed
+`tokens` files reach `assets` only through `assets/fonts`, `assets/brand` and
+`assets/icons`, which keeps logos and artwork out of the tarball.
+`.github/workflows/publish.yml` is allowed only in `ejm-ui`, as a regular
+file whose SHA-256 equals the reviewed hash in `scripts/standards.py`; changing it
+needs a new shared revision. All owned packages keep
 `SEE LICENSE IN LICENSE`. Each package must name its exact repository directory
 and carry a complete scoped `LICENSE` and `THIRD_PARTY_NOTICES.md`. The
 software and documentation must retain MIT terms, and brand assets their owners'

@@ -6,6 +6,7 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Added
 
+- Let `ejm-ui` publish exactly `@ejm/tokens`, `@ejm/core`, `@ejm/ui` and `@ejm/ssg` to npm with provenance: they may omit `private` only with `publishConfig` `{"access": "public", "provenance": true}`, their name and packing fields (`files`, `main`, `exports`, `bin`, `directories`, lifecycle scripts and the rest) must equal the reviewed values, which keeps brand logos and artwork out of the tokens tarball, and `publish.yml` is accepted only at its reviewed SHA-256. Every other UI package stays private.
 - Shared `verify-build.yml` and `attach-assets.yml` workflows that bind native build output to the tagged commit, recompute every digest and attach the files to the draft release.
 - Accept exactly one supported review model key name in canonical workflows; reject extra, unknown or fallback key forwarding.
 - Optional public UI source assembly from protected-main commit pins, with

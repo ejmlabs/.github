@@ -26,6 +26,26 @@ visual identity retain their owners' rights. All rights in those materials are
 reserved except where a file or its accompanying notice gives a separate
 license. Public access does not grant a right to use the marks or redistribute
 the brand materials.'''
+# The owner's public npm set. Every other UI package stays private.
+UI_PUBLIC = tuple("packages/" + name for name in ("core", "ssg", "tokens", "ui"))
+UI_PUBLISH_CONFIG = {"access": "public", "provenance": True}
+# Every manifest field that decides what npm packs or what a package is called.
+UI_PACKING_FIELDS = ("name", "files", "main", "types", "typings", "exports", "bin", "browser", "module", "directories", "man",
+                     "bundleDependencies", "bundledDependencies", "workspaces")
+# Lifecycle scripts that npm runs while packing, publishing or installing; they can change the packed files.
+UI_LIFECYCLE_SCRIPTS = ("preprepare", "prepare", "postprepare", "prepack", "postpack", "prepublish", "prepublishOnly", "publish",
+                        "postpublish", "preinstall", "install", "postinstall")
+# SHA-256 of the reviewed values of those fields and of any lifecycle scripts, present ones only, in that order, as compact JSON. Brand logos and
+# artwork stay out of the tokens tarball because its reviewed `files` list ships only assets/fonts, brand and icons.
+# Any change to a public package's packing manifest needs a new shared revision.
+UI_PACKING_SHA256 = {
+    "packages/core": "8340bf6bd1ea23bd372acaccfa303b3fe6bc5f631ca95780b5c9b00f656dba29",
+    "packages/ssg": "fac8edac4ab77073ee7dbd66e36576892c87ca023f6f41411ea78c888e2f69e4",
+    "packages/tokens": "6a42d63e7e4e6140855f25a6b1c016e75d01582a0005319089e7f836514ba575",  # gitleaks:allow (package manifest digest)
+    "packages/ui": "e22c0b53fb8ab7ae638952245f8b94531acff1302853403e6b303ae64b8a3be7",
+}
+# The reviewed ejm-ui publish workflow; any change needs a new shared revision.
+UI_PUBLISH_SHA256 = "b28800bd599a24b07f385202bad0e8ef53bc5f503bdd600b51fbd4f461f656e9"
 UI_FONT_NOTICES = tuple("packages/" + path + "/" + name + "-OFL.txt"
                         for path in ("tokens/assets/fonts", "ui/src/fonts") for name in ("Manrope", "IBMPlexMono"))
 UI_FONT_HASHES = {
@@ -156,6 +176,17 @@ def licenses(root, profile):
             raise ValueError("Owned manifest license differs from MIT: " + path)
 
 
+def ui_packing(package):
+    """Return the digest of a manifest's packing fields, which must match the reviewed values exactly."""
+    values = {field: package[field] for field in UI_PACKING_FIELDS if field in package}
+    scripts = package.get("scripts")
+    if "scripts" in package and not isinstance(scripts, dict):
+        values["scripts"] = scripts
+    elif isinstance(scripts, dict) and any(name in scripts for name in UI_LIFECYCLE_SCRIPTS):
+        values["scripts"] = {name: scripts[name] for name in UI_LIFECYCLE_SCRIPTS if name in scripts}
+    return hashlib.sha256(json.dumps(values, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
 def ui_licenses(root, text):
     """Keep the UI software grant, reserved assets, and packaged font notices."""
     def scoped_license(value):
@@ -171,8 +202,13 @@ def ui_licenses(root, text):
     for path in ("", *UI_PACKAGES):
         prefix = path + "/" if path else ""
         package = json.loads(read(root, prefix + "package.json"))
-        if package.get("license") != "SEE LICENSE IN LICENSE" or package.get("private") is not True:
+        config = package.get("publishConfig")
+        public = (path in UI_PUBLIC and "private" not in package and config == UI_PUBLISH_CONFIG
+                  and config["provenance"] is True)
+        if package.get("license") != "SEE LICENSE IN LICENSE" or not (public or package.get("private") is True):
             raise ValueError("UI npm packages must remain private and preserve their scoped license: " + prefix)
+        if public and ui_packing(package) != UI_PACKING_SHA256[path]:
+            raise ValueError("Public UI package name and packed files differ from the reviewed values: " + prefix)
         if not path:
             continue
         if package.get("repository") != {"type": "git", "url": "git+https://github.com/ejmlabs/ejm-ui.git", "directory": path}:
@@ -540,6 +576,11 @@ def workflows(root, profile):
     native = profile in NATIVE_RELEASE and (directory / "build.yml").exists()
     if native:
         allowed.add("build.yml")
+    publish = directory / "publish.yml"
+    if profile == "ejm-ui" and publish.is_file() and not publish.is_symlink():
+        if hashlib.sha256(publish.read_bytes()).hexdigest() != UI_PUBLISH_SHA256:
+            raise ValueError("UI publish workflow differs from the reviewed revision")
+        allowed.add("publish.yml")
     if profile == ".github":
         allowed.update(SHARED_WORKFLOWS)
     if any(file.name not in allowed for file in directory.iterdir()):
