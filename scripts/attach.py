@@ -7,6 +7,13 @@ import subprocess
 import sys
 import urllib.error
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from governance import GitHub
+    from standards import semver
 
 # The workflow generator embeds the governance.py (GitHub) and standards.py (semver) libraries first.
 ARTIFACT = "release-files"
@@ -14,7 +21,7 @@ MANIFEST = "build-sha256.txt"
 SUMS = "SHA256SUMS"
 
 
-def verify_run(api, workflow, run_id, sha):
+def verify_run(api: "GitHub", workflow: str, run_id: str, sha: str) -> None:
     """Accept only a finished, successful run of the named build workflow on this commit."""
     if not re.fullmatch(r"[A-Za-z0-9._-]+\.ya?ml", workflow) or not re.fullmatch(r"[1-9][0-9]{0,15}", run_id) or not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise ValueError("Supply a build workflow file name, a run id and a full commit SHA")
@@ -43,7 +50,7 @@ def verify_run(api, workflow, run_id, sha):
         raise ValueError("Build run must upload exactly one artifact named " + ARTIFACT)
 
 
-def verify_draft(api, tag, sha):
+def verify_draft(api: "GitHub", tag: str, sha: str) -> dict[str, Any]:
     """The tag must be a lightweight ref to the release commit and its release an unpublished draft."""
     ref = api.request("/git/ref/tags/" + tag)
     if ref.get("object", {}).get("type") != "commit" or ref["object"]["sha"] != sha:
@@ -54,8 +61,8 @@ def verify_draft(api, tag, sha):
     return drafts[0]
 
 
-def read_digests(text):
-    digests = {}
+def read_digests(text: str) -> dict[str, str]:
+    digests: dict[str, str] = {}
     for line in text.splitlines():
         match = re.fullmatch(r"([0-9a-f]{64})  ([A-Za-z0-9][A-Za-z0-9._-]*)", line)
         if not match or match[2] in (MANIFEST, SUMS) or match[2] in digests:
@@ -66,7 +73,7 @@ def read_digests(text):
     return digests
 
 
-def verify_files(directory):
+def verify_files(directory: Path) -> dict[str, str]:
     """Recompute every digest; the file set must equal the manifest exactly. Returns the verified files."""
     entries = {entry.name: entry for entry in directory.iterdir()}
     manifest = entries.pop(MANIFEST, None)
@@ -83,7 +90,7 @@ def verify_files(directory):
     return expected
 
 
-def merge_sums(existing, built):
+def merge_sums(existing: str, built: dict[str, str]) -> str:
     lines = existing.splitlines()
     names = {line.split("  ", 1)[1] for line in lines if "  " in line}
     if names & set(built):
@@ -91,11 +98,11 @@ def merge_sums(existing, built):
     return "".join(line + "\n" for line in lines) + "".join(f"{digest}  {name}\n" for name, digest in sorted(built.items()))
 
 
-def gh(*args):
+def gh(*args: str) -> None:
     subprocess.run(["gh", *args], check=True)
 
 
-def attach(api, directory, tag, release, run_gh):
+def attach(api: "GitHub", directory: Path, tag: str, release: dict[str, Any], run_gh: "Callable[..., None]") -> None:
     built = verify_files(directory)
     assets = {asset["name"] for asset in release["assets"]}
     if assets & set(built):
@@ -112,7 +119,7 @@ def attach(api, directory, tag, release, run_gh):
     run_gh("release", "upload", tag, "--repo", api.repo, "--clobber", str(sums))
 
 
-def main():
+def main() -> None:
     api = GitHub()
     sha, workflow, run_id = os.environ["RELEASE_COMMIT"], os.environ["BUILD_WORKFLOW"], os.environ["BUILD_RUN_ID"]
     mode = sys.argv[1]

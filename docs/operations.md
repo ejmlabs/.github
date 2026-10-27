@@ -511,6 +511,12 @@ so the shared gate is unchanged. A suppression names one rule and gives a reason
 file-wide and unlimited disables, `@ts-ignore`, `@ts-expect-error`,
 `@ts-nocheck` and explicit `any` are not used.
 
+This repository's own Python is held to the layer: `tests/test_strict.py` runs
+`ruff check` and `mypy` (strict) from the locked development group in
+`pyproject.toml`, so the gate's unit-test step enforces them. It fails when
+`uv` is missing. Run `uv run --locked --group dev ruff check .` and
+`uv run --locked --group dev mypy` locally.
+
 ## Bootstrap and rollout
 
 1. Test the shared implementation and retain its exact commit under

@@ -6,21 +6,21 @@ import json
 import re
 import subprocess
 import urllib.parse
+from typing import Any
 
 from governance import SECURITY_LABEL
 from standards import NATIVE_RELEASE, SHARED_WORKFLOWS, native_build
-
 
 NAMES = (".github", "ejmlabs", "ejm-cli", "ejm-harness", "ejm-ide")
 SUPPORTED_NAMES = (*NAMES, "ejm-ui")
 CONTEXTS = ("Human readiness", "Maintainer approval", "Quality", "Repository standards", "AI review")
 
 
-def api(path, method="GET", body=None, optional=False):
+def api(path: str, method: str = "GET", body: dict[str, Any] | None = None, *, optional: bool = False) -> Any:  # noqa: ANN401 - the decoded GitHub response has no fixed shape
     args = ["gh", "api", "--method", method, path]
     if body is not None:
         args += ["--input", "-"]
-    result = subprocess.run(args, input=None if body is None else json.dumps(body), capture_output=True, text=True)
+    result = subprocess.run(args, input=None if body is None else json.dumps(body), capture_output=True, text=True, check=False)
     if result.returncode:
         if optional:
             return {"unavailable": result.stderr.strip()}
@@ -28,7 +28,7 @@ def api(path, method="GET", body=None, optional=False):
     return json.loads(result.stdout) if result.stdout.strip() else {"applied": True}
 
 
-def collaborators(name):
+def collaborators(name: str) -> list[dict[str, Any]]:
     """Only human maintainers may write workflows or publish Actions statuses."""
     people = []
     for page in range(1, 11):
@@ -46,11 +46,11 @@ def collaborators(name):
     return [{"login": person["login"], "type": person["type"], "role": person["role_name"]} for person in people]
 
 
-def installed_consumers(name, revision):
+def installed_consumers(name: str, revision: str | None) -> None:
     """Never enable Actions until trusted callers are installed on main."""
     from standards import consumer_workflows
 
-    if not re.fullmatch(r"[0-9a-f]{40}", revision or ""):
+    if revision is None or not re.fullmatch(r"[0-9a-f]{40}", revision):
         raise ValueError("Activation requires --standards-revision with a full immutable SHA")
     root = "repos/ejmlabs/" + name + "/contents/.github/workflows"
     entries = api(root + "?ref=main")
@@ -71,7 +71,7 @@ def installed_consumers(name, revision):
             raise ValueError(name + ": main does not contain the approved caller: " + filename)
 
 
-def configure(name, protect, hold, revision=None):
+def configure(name: str, protect: bool, hold: bool, revision: str | None = None) -> dict[str, Any]:  # noqa: FBT001 - the tests and the entry point pass these positionally or by keyword
     root = "repos/ejmlabs/" + name
     api(root, "PATCH", {"allow_squash_merge": True, "allow_merge_commit": False, "allow_rebase_merge": False,
                              "delete_branch_on_merge": True, "allow_auto_merge": False, "has_issues": True,
@@ -89,7 +89,7 @@ def configure(name, protect, hold, revision=None):
     workflow_update = api(root + "/actions/permissions/workflow", "PUT", {
         "default_workflow_permissions": "read", "can_approve_pull_request_reviews": True,
     }, optional=hold)
-    fork = api(root + "/actions/permissions/fork-pr-workflows-private-repos", "PUT", {
+    api(root + "/actions/permissions/fork-pr-workflows-private-repos", "PUT", {
         "run_workflows_from_fork_pull_requests": False, "send_write_tokens_to_workflows": False,
         "send_secrets_and_variables": False, "require_approval_for_fork_pr_workflows": True,
     }, optional=True)
@@ -97,8 +97,8 @@ def configure(name, protect, hold, revision=None):
     # The review token may be unable to create labels; an existing label is the override path.
     api(root + "/labels", "POST", {"name": SECURITY_LABEL, "color": "d73a4a",
                                    "description": "Blocks AI review until a maintainer removes it"}, optional=True)
-    fixes = api(root + "/automated-security-fixes", "PUT", optional=True)
-    immutable = api(root + "/immutable-releases", "PUT", optional=True)
+    api(root + "/automated-security-fixes", "PUT", optional=True)
+    api(root + "/immutable-releases", "PUT", optional=True)
     # These APIs are public-only or depend on installed security products. No paid enrollment.
     reporting = api(root + "/private-vulnerability-reporting", "PUT", optional=True)
     external = api(root + "/actions/permissions/fork-pr-contributor-approval", "PUT", {"approval_policy": "all_external_contributors"}, optional=True)

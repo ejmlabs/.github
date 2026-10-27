@@ -5,3 +5,4 @@ __pycache__/
 !.env.example
 *.key
 *.pem
+.venv/

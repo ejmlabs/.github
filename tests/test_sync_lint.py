@@ -80,7 +80,7 @@ class SyncLintTests(unittest.TestCase):
             self.assertIn("clippy::unwrap_used is looser", result.stderr)
             (root / "Cargo.toml").write_text(manifest().replace('exit = "deny"\n', ""))
             self.assertIn("clippy::exit is missing", sync(root, "cargo-lints:Cargo.toml", "--check").stderr)
-            (root / "Cargo.toml").write_text("[package]\nname = \"x\"\n")
+            (root / "Cargo.toml").write_text('[package]\nname = "x"\n')
             self.assertNotEqual(sync(root, "cargo-lints:Cargo.toml", "--check").returncode, 0)
 
     def test_rust_tables_are_never_written(self) -> None:

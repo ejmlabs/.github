@@ -6,6 +6,7 @@ import re
 import sys
 import tomllib
 from pathlib import Path
+from typing import Any, cast
 from urllib.parse import unquote
 
 HEADINGS = ("Overview", "Status", "Requirements", "Quick start", "Usage", "Development", "Documentation", "Contributing", "Security", "Support", "License")
@@ -21,11 +22,11 @@ VERSIONS = {
     "ejm-ui": (("package.json", "version"), ("package-lock.json", "version"), ("crates/ejm-tui/Cargo.toml", "package.version"),
                *((path + "/package.json", "version") for path in UI_PACKAGES)),
 }
-UI_LICENSE_SCOPE = '''The ejmlabs name, logos, supplied brand artwork, design assets, templates, and
+UI_LICENSE_SCOPE = """The ejmlabs name, logos, supplied brand artwork, design assets, templates, and
 visual identity retain their owners' rights. All rights in those materials are
 reserved except where a file or its accompanying notice gives a separate
 license. Public access does not grant a right to use the marks or redistribute
-the brand materials.'''
+the brand materials."""
 # The owner's public npm set. Every other UI package stays private.
 UI_PUBLIC = tuple("packages/" + name for name in ("core", "ssg", "tokens", "ui"))
 UI_PUBLISH_CONFIG = {"access": "public", "provenance": True}
@@ -57,7 +58,7 @@ MODEL_KEYS = ("XAI_API_KEY",)
 # Repositories that may ship native builds. One adopts the native release by adding build.yml.
 NATIVE_RELEASE = ("ejm-cli", "ejm-harness")
 SHARED_WORKFLOWS = ("governance.yml", "draft-release.yml", "verify-build.yml", "attach-assets.yml")
-MIT_TERMS = '''Permission is hereby granted, free of charge, to any person obtaining a copy
+MIT_TERMS = """Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
 to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
@@ -71,17 +72,17 @@ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.'''
+SOFTWARE."""
 
 
-def semver(value):
+def semver(value: str) -> bool:
     match = SEMVER.fullmatch(value)
     if not match:
         return False
     return not match[4] or all(not item.isdigit() or item == "0" or not item.startswith("0") for item in match[4].split("."))
 
 
-def read(root, path, preserve_newlines=False):
+def read(root: Path, path: str, *, preserve_newlines: bool = False) -> str:
     file = root / path
     if file.is_symlink() or not file.resolve().is_relative_to(root.resolve()) or not file.is_file():
         raise ValueError(f"Missing or unsafe file: {path}")
@@ -92,7 +93,7 @@ def read(root, path, preserve_newlines=False):
     return file.read_text(encoding="utf-8")
 
 
-def versions(root, profile):
+def versions(root: Path, profile: str) -> str:
     if profile not in VERSIONS:
         raise ValueError("Unknown repository profile")
     canonical = read(root, "VERSION").strip()
@@ -136,12 +137,12 @@ def versions(root, profile):
         if not owned or any(p["version"] != canonical for p in owned):
             raise ValueError("Owned Cargo lock package versions differ from VERSION")
     notes = read(root, "CHANGELOG.md")
-    if not re.search(r"^## \[" + re.escape(canonical) + r"\] - \d{4}-\d{2}-\d{2}$", notes, re.M):
+    if not re.search(r"^## \[" + re.escape(canonical) + r"\] - \d{4}-\d{2}-\d{2}$", notes, re.MULTILINE):
         raise ValueError("CHANGELOG.md needs a dated entry for VERSION")
     return canonical
 
 
-def licenses(root, profile):
+def licenses(root: Path, profile: str) -> None:
     if profile == "ejmlabs":
         if json.loads(read(root, "site/package.json")).get("license") != "SEE LICENSE IN ../LICENSE":
             raise ValueError("Studio metadata must preserve its specific rights notice")
@@ -176,7 +177,7 @@ def licenses(root, profile):
             raise ValueError("Owned manifest license differs from MIT: " + path)
 
 
-def ui_packing(package):
+def ui_packing(package: dict[str, Any]) -> str:
     """Return the digest of a manifest's packing fields, which must match the reviewed values exactly."""
     values = {field: package[field] for field in UI_PACKING_FIELDS if field in package}
     scripts = package.get("scripts")
@@ -187,12 +188,12 @@ def ui_packing(package):
     return hashlib.sha256(json.dumps(values, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
-def ui_licenses(root, text):
+def ui_licenses(root: Path, text: str) -> None:
     """Keep the UI software grant, reserved assets, and packaged font notices."""
-    def scoped_license(value):
-        return (value.startswith("ejm-ui license scope\n") and UI_LICENSE_SCOPE in value
-                and "MIT License" in value and re.search(r"Copyright.*\d{4}.*\S", value)
-                and " ".join(MIT_TERMS.split()) in " ".join(value.split()))
+    def scoped_license(value: str) -> bool:
+        return bool(value.startswith("ejm-ui license scope\n") and UI_LICENSE_SCOPE in value
+                    and "MIT License" in value and re.search(r"Copyright.*\d{4}.*\S", value)
+                    and " ".join(MIT_TERMS.split()) in " ".join(value.split()))
 
     if not scoped_license(text):
         raise ValueError("UI license must preserve complete MIT terms and reserved brand rights")
@@ -227,7 +228,7 @@ def ui_licenses(root, text):
             raise ValueError("UI package font notice differs from the token owner: " + name)
 
 
-def consumer_workflows(revision, *, model_key="XAI_API_KEY", native=False):
+def consumer_workflows(revision: str, *, model_key: str = "XAI_API_KEY", native: bool = False) -> dict[str, str]:
     """Return the normal consumer workflows for one reviewed revision."""
     if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
         raise ValueError("Standards revision must be a full lowercase commit SHA")
@@ -345,7 +346,7 @@ jobs:
 """
 
 
-def native_build(text):
+def native_build(text: str) -> None:
     """Lint a product build workflow: read-only token, no secrets, pinned actions, one release-files artifact.
 
     This is a line-based check of the shape, not a YAML parser: it accepts only plain block-style YAML. Review still covers what the build runs.
@@ -396,7 +397,7 @@ def native_build(text):
         raise ValueError("Build workflow must upload exactly one artifact named release-files")
 
 
-def missing_model_key_workflows(revision, *, model_key="XAI_API_KEY"):
+def missing_model_key_workflows(revision: str, *, model_key: str = "XAI_API_KEY") -> dict[str, str]:
     """Return the exact shared-only caller for staged missing-key acceptance."""
     documents = consumer_workflows(revision, model_key=model_key)
     header, job = documents["pr.yml"].split("  governance:\n", 1)
@@ -409,11 +410,11 @@ def missing_model_key_workflows(revision, *, model_key="XAI_API_KEY"):
     return documents
 
 
-def _reusable_workflow(text, name, *, model_key="XAI_API_KEY"):
+def _reusable_workflow(text: str, name: str, *, model_key: str = "XAI_API_KEY") -> None:
     """Accept only the trigger scaffold and YAML subset emitted by our generator."""
-    header = '# Generated by scripts/build_workflows.py. Edit scripts and regenerate.\n'
+    header = "# Generated by scripts/build_workflows.py. Edit scripts and regenerate.\n"
     if name == "governance.yml":
-        header += '''"name": "Human-admitted PR checks"
+        header += """"name": "Human-admitted PR checks"
 "on":
   "workflow_call":
     "secrets":
@@ -422,10 +423,10 @@ def _reusable_workflow(text, name, *, model_key="XAI_API_KEY"):
       "EJM_HARNESS_TOKEN":
         "required": false
 "permissions": {}
-'''.replace("XAI_API_KEY", model_key)
+""".replace("XAI_API_KEY", model_key)
         roots = ['"jobs":']
     elif name == "verify-build.yml":
-        header += '''"name": "Verified build run"
+        header += """"name": "Verified build run"
 "on":
   "workflow_call":
     "inputs":
@@ -439,10 +440,10 @@ def _reusable_workflow(text, name, *, model_key="XAI_API_KEY"):
         "required": true
         "type": "string"
 "permissions": {}
-'''
+"""
         roots = ['"jobs":']
     elif name == "attach-assets.yml":
-        header += '''"name": "Attach verified build files"
+        header += """"name": "Attach verified build files"
 "on":
   "workflow_call":
     "inputs":
@@ -463,10 +464,10 @@ def _reusable_workflow(text, name, *, model_key="XAI_API_KEY"):
         "default": false
         "type": "boolean"
 "permissions": {}
-'''
+"""
         roots = ['"concurrency":', '"jobs":']
     else:
-        header += '''"name": "Checked draft source release"
+        header += """"name": "Checked draft source release"
 "on":
   "workflow_call":
     "inputs":
@@ -480,7 +481,7 @@ def _reusable_workflow(text, name, *, model_key="XAI_API_KEY"):
         "required": true
         "type": "string"
 "permissions": {}
-'''
+"""
         roots = ['"concurrency":', '"jobs":']
     if not text.startswith(header):
         raise ValueError("Reusable workflow must retain its workflow_call scaffold: " + name)
@@ -495,14 +496,14 @@ def _reusable_workflow(text, name, *, model_key="XAI_API_KEY"):
     # are data here; fake uses/on text inside a script is not workflow structure.
     # The admitted CLI owns one setup action in its credential-free quality job.
     # Match its complete canonical step and job, not a general local-action path.
-    cli_setup = '''      -
+    cli_setup = """      -
         "name": "Prepare ejm-cli remote test prerequisites"
         "if": "${{ needs.admission.outputs.profile == 'ejm-cli' }}"
         "uses": "./product/.github/actions/setup-ci"
-'''
+"""
     structural = []
     local_uses = []
-    parents = []
+    parents: list[tuple[int, str | None]] = []
     environments = []
     block = None
     for number, line in enumerate(text.splitlines()):
@@ -519,6 +520,7 @@ def _reusable_workflow(text, name, *, model_key="XAI_API_KEY"):
         structural[-1] = line
         if stripped == "-":
             continue
+        value: str | None
         if stripped.startswith("- "):
             key, value = None, stripped[2:]
         else:
@@ -548,8 +550,8 @@ def _reusable_workflow(text, name, *, model_key="XAI_API_KEY"):
     visible = "\n".join(structural) + "\n"
     if name == "governance.yml":
         review = re.findall(r'(?ms)^  "ai":\n(.*?)(?=^  "[^\"]+":|\Z)', visible)
-        expected = '    "environment": "legacy-review"'
-        if len(review) != 1 or environments != [expected] or expected not in review[0].splitlines():
+        legacy = '    "environment": "legacy-review"'
+        if len(review) != 1 or environments != [legacy] or legacy not in review[0].splitlines():
             raise ValueError("Only the review job must declare the legacy-review environment: " + name)
     elif environments:
         raise ValueError("Only the governance review job may declare an environment: " + name)
@@ -559,16 +561,16 @@ def _reusable_workflow(text, name, *, model_key="XAI_API_KEY"):
         # the actual quality.steps entry and its uses line, never a lookalike.
         quality = re.search(r'(?ms)^  "quality":\n(.*?)(?=^  "[^\"]+":|\Z)', visible)
         steps = re.search(r'(?ms)^    "steps":\n(.*?)(?=^    "[^\"]+":|\Z)', quality[1]) if quality else None
-        hook = re.search(r'(?m)^' + re.escape(cli_setup) + r'(?=^      -\n|\Z)', steps[1]) if steps else None
+        hook = re.search(r"(?m)^" + re.escape(cli_setup) + r"(?=^      -\n|\Z)", steps[1]) if steps else None
         allowed = None
         if name == "governance.yml" and hook:
-            start = quality.start(1) + steps.start(1) + hook.start()
+            start = cast("re.Match[str]", quality).start(1) + cast("re.Match[str]", steps).start(1) + hook.start()
             allowed = visible[:start].count("\n") + len(cli_setup.splitlines()) - 1
         if local_uses != [allowed]:
             raise ValueError("Reusable workflow action must use an immutable SHA or the scoped CLI setup hook: " + name)
 
 
-def workflows(root, profile):
+def workflows(root: Path, profile: str) -> None:
     directory = root / ".github/workflows"
     if directory.is_symlink() or not directory.is_dir():
         raise ValueError("Missing or unsafe workflows directory")
@@ -588,10 +590,10 @@ def workflows(root, profile):
     pr = read(root, ".github/workflows/pr.yml")
     # Extract the candidate pin only. Exact document comparison below is the
     # validation, so comments, quoted keys, duplicate triggers and extra jobs fail.
-    pin = re.search(r"^    uses: ejmlabs/\.github/\.github/workflows/governance\.yml@([0-9a-f]{40})$", pr, re.M)
+    pin = re.search(r"^    uses: ejmlabs/\.github/\.github/workflows/governance\.yml@([0-9a-f]{40})$", pr, re.MULTILINE)
     if not pin:
         raise ValueError("PR workflow must pin governance.yml to a full commit SHA")
-    model_key = re.search(r"^      (" + "|".join(MODEL_KEYS) + r"): \$\{\{ secrets\.\1 \}\}$", pr, re.M)
+    model_key = re.search(r"^      (" + "|".join(MODEL_KEYS) + r"): \$\{\{ secrets\.\1 \}\}$", pr, re.MULTILINE)
     if not model_key:
         raise ValueError("PR workflow must forward exactly one supported model key")
     consumers = consumer_workflows(pin[1], model_key=model_key[1], native=native)
@@ -610,14 +612,14 @@ def workflows(root, profile):
                 _reusable_workflow(read(root, ".github/workflows/" + name), name, model_key=model_key[1])
 
 
-def uniform_guidance(root, profile, templates):
+def uniform_guidance(root: Path, profile: str, templates: dict[str, str]) -> None:
     for name, template in templates.items():
         expected = template.replace("{{repository}}", "ejmlabs/" + profile).replace("{{development_guide}}", COMMUNITY_GUIDES[profile])
         if read(root, name) != expected:
             raise ValueError("Community guidance differs from the pinned standard: " + name)
 
 
-def standards(root, profile, templates=None):
+def standards(root: Path, profile: str, templates: dict[str, str] | None = None) -> None:
     version = versions(root, profile)
     if templates is None:
         directory = Path(__file__).resolve().parents[1] / "templates/community"
@@ -631,8 +633,8 @@ def standards(root, profile, templates=None):
             raise ValueError(f"Empty document or em dash: {path}")
         if not path.endswith(".md"):
             continue
-        for target in re.findall(r"\[[^\]]*\]\(([^)]+)\)", text):
-            target = target.strip("<>").split("#", 1)[0]
+        for link in re.findall(r"\[[^\]]*\]\(([^)]+)\)", text):
+            target = link.strip("<>").split("#", 1)[0]
             if not target or re.match(r"[a-zA-Z][a-zA-Z0-9+.-]*:", target):
                 continue
             resolved = (root / Path(path).parent / unquote(target)).resolve()
@@ -642,14 +644,13 @@ def standards(root, profile, templates=None):
         raise ValueError("Product and standards source must retain the MIT license")
     readme = read(root, "README.md")
     for heading in HEADINGS:
-        if not re.search(r"^## " + re.escape(heading) + r"$", readme, re.M):
+        if not re.search(r"^## " + re.escape(heading) + r"$", readme, re.MULTILINE):
             raise ValueError(f"README.md lacks heading: {heading}")
     for path in (".github/CODEOWNERS", ".github/dependabot.yml", ".github/pull_request_template.md", ".github/ISSUE_TEMPLATE/config.yml"):
         read(root, path)
     workflows(root, profile)
-    if profile in ("ejm-cli", "ejm-ide"):
-        if not re.fullmatch(r"[0-9a-f]{40}\n?", read(root, ".github/harness-revision")):
-            raise ValueError("harness revision must be a full immutable commit")
+    if profile in ("ejm-cli", "ejm-ide") and not re.fullmatch(r"[0-9a-f]{40}\n?", read(root, ".github/harness-revision")):
+        raise ValueError("harness revision must be a full immutable commit")
     print(f"Repository standards and version {version} passed for {profile}")
 
 
