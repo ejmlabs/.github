@@ -411,6 +411,39 @@ The shared workflow creates source drafts from an exact checked protected
 main commit, the repository's SemVer `VERSION` and dated release notes. See
 [Releasing](../RELEASING.md) for the dispatch and artifact contract.
 
+## Attaching built files
+
+`ejm-cli` and `ejm-harness` may ship native builds. A repository opts in by adding
+`.github/workflows/build.yml`; the standards check then requires the canonical
+native `release.yml` (verify, Draft release, attach, one commit input, one pin)
+and a build workflow that:
+
+- runs only on `workflow_dispatch` and pushes to `main`;
+- sets top-level `permissions: contents: read` and no other permissions;
+- uses no secrets, tokens, environments or pull-request triggers;
+- pins every action to a full commit SHA;
+- uploads exactly one artifact named `release-files`: the release files plus one
+  combined `build-sha256.txt` in `sha256sum` format, names `[A-Za-z0-9._-]`, no
+  subdirectories. Per-platform jobs upload their own differently named
+  artifacts, which a final job collects into `release-files`; attach ignores the rest.
+
+Without `build.yml` the plain source-release caller is required. The jobs are:
+
+1. `verify-build.yml` (`actions: read`) before Draft release. It requires a
+   completed, successful run of `build.yml` whose `head_sha` is the release
+   commit, on main in the same repository, with a `release-files` artifact, so a
+   failed smoke check never burns the tag.
+2. `attach-assets.yml` after Draft release (`needs`). It holds the release write
+   token and checks out and runs no project code. It re-verifies the run, the
+   lightweight `vVERSION` tag and the single draft release, downloads
+   `release-files`, recomputes every SHA-256 against `build-sha256.txt`, and
+   uploads the files, then an extended `SHA256SUMS`, to the draft. It refuses a
+   changed digest, an extra, missing or linked file, and a built file that would
+   replace an existing asset. `attest` adds build provenance attestation; this is
+   provenance, not code signing.
+
+The caller pins all shared workflows to one reviewed commit of this repository. Signing and notarization are not claimed by either workflow.
+
 This revision's canonical PR and release callers both pin
 `6717b433c462e01abaed86e2118e4843827598cb`. Its archive validator preserves
 committed notice bytes. The earlier `c4f2873ef0eef5bc3c7d75cf71fa3489a911d134`

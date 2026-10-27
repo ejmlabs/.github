@@ -5,8 +5,8 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from standards import MIT_TERMS, consumer_workflows, licenses, missing_model_key_workflows, read, semver, versions, workflows
-from build_workflows import governance, release_workflow, yaml
+from standards import MIT_TERMS, consumer_workflows, native_build, licenses, missing_model_key_workflows, read, semver, versions, workflows
+from build_workflows import attach_workflow, governance, release_workflow, verify_build_workflow, yaml
 
 
 class StandardTests(unittest.TestCase):
@@ -46,6 +46,26 @@ class StandardTests(unittest.TestCase):
             (root / "Cargo.toml").write_text('[workspace]\nmembers=[]\n[workspace.package]\nlicense="MIT"\n')
             (root / "LICENSE").write_text("MIT License\nCopyright (c) 2026 Example\nOnly a fragment.")
             with self.assertRaises(ValueError): licenses(root, "ejm-cli")
+
+
+NATIVE_BUILD = """name: Build
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@""" + "1" * 40 + """
+      - run: cargo build --release --locked
+      - uses: actions/upload-artifact@""" + "2" * 40 + """
+        with:
+          name: release-files
+          path: out/
+"""
 
 
 class WorkflowTests(unittest.TestCase):
@@ -274,9 +294,143 @@ class WorkflowTests(unittest.TestCase):
     def test_shared_profile_accepts_both_full_generated_reusables(self):
         self.add_reusable("governance.yml", governance())
         self.add_reusable("draft-release.yml", release_workflow())
+        self.add_reusable("verify-build.yml", verify_build_workflow())
+        self.add_reusable("attach-assets.yml", attach_workflow())
         workflows(self.root, ".github")
         with self.assertRaises(ValueError):
             workflows(self.root, "ejm-cli")
+
+    def test_new_reusables_must_match_the_generated_scaffold(self):
+        for name, data in (("verify-build.yml", verify_build_workflow()), ("attach-assets.yml", attach_workflow())):
+            self.add_reusable("governance.yml", governance())
+            self.add_reusable(name, data)
+            workflows(self.root, ".github")
+            data["on"]["workflow_call"]["inputs"]["extra"] = {"required": False, "type": "string"}
+            self.add_reusable(name, data)
+            with self.subTest(name), self.assertRaises(ValueError):
+                workflows(self.root, ".github")
+            (self.directory / name).unlink()
+
+    def native(self, repository="ejm-cli", build=None):
+        self.reset_callers()
+        (self.directory / "release.yml").write_text(consumer_workflows(self.revision, native=True)["release.yml"])
+        (self.directory / "build.yml").write_text(NATIVE_BUILD if build is None else build)
+        workflows(self.root, repository)
+
+    def test_native_release_is_selected_by_a_build_workflow_in_an_eligible_repository(self):
+        self.native()
+        self.native("ejm-harness")
+        with self.assertRaises(ValueError):
+            self.native("ejm-ui")
+        with self.assertRaises(ValueError):
+            self.native("ejmlabs")
+        # A plain release.yml with a build.yml, or the native one without it, is not canonical.
+        self.reset_callers()
+        (self.directory / "build.yml").write_text(NATIVE_BUILD)
+        with self.assertRaises(ValueError):
+            workflows(self.root, "ejm-cli")
+        (self.directory / "build.yml").unlink()
+        (self.directory / "release.yml").write_text(consumer_workflows(self.revision, native=True)["release.yml"])
+        with self.assertRaises(ValueError):
+            workflows(self.root, "ejm-cli")
+        self.reset_callers()
+        workflows(self.root, "ejm-cli")
+
+    def test_native_release_orders_verify_release_attach_on_one_pin_and_commit(self):
+        text = consumer_workflows(self.revision, native=True)["release.yml"]
+        self.assertLess(text.index("  verify:"), text.index("  release:"))
+        self.assertLess(text.index("  release:"), text.index("  attach:"))
+        self.assertIn("    needs: verify\n", text)
+        self.assertIn("    needs: release\n", text)
+        self.assertEqual(text.count("      commit: ${{ inputs.commit }}\n"), 3)
+        self.assertEqual(set(__import__("re").findall(r"@([0-9a-f]{40})", text)), {self.revision})
+        self.assertNotIn("secrets", text)
+
+    def test_everything_the_lint_accepts_is_structurally_read_only(self):
+        """Backstop: PyYAML is not a dependency of the standards check, so this runs where it is installed."""
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML is not installed")
+        try:
+            import ruamel.yaml as ruamel
+        except ImportError:
+            ruamel = None
+        hostile = ["  actions: write", "    permissions: write-all", "      - uses: x/y@v1", "id-token: write", "ON: {workflow_call: {}}", "  env:", "    T: secrets.K", "\u00a0#T: x", "\u2002# c",
+                   "permissions: write-all", "secrets: inherit", "concurrency:", "    id-token: write", "- uses: x/y@v1", "run-name: x", "env:", "name: x"]
+        lines = NATIVE_BUILD.splitlines()
+        accepted = 0
+        for text in [NATIVE_BUILD, *("\n".join(lines[:i] + [extra] + lines[i:]) + "\n" for i in range(len(lines) + 1) for extra in hostile)]:
+            try:
+                native_build(text)
+            except ValueError:
+                continue
+            parsed = []
+            try:
+                parsed.append(yaml.safe_load(text))
+                if ruamel:
+                    parsed.append(ruamel.YAML(typ="safe").load(text))
+            except Exception:  # an unparsable file is not a workflow GitHub would run
+                continue
+            accepted += 1
+            for data in parsed:
+                self.assertEqual(data["permissions"], {"contents": "read"}, text)
+                self.assertLessEqual({"on" if key is True else key for key in data}, {"name", "on", "permissions", "run-name", "env", "defaults", "concurrency", "jobs"}, text)
+                self.assertTrue(all("permissions" not in job for job in (data["jobs"] or {}).values() if isinstance(job, dict)), text)
+            self.assertNotRegex(text.lower(), "secrets|id-token")
+        self.assertGreaterEqual(accepted, 1)
+
+    def test_native_build_scripts_may_use_shell_braces(self):
+        native_build(NATIVE_BUILD.replace("      - run: cargo build --release --locked\n", "      - run: |\n          for f in out/*; do echo \"${f}\"; done\n          [ -d out ] && true\n"))
+
+    def test_native_build_accepts_block_lists_folded_and_indented_scalars(self):
+        native_build(NATIVE_BUILD.replace("    runs-on: ubuntu-24.04\n", "    strategy:\n      matrix:\n        os:\n          - ubuntu-24.04\n          - macos-15\n    runs-on: ubuntu-24.04\n")
+                     .replace("      - run: cargo build --release --locked\n", "\n      # build\n      - run: >-\n          cargo build\n          --locked\n      - run: |2\n            x\n"))
+
+    def test_native_build_shape_is_read_only_and_secretless(self):
+        native_build(NATIVE_BUILD)
+        bad = {
+            "write permission": NATIVE_BUILD.replace("contents: read", "contents: write"),
+            "job permissions": NATIVE_BUILD.replace("  build:\n", "  build:\n    permissions:\n      contents: read\n"),
+            "secret": NATIVE_BUILD.replace("run: cargo", "env:\n          K: ${{ secrets.K }}\n        run: cargo"),
+            "token": NATIVE_BUILD.replace("run: cargo", "env:\n          T: ${{ github.token }}\n        run: cargo"),
+            "pull request": NATIVE_BUILD.replace("  workflow_dispatch:\n", "  workflow_dispatch:\n  pull_request:\n"),
+            "mutable action": NATIVE_BUILD.replace("@" + "1" * 40, "@v4"),
+            "local action": NATIVE_BUILD.replace("actions/checkout@" + "1" * 40, "./.github/actions/x"),
+            "other branches": NATIVE_BUILD.replace("[main]", "[main, topic]"),
+            "no artifact": NATIVE_BUILD.replace("release-files", "files"),
+            "second artifact": NATIVE_BUILD + "      - name: release-files\n",
+            "environment": NATIVE_BUILD.replace("    runs-on", "    environment: prod\n    runs-on"),
+            "quoted job permissions": NATIVE_BUILD.replace("    runs-on", '    "permissions": write-all\n    runs-on'),
+            "flow job permissions": NATIVE_BUILD.replace("    runs-on: ubuntu-24.04\n", "    other: {permissions: write-all, runs-on: x}\n    runs-on: ubuntu-24.04\n"),
+            "quoted local action": NATIVE_BUILD.replace("      - run: cargo build --release --locked\n", '      - "uses": ./.github/actions/x\n'),
+            "flow mutable action": NATIVE_BUILD.replace("      - run: cargo build --release --locked\n", "      - {uses: someone/x@v1}\n"),
+            "anchor": NATIVE_BUILD.replace("    runs-on: ubuntu-24.04", "    runs-on: &os ubuntu-24.04"),
+            "tab": NATIVE_BUILD.replace("      - run: cargo", "      -\trun: cargo"),
+            "second document": NATIVE_BUILD + "---\nname: other\n",
+            "explicit escaped key": NATIVE_BUILD.replace("    runs-on", '    ? "perm\\x69ssions"\n    : write-all\n    runs-on'),
+            "two spaces then escaped key": NATIVE_BUILD.replace("      - run: cargo build --release --locked\n", '      -  "u\\x73es": someone/x@v1\n'),
+            "key after a shallow block end": NATIVE_BUILD.replace("      - run: cargo build --release --locked\n", '      - name: |\n          hi\n        "u\\x73es": someone/x@v1\n'),
+            "flow key after a run block": NATIVE_BUILD.replace("      - run: cargo build --release --locked\n", "      - run: |\n          make\n        env: {A: b}\n"),
+            "carriage return in the name line": NATIVE_BUILD.replace("name: Build\n", 'name: Build\renv:\r  T: "${{ \\x73ecrets.K }}"\n', 1),
+            "next-line break in the name line": NATIVE_BUILD.replace("name: Build\n", 'name: Build\x85env:\x85  T: "${{ \\x73ecrets.K }}"\n', 1),
+            "line separator in the body": NATIVE_BUILD.replace("      - run: cargo", "      - run: cargo\u2028env: x\n      - run: cargo", 1),
+            "quoted name": NATIVE_BUILD.replace("name: Build", 'name: "Build"', 1),
+            "repeated top-level key": NATIVE_BUILD + "jobs:\n  c:\n    runs-on: x\n",
+            "repeated on": NATIVE_BUILD + "on:\n  workflow_call:\n",
+            "uppercase on": NATIVE_BUILD + "ON:\n  workflow_call:\n",
+            "permission after the header": NATIVE_BUILD.replace("  contents: read\n", "  contents: read\n\n  # more\n  actions: write\n", 1),
+            "no-break space before a comment mark": NATIVE_BUILD.replace("jobs:\n", 'env:\n\u00a0 #T: "${{ \\x73ecrets.K }}"\njobs:\n', 1),
+            "en space before a comment mark": NATIVE_BUILD.replace("jobs:\n", 'env:\n\u2002#T: "${{ \\x73ecrets.K }}"\njobs:\n', 1),
+            "non-ascii text in a comment": NATIVE_BUILD.replace("jobs:\n", "# caf\u00e9\njobs:\n", 1),
+            "non-ascii text in a script": NATIVE_BUILD.replace("cargo build", "cargo build \u00e9", 1),
+            "control character": NATIVE_BUILD.replace("cargo build", "cargo\x07 build", 1),
+            "uppercase permissions": NATIVE_BUILD.replace("    runs-on", "    PERMISSIONS: write-all\n    runs-on"),
+            "matrix flow list": NATIVE_BUILD.replace("    runs-on: ubuntu-24.04\n", "    strategy:\n      matrix:\n        os: [a, b]\n    runs-on: ubuntu-24.04\n"),
+        }
+        for name, text in bad.items():
+            with self.subTest(name), self.assertRaises(ValueError):
+                native_build(text)
 
     def test_review_job_requires_its_exclusive_protected_environment(self):
         for case in ("valid", "step input", "missing", "wrong name", "other job", "indented other job", "moved", "mapping", "literal lookalike", "duplicate job", "duplicate environment"):
