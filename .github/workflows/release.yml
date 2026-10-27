@@ -17,8 +17,8 @@ jobs:
       contents: write
       pull-requests: read
       statuses: read
-    uses: ejmlabs/.github/.github/workflows/draft-release.yml@02036a015ee7df65e1205dc20ed113a042431cdf
+    uses: ejmlabs/.github/.github/workflows/draft-release.yml@091b6b7095de57b29344459ca690282cad73fa19
     with:
       commit: ${{ inputs.commit }}
       version: ${{ inputs.version }}
-      standards-ref: "02036a015ee7df65e1205dc20ed113a042431cdf"
+      standards-ref: "091b6b7095de57b29344459ca690282cad73fa19"
