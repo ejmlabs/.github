@@ -213,8 +213,6 @@ class WorkflowSecurityTests(unittest.TestCase):
                 ["npm", "rebuild", "node-pty", "--ignore-scripts=false"],
                 ["npm", "run", "check"],
                 ["npm", "run", "build"],
-                ["node", "scripts/size.mjs"],
-                ["npm", "run", "size", "-w", "@ejm/demos"],
                 ["npm", "run", "check:rust"],
                 ["node", "scripts/pack-proof.mjs"],
             ],
