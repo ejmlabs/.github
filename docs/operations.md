@@ -486,6 +486,31 @@ released assets, retry automatically or publish incomplete drafts. Existing
 versions remain blocked. If integrity is uncertain, prepare a new version
 through a checked PR.
 
+## Strict lint layer
+
+`templates/lint/` holds the strict lint layer every repository shares: the ESLint
+flat config `eslint.strict.mjs`, the ruff configuration `ruff.strict.toml`, the
+ShellCheck configuration `.shellcheckrc` and the Rust lint tables
+`cargo-lints.toml`. TypeScript extends the published `@tsconfig/strictest`
+package and mypy runs with `strict = true`; neither needs a file here. Nothing
+under `templates/lint/` is embedded in a shared workflow, so changing it moves
+no pin.
+
+Copy the files into a repository checkout, or check a checkout for drift:
+
+```
+python3 scripts/sync_lint.py ../repository eslint.strict.mjs ruff.strict.toml .shellcheckrc
+python3 scripts/sync_lint.py ../repository eslint.strict.mjs --check
+python3 scripts/sync_lint.py ../repository cargo-lints:Cargo.toml --check
+```
+
+The Rust tables are pasted into `Cargo.toml` by hand. `--check` fails when one
+is missing or set to a lower level (`forbid` over `deny` is allowed). The script
+refuses symlinks. Each repository runs these tools from its own check command,
+so the shared gate is unchanged. A suppression names one rule and gives a reason;
+file-wide and unlimited disables, `@ts-ignore`, `@ts-expect-error`,
+`@ts-nocheck` and explicit `any` are not used.
+
 ## Bootstrap and rollout
 
 1. Test the shared implementation and retain its exact commit under
