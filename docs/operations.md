@@ -181,7 +181,7 @@ npm run check:rust
 node scripts/pack-proof.mjs
 ```
 
-No shared check caps bundle bytes, download size or dependency count; use well-maintained packages where they fit. Load time is the performance bar and each product repository measures it (for example with its own `npm run perf`).
+No shared check caps bundle bytes, download size or dependency count. The commands above belong to each product, which removes its own budgets in its own change; use well-maintained packages where they fit. Load time is the performance bar and each product repository measures it (for example with its own `npm run perf`).
 
 The explicit `node-pty` rebuild is the single dependency lifecycle exception.
 It runs only inside admitted credential-free Quality. The owner must lock that

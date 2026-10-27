@@ -40,7 +40,7 @@ UI_LIFECYCLE_SCRIPTS = ("preprepare", "prepare", "postprepare", "prepack", "post
 # Any change to a public package's packing manifest needs a new shared revision.
 UI_PACKING_SHA256 = {
     "packages/core": "8340bf6bd1ea23bd372acaccfa303b3fe6bc5f631ca95780b5c9b00f656dba29",
-    "packages/ssg": "fac8edac4ab77073ee7dbd66e36576892c87ca023f6f41411ea78c888e2f69e4",
+    "packages/ssg": "8f0b1dd2b3bfc85d1d15c5107d90ad0e400c0eaf5b0880877eb97468264545da",
     "packages/tokens": "6a42d63e7e4e6140855f25a6b1c016e75d01582a0005319089e7f836514ba575",  # gitleaks:allow (package manifest digest)
     "packages/ui": "e22c0b53fb8ab7ae638952245f8b94531acff1302853403e6b303ae64b8a3be7",
 }

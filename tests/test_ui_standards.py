@@ -237,7 +237,7 @@ class UIStandardsTests(unittest.TestCase):
                 "files": ["src", "!src/**/*.test.*", "contract.json", "LICENSE", "THIRD_PARTY_NOTICES.md"]},
             "packages/ssg": {
                 "name": "@ejm/ssg", "main": "./src/index.ts", "types": "./src/index.ts", "bin": {"ejm-ssg": "./bin/ejm-ssg.mjs"},
-                "exports": {".": "./src/index.ts", "./server": "./src/server.ts", "./vite": "./src/vite.mjs", "./budget": "./src/budget.mjs",
+                "exports": {".": "./src/index.ts", "./server": "./src/server.ts", "./vite": "./src/vite.mjs",
                             "./ssg.css": "./src/ssg.css"},
                 "files": ["bin", "src", "!src/**/*.test.*", "!src/perf", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"]},
             "packages/ui": json.loads('''

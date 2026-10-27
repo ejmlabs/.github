@@ -5,7 +5,7 @@ The shared Quality gate, standards and review criteria SHALL NOT cap bundle byte
 
 #### Scenario: ejm-ui gate
 - **WHEN** the `ejm-ui` Quality gate runs
-- **THEN** it runs check, build, Rust check and pack proof and no size or budget command
+- **THEN** it runs check, build, Rust check and pack proof and no shared size or budget command; the commands it runs belong to each product, which removes its own budgets in its own change
 
 #### Scenario: Safety bounds remain
 - **WHEN** admission budgets, review-context byte limits, PR size bounds or standards input limits are reached
