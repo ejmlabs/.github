@@ -32,6 +32,8 @@ class UIStandardsTests(unittest.TestCase):
         for path in ("", *standards.UI_PACKAGES):
             prefix = path + "/" if path else ""
             package = {"version": "0.1.0", "private": True, "license": "SEE LICENSE IN LICENSE"}
+            if path == "packages/tokens":
+                package["files"] = ["src", "!src/**/*.test.*", "assets/fonts", "assets/brand", "./assets/icons/", "LICENSE"]
             if path:
                 package["repository"] = {"type": "git", "url": "git+https://github.com/ejmlabs/ejm-ui.git", "directory": path}
                 self.write(prefix + "LICENSE", self.license)
@@ -106,6 +108,74 @@ class UIStandardsTests(unittest.TestCase):
             with self.subTest(package=path, field="notice"), self.assertRaisesRegex(ValueError, "third-party notices"):
                 standards.licenses(self.root, "ejm-ui")
             self.write(notice, "# Third-party notices\nSee LICENSE.\n")
+
+    def make_public(self, path, **changes):
+        manifest = path + "/package.json"
+        package = json.loads(standards.read(self.root, manifest))
+        package.pop("private", None)
+        package["publishConfig"] = {"access": "public", "provenance": True}
+        self.write(manifest, json.dumps({**package, **changes}))
+
+    def test_exactly_the_owner_public_set_may_publish_with_the_exact_configuration(self):
+        for path in standards.UI_PUBLIC:
+            self.make_public(path)
+        standards.licenses(self.root, "ejm-ui")
+        self.assertEqual(standards.UI_PUBLIC, ("packages/core", "packages/ssg", "packages/tokens", "packages/ui"))
+        for path in standards.UI_PUBLIC:
+            original = standards.read(self.root, path + "/package.json")
+            for name, changes in (("private false", {"private": False}),
+                                  ("no config", {"publishConfig": None}),
+                                  ("restricted", {"publishConfig": {"access": "restricted", "provenance": True}}),
+                                  ("no provenance", {"publishConfig": {"access": "public"}}),
+                                  ("extra key", {"publishConfig": {"access": "public", "provenance": True, "tag": "x"}}),
+                                  ("string provenance", {"publishConfig": {"access": "public", "provenance": "true"}}),
+                                  ("changed license", {"license": "MIT"})):
+                with self.subTest(package=path, change=name):
+                    package = json.loads(original)
+                    package.update(changes)
+                    if changes.get("publishConfig", 0) is None:
+                        del package["publishConfig"]
+                    self.write(path + "/package.json", json.dumps(package))
+                    with self.assertRaises(ValueError):
+                        standards.licenses(self.root, "ejm-ui")
+            self.write(path + "/package.json", original)
+
+    def test_other_packages_and_the_root_must_stay_private(self):
+        private_only = ("", *(path for path in standards.UI_PACKAGES if path not in standards.UI_PUBLIC))
+        self.assertEqual(private_only, ("", "packages/demos", "packages/ink", "packages/shots", "packages/site"))
+        for path in private_only:
+            manifest = (path + "/" if path else "") + "package.json"
+            original = json.loads(standards.read(self.root, manifest))
+            del original["private"]
+            original["publishConfig"] = {"access": "public", "provenance": True}
+            with self.subTest(package=path):
+                self.write(manifest, json.dumps(original))
+                with self.assertRaisesRegex(ValueError, "must remain private"):
+                    standards.licenses(self.root, "ejm-ui")
+                self.write(manifest, json.dumps({**original, "private": True}))
+                standards.licenses(self.root, "ejm-ui")
+
+    def test_published_tokens_cannot_ship_brand_logos_or_artwork(self):
+        self.make_public("packages/tokens")
+        base = ["src", "!src/**/*.test.*", "generated", "theme.json", "LICENSE"]
+        for files in (base, base + ["assets/fonts", "assets/brand", "assets/icons", "assets/fonts/Manrope-OFL.txt", "./assets/icons/", "!assets/icons/x.svg"]):
+            self.make_public("packages/tokens", files=files)
+            standards.licenses(self.root, "ejm-ui")
+        for entry in ("assets", "assets/", "assets/logos", "./assets", "././assets/logos", "assets/fonts/../logos", "assets/*", "assets/{logos,fonts}",
+                      "assets/fonts/*", "*", "**/logos", "{assets}", ".", "", "./", "../assets", "assets\\logos", "assets/brandx", "assetsx/../assets"):
+            with self.subTest(entry=entry):
+                self.make_public("packages/tokens", files=base + [entry])
+                with self.assertRaisesRegex(ValueError, "brand logos and artwork"):
+                    standards.licenses(self.root, "ejm-ui")
+        for files in (None, "assets/fonts", [1], {"assets": True}):
+            with self.subTest(files=files):
+                self.make_public("packages/tokens", files=files)
+                if files is None:
+                    package = json.loads(standards.read(self.root, "packages/tokens/package.json"))
+                    del package["files"]
+                    self.write("packages/tokens/package.json", json.dumps(package))
+                with self.assertRaisesRegex(ValueError, "brand logos and artwork"):
+                    standards.licenses(self.root, "ejm-ui")
 
     def test_font_licenses_must_be_original_and_match_the_ui_package(self):
         source, copied = standards.UI_FONT_NOTICES[0], standards.UI_FONT_NOTICES[2]

@@ -26,6 +26,13 @@ visual identity retain their owners' rights. All rights in those materials are
 reserved except where a file or its accompanying notice gives a separate
 license. Public access does not grant a right to use the marks or redistribute
 the brand materials.'''
+# The owner's public npm set. Every other UI package stays private.
+UI_PUBLIC = tuple("packages/" + name for name in ("core", "ssg", "tokens", "ui"))
+UI_PUBLISH_CONFIG = {"access": "public", "provenance": True}
+# Brand logos and artwork stay out of the tokens tarball; only these asset folders ship.
+UI_TOKEN_ASSETS = ("assets/fonts", "assets/brand", "assets/icons")
+# The reviewed ejm-ui publish workflow; any change needs a new shared revision.
+UI_PUBLISH_SHA256 = "b28800bd599a24b07f385202bad0e8ef53bc5f503bdd600b51fbd4f461f656e9"
 UI_FONT_NOTICES = tuple("packages/" + path + "/" + name + "-OFL.txt"
                         for path in ("tokens/assets/fonts", "ui/src/fonts") for name in ("Manrope", "IBMPlexMono"))
 UI_FONT_HASHES = {
@@ -156,6 +163,28 @@ def licenses(root, profile):
             raise ValueError("Owned manifest license differs from MIT: " + path)
 
 
+def tokens_ship_only_allowed_assets(files):
+    """Accept a tokens `files` list whose entries cannot reach assets outside the allowed folders."""
+    if not isinstance(files, list) or not all(isinstance(entry, str) for entry in files):
+        return False
+    glob = re.compile(r"[*?\[\]{}()!+@]")
+    for entry in files:
+        if entry.startswith("!"):
+            continue
+        while entry.startswith("./"):
+            entry = entry[2:]
+        entry = entry.rstrip("/")
+        first = entry.split("/")[0]
+        if "\\" in entry or ".." in entry.split("/") or first in ("", "."):
+            return False
+        if first == "assets":
+            if glob.search(entry) or not any(entry == asset or entry.startswith(asset + "/") for asset in UI_TOKEN_ASSETS):
+                return False
+        elif glob.search(first):
+            return False
+    return True
+
+
 def ui_licenses(root, text):
     """Keep the UI software grant, reserved assets, and packaged font notices."""
     def scoped_license(value):
@@ -171,8 +200,11 @@ def ui_licenses(root, text):
     for path in ("", *UI_PACKAGES):
         prefix = path + "/" if path else ""
         package = json.loads(read(root, prefix + "package.json"))
-        if package.get("license") != "SEE LICENSE IN LICENSE" or package.get("private") is not True:
+        public = path in UI_PUBLIC and "private" not in package and package.get("publishConfig") == UI_PUBLISH_CONFIG
+        if package.get("license") != "SEE LICENSE IN LICENSE" or not (public or package.get("private") is True):
             raise ValueError("UI npm packages must remain private and preserve their scoped license: " + prefix)
+        if public and path == "packages/tokens" and not tokens_ship_only_allowed_assets(package.get("files")):
+            raise ValueError("Published tokens must list files and exclude brand logos and artwork: " + prefix)
         if not path:
             continue
         if package.get("repository") != {"type": "git", "url": "git+https://github.com/ejmlabs/ejm-ui.git", "directory": path}:
@@ -540,6 +572,11 @@ def workflows(root, profile):
     native = profile in NATIVE_RELEASE and (directory / "build.yml").exists()
     if native:
         allowed.add("build.yml")
+    publish = directory / "publish.yml"
+    if profile == "ejm-ui" and publish.is_file() and not publish.is_symlink():
+        if hashlib.sha256(publish.read_bytes()).hexdigest() != UI_PUBLISH_SHA256:
+            raise ValueError("UI publish workflow differs from the reviewed revision")
+        allowed.add("publish.yml")
     if profile == ".github":
         allowed.update(SHARED_WORKFLOWS)
     if any(file.name not in allowed for file in directory.iterdir()):
