@@ -20,7 +20,7 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Changed
 
-- Type-annotate the Python scripts and tests, and enforce `mypy --strict` and ruff with the shared strict layer through a unit test run by the existing gate command. Behaviour is unchanged; the generated workflows differ only in the embedded script bytes.
+- Type-annotate the scripts and tests, and enforce `mypy --strict` and ruff with the shared strict layer through a unit test run by the existing gate command. Behaviour is unchanged; the generated workflows differ only in the embedded script bytes.
 - Remove the `ejm-ui` bundle-size steps from the required Quality gate and the bundle-size wording from the operations guide; no shared check caps download size or dependency count. Safety bounds and security rules are unchanged.
 - Instruct the automated review not to report a changed full-hash pin of this repository's shared workflows as missing context or a security concern; other references, moves to older revisions and widened permissions are still to be reported. Pin provenance remains a maintainer check.
 - Replace the custom automated review gate with the pinned reviewer's documented GitHub Action runner and label blocking: one review per admission, its own security and effort labels, a merge recommendation, and a required label check. Removing the security label is the maintainer override; callers also trigger on label removal to re-evaluate. Removed the result adapter, two passes, coverage and negative-answer rules, and static review data.
