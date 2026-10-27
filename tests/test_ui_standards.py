@@ -113,6 +113,8 @@ class UIStandardsTests(unittest.TestCase):
         manifest = path + "/package.json"
         package = json.loads(standards.read(self.root, manifest))
         package.pop("private", None)
+        for field in ("main", "browser", "bin"):
+            package.pop(field, None)
         package["publishConfig"] = {"access": "public", "provenance": True}
         self.write(manifest, json.dumps({**package, **changes}))
 
@@ -129,6 +131,8 @@ class UIStandardsTests(unittest.TestCase):
                                   ("no provenance", {"publishConfig": {"access": "public"}}),
                                   ("extra key", {"publishConfig": {"access": "public", "provenance": True, "tag": "x"}}),
                                   ("string provenance", {"publishConfig": {"access": "public", "provenance": "true"}}),
+                                  ("integer provenance", {"publishConfig": {"access": "public", "provenance": 1}}),
+                                  ("float provenance", {"publishConfig": {"access": "public", "provenance": 1.0}}),
                                   ("changed license", {"license": "MIT"})):
                 with self.subTest(package=path, change=name):
                     package = json.loads(original)
@@ -162,11 +166,27 @@ class UIStandardsTests(unittest.TestCase):
             self.make_public("packages/tokens", files=files)
             standards.licenses(self.root, "ejm-ui")
         for entry in ("assets", "assets/", "assets/logos", "./assets", "././assets/logos", "assets/fonts/../logos", "assets/*", "assets/{logos,fonts}",
-                      "assets/fonts/*", "*", "**/logos", "{assets}", ".", "", "./", "../assets", "assets\\logos", "assets/brandx", "assetsx/../assets"):
+                      "assets/fonts/*", "*", "**/logos", "{assets}", ".", "", "./", "../assets", "assets\\logos", "assets/brandx", "assetsx/../assets",
+                      "!!assets", "!!assets/logos", "!!!!assets", "!!**", "!!"):
             with self.subTest(entry=entry):
                 self.make_public("packages/tokens", files=base + [entry])
                 with self.assertRaisesRegex(ValueError, "brand logos and artwork"):
                     standards.licenses(self.root, "ejm-ui")
+        # An odd number of leading `!` only excludes, so it cannot add files.
+        for entry in ("!assets", "!!!assets", "!assets/logos"):
+            self.make_public("packages/tokens", files=base + [entry])
+            standards.licenses(self.root, "ejm-ui")
+        for field, value in (("main", "assets/logos/x.svg"), ("main", "./assets/logos/x.svg"), ("browser", "assets/logos/x.svg"),
+                             ("bin", "assets/logos/x.svg"), ("bin", {"x": "./assets/logos/x.svg"}), ("main", "assets"),
+                             ("main", 1), ("bin", {"x": 1})):
+            with self.subTest(field=field, value=value):
+                self.make_public("packages/tokens", files=base, **{field: value})
+                with self.assertRaisesRegex(ValueError, "brand logos and artwork"):
+                    standards.licenses(self.root, "ejm-ui")
+        for field, value in (("main", "./src/index.ts"), ("browser", "assets/icons/x.svg"), ("bin", {"x": "bin/x.js"}), ("bin", "bin/x.js")):
+            with self.subTest(field=field, value=value):
+                self.make_public("packages/tokens", files=base, **{field: value})
+                standards.licenses(self.root, "ejm-ui")
         for files in (None, "assets/fonts", [1], {"assets": True}):
             with self.subTest(files=files):
                 self.make_public("packages/tokens", files=files)

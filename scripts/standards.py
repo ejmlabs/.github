@@ -163,26 +163,40 @@ def licenses(root, profile):
             raise ValueError("Owned manifest license differs from MIT: " + path)
 
 
-def tokens_ship_only_allowed_assets(files):
-    """Accept a tokens `files` list whose entries cannot reach assets outside the allowed folders."""
-    if not isinstance(files, list) or not all(isinstance(entry, str) for entry in files):
+def path_avoids_other_assets(entry):
+    """Accept one packed path or pattern that cannot reach assets outside the allowed folders."""
+    if not isinstance(entry, str):
         return False
     glob = re.compile(r"[*?\[\]{}()!+@]")
+    while entry.startswith("./"):
+        entry = entry[2:]
+    entry = entry.rstrip("/")
+    first = entry.split("/")[0]
+    if "\\" in entry or ".." in entry.split("/") or first in ("", "."):
+        return False
+    if first == "assets":
+        return not glob.search(entry) and any(entry == asset or entry.startswith(asset + "/") for asset in UI_TOKEN_ASSETS)
+    return not glob.search(first)
+
+
+def tokens_ship_only_allowed_assets(package):
+    """Check every way npm can pack a file of the tokens package: `files`, `main`, `browser` and `bin`."""
+    files = package.get("files")
+    if not isinstance(files, list):
+        return False
     for entry in files:
-        if entry.startswith("!"):
+        if not isinstance(entry, str):
+            return False
+        negations = len(entry) - len(entry.lstrip("!"))
+        # An odd number of leading `!` only excludes; an even number re-includes and is refused.
+        if negations % 2:
             continue
-        while entry.startswith("./"):
-            entry = entry[2:]
-        entry = entry.rstrip("/")
-        first = entry.split("/")[0]
-        if "\\" in entry or ".." in entry.split("/") or first in ("", "."):
+        if negations or not path_avoids_other_assets(entry):
             return False
-        if first == "assets":
-            if glob.search(entry) or not any(entry == asset or entry.startswith(asset + "/") for asset in UI_TOKEN_ASSETS):
-                return False
-        elif glob.search(first):
-            return False
-    return True
+    targets = [package.get("main"), package.get("browser")]
+    commands = package.get("bin")
+    targets += list(commands.values()) if isinstance(commands, dict) else [commands]
+    return all(target is None or path_avoids_other_assets(target) for target in targets)
 
 
 def ui_licenses(root, text):
@@ -200,10 +214,12 @@ def ui_licenses(root, text):
     for path in ("", *UI_PACKAGES):
         prefix = path + "/" if path else ""
         package = json.loads(read(root, prefix + "package.json"))
-        public = path in UI_PUBLIC and "private" not in package and package.get("publishConfig") == UI_PUBLISH_CONFIG
+        config = package.get("publishConfig")
+        public = (path in UI_PUBLIC and "private" not in package and config == UI_PUBLISH_CONFIG
+                  and config["provenance"] is True)
         if package.get("license") != "SEE LICENSE IN LICENSE" or not (public or package.get("private") is True):
             raise ValueError("UI npm packages must remain private and preserve their scoped license: " + prefix)
-        if public and path == "packages/tokens" and not tokens_ship_only_allowed_assets(package.get("files")):
+        if public and path == "packages/tokens" and not tokens_ship_only_allowed_assets(package):
             raise ValueError("Published tokens must list files and exclude brand logos and artwork: " + prefix)
         if not path:
             continue

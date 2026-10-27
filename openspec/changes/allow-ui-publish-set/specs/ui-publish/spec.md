@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Only the owner's public set may be public
-The standards SHALL accept a UI npm package without `private: true` only when it is one of `packages/core`, `packages/ssg`, `packages/tokens` or `packages/ui`, has no `private` key, and has `publishConfig` equal to `{"access": "public", "provenance": true}`.
+The standards SHALL accept a UI npm package without `private: true` only when it is one of `packages/core`, `packages/ssg`, `packages/tokens` or `packages/ui`, has no `private` key, and has `publishConfig` equal to `{"access": "public", "provenance": true}` with `provenance` exactly boolean `true`.
 
 #### Scenario: Public package with the exact configuration
 - **WHEN** one of the four packages has no `private` key and the exact `publishConfig`
@@ -16,6 +16,10 @@ The standards SHALL require the published tokens package to list `files`, and SH
 
 #### Scenario: Broad or indirect asset entries
 - **WHEN** a tokens `files` entry is `assets`, `assets/logos`, `./assets`, an asset glob, or a leading glob, or the list is missing
+- **THEN** the standards fail
+
+#### Scenario: Re-inclusion and implicit targets
+- **WHEN** a `files` entry starts with an even number of `!`, or `main`, `browser` or a `bin` target reaches `assets` outside the allowed folders
 - **THEN** the standards fail
 
 #### Scenario: Allowed folders
