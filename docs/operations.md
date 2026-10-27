@@ -177,11 +177,11 @@ npm ci --ignore-scripts
 npm rebuild node-pty --ignore-scripts=false
 npm run check
 npm run build
-node scripts/size.mjs
-npm run size -w @ejm/demos
 npm run check:rust
 node scripts/pack-proof.mjs
 ```
+
+No shared check caps bundle bytes, download size or dependency count; use well-maintained packages where they fit. Load time is the performance bar and each product repository measures it (for example with its own `npm run perf`).
 
 The explicit `node-pty` rebuild is the single dependency lifecycle exception.
 It runs only inside admitted credential-free Quality. The owner must lock that
@@ -196,7 +196,7 @@ They do not run private owner scripts or prove UI compatibility, hosted
 execution, duration or the coverage of an owner's packed-consumer proof.
 
 The required owner commands must cover source, theme, component, TypeScript,
-test, build, bundle-size, terminal, and packed-consumer checks. The profile does
+test, build, terminal, and packed-consumer checks. The profile does
 not run model calls, product captures, product honesty checks that require sibling
 repositories, or browser rendering acceptance. Those need separately reviewed
 immutable product inputs and their own evidence. The separate registry job
