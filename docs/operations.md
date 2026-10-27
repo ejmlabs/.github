@@ -215,9 +215,9 @@ omit `private` only with `publishConfig` of exactly
 `{"access": "public", "provenance": true}`, and `"private": false` is refused. Each
 public package must also carry exactly the reviewed `name`, `files`, `main`,
 `types`, `exports` and other packing fields (`bin`, `browser`, `module`,
-`directories`, `man` and bundled or workspace lists must be absent unless
-reviewed); the validator checks a digest of them in `scripts/standards.py`, so any
-change to what a public package ships needs a new shared revision. The reviewed
+`directories`, `man`, bundled or workspace lists and the pack, publish and install
+lifecycle scripts must be absent unless reviewed); the validator checks a digest of them in `scripts/standards.py`, so any
+change to a public package's packing manifest needs a new shared revision. The reviewed
 `tokens` files reach `assets` only through `assets/fonts`, `assets/brand` and
 `assets/icons`, which keeps logos and artwork out of the tarball.
 `.github/workflows/publish.yml` is allowed only in `ejm-ui`, as a regular

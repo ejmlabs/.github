@@ -32,9 +32,12 @@ UI_PUBLISH_CONFIG = {"access": "public", "provenance": True}
 # Every manifest field that decides what npm packs or what a package is called.
 UI_PACKING_FIELDS = ("name", "files", "main", "types", "typings", "exports", "bin", "browser", "module", "directories", "man",
                      "bundleDependencies", "bundledDependencies", "workspaces")
-# SHA-256 of the reviewed values of those fields, present ones only, in that order, as compact JSON. Brand logos and
+# Lifecycle scripts that npm runs while packing, publishing or installing; they can change the packed files.
+UI_LIFECYCLE_SCRIPTS = ("preprepare", "prepare", "postprepare", "prepack", "postpack", "prepublish", "prepublishOnly", "publish",
+                        "postpublish", "preinstall", "install", "postinstall")
+# SHA-256 of the reviewed values of those fields and of any lifecycle scripts, present ones only, in that order, as compact JSON. Brand logos and
 # artwork stay out of the tokens tarball because its reviewed `files` list ships only assets/fonts, brand and icons.
-# Any change to what a public package ships needs a new shared revision.
+# Any change to a public package's packing manifest needs a new shared revision.
 UI_PACKING_SHA256 = {
     "packages/core": "8340bf6bd1ea23bd372acaccfa303b3fe6bc5f631ca95780b5c9b00f656dba29",
     "packages/ssg": "fac8edac4ab77073ee7dbd66e36576892c87ca023f6f41411ea78c888e2f69e4",
@@ -176,6 +179,11 @@ def licenses(root, profile):
 def ui_packing(package):
     """Return the digest of a manifest's packing fields, which must match the reviewed values exactly."""
     values = {field: package[field] for field in UI_PACKING_FIELDS if field in package}
+    scripts = package.get("scripts")
+    if "scripts" in package and not isinstance(scripts, dict):
+        values["scripts"] = scripts
+    elif isinstance(scripts, dict) and any(name in scripts for name in UI_LIFECYCLE_SCRIPTS):
+        values["scripts"] = {name: scripts[name] for name in UI_LIFECYCLE_SCRIPTS if name in scripts}
     return hashlib.sha256(json.dumps(values, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 

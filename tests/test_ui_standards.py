@@ -193,6 +193,9 @@ class UIStandardsTests(unittest.TestCase):
             "bundleDependencies": (True, []),
             "bundledDependencies": (True, []),
             "workspaces": (["assets"],),
+            "scripts": ({"prepack": "cp -r assets/logos assets/icons"}, {"prepare": "node x.mjs"}, {"postinstall": "node x.mjs"},
+                        {"preprepare": "x"}, {"postprepare": "x"}, {"postpack": "x"}, {"prepublish": "x"}, {"prepublishOnly": "x"},
+                        {"publish": "x"}, {"postpublish": "x"}, {"preinstall": "x"}, {"install": "x"}, "prepack", ["prepack"]),
         }
         for path in standards.UI_PUBLIC:
             for field, values in deviations.items():
@@ -213,11 +216,13 @@ class UIStandardsTests(unittest.TestCase):
         package = {"name": "@ejm/x", "files": ["src"], "main": "./src/index.ts"}
         digest = standards.ui_packing(package)
         self.assertEqual(digest, standards.ui_packing({"main": "./src/index.ts", "files": ["src"], "name": "@ejm/x", "version": "1"}))
+        self.assertEqual(digest, standards.ui_packing({**package, "scripts": {"build": "x", "check": "y"}}))
+        self.assertNotEqual(digest, standards.ui_packing({**package, "scripts": {"build": "x", "prepack": "y"}}))
         for changed in ({**package, "files": ["src", "src"]}, {**package, "files": [["src"]]}, {**package, "main": "./SRC/index.ts"},
                         {**package, "directories": {}}, {**package, "bin": None}, {"files": ["src"], "name": "@ejm/x"}):
             self.assertNotEqual(digest, standards.ui_packing(changed), changed)
 
-    def test_reviewed_values_for_three_public_packages_match_the_recorded_digests(self):
+    def test_reviewed_values_for_public_packages_match_the_recorded_digests(self):
         reviewed = {
             "packages/tokens": {
                 "name": "@ejm/tokens", "main": "./src/index.ts", "types": "./src/index.ts",
@@ -235,6 +240,71 @@ class UIStandardsTests(unittest.TestCase):
                 "exports": {".": "./src/index.ts", "./server": "./src/server.ts", "./vite": "./src/vite.mjs", "./budget": "./src/budget.mjs",
                             "./ssg.css": "./src/ssg.css"},
                 "files": ["bin", "src", "!src/**/*.test.*", "!src/perf", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"]},
+            "packages/ui": json.loads('''
+            {
+    "name": "@ejm/ui",
+                "main": "./src/index.ts",
+                "types": "./src/index.ts",
+                "exports": {
+                    ".": "./src/index.ts",
+                    "./styles.css": "./src/styles.css",
+                    "./styles-docs.css": "./src/styles-docs.css",
+                    "./styles-app.css": "./src/styles-app.css",
+                    "./styles-terminal.css": "./src/styles-terminal.css",
+                    "./theme-boot.js": "./public/theme-boot.js",
+                    "./font-preloads": "./src/font-preloads.ts",
+                    "./catalog.json": "./src/catalog.json",
+                    "./fonts/*": "./src/fonts/*",
+                    "./art/*": "./src/art/*",
+                    "./app": "./src/app/index.ts",
+                    "./app/messages": "./src/app/messages.ts",
+                    "./app/scale": "./src/app/scale.ts",
+                    "./app/useBox": "./src/app/useBox.ts",
+                    "./app/*": "./src/app/*.tsx",
+                    "./docs": "./src/docs/index.ts",
+                    "./docs/highlight": "./src/docs/highlight.ts",
+                    "./docs/highlight-all": "./src/docs/highlight-all.ts",
+                    "./docs/hooks": "./src/docs/hooks.ts",
+                    "./docs/*": "./src/docs/*.tsx",
+                    "./motion": "./src/motion/index.ts",
+                    "./motion/useDrawOn": "./src/motion/useDrawOn.ts",
+                    "./motion/useReveal": "./src/motion/useReveal.ts",
+                    "./motion/*": "./src/motion/*.tsx",
+                    "./layout": "./src/layout/index.ts",
+                    "./layout/*": "./src/layout/*.tsx",
+                    "./shell": "./src/shell/index.ts",
+                    "./shell/*": "./src/shell/*.tsx",
+                    "./hooks": "./src/hooks/index.ts",
+                    "./hooks/*": "./src/hooks/*.ts",
+                    "./components/TerminalWorkspace": "./src/terminal/TerminalWorkspace.tsx",
+                    "./components/*": "./src/components/*.tsx",
+                    "./lib/utils": "./src/lib/utils.ts",
+                    "./styles-static.css": "./src/styles-static.css",
+                    "./components/NativeCheckbox": "./src/static/NativeCheckbox.tsx",
+                    "./shell/Disclosure": "./src/static/Disclosure.tsx",
+                    "./layout/ActionRows": "./src/static/ActionRows.tsx",
+                    "./layout/DocumentContent": "./src/static/DocumentContent.tsx",
+                    "./styles-site.css": "./src/styles-site.css",
+                    "./static.css": "./public/static.css",
+                    "./control-recipes": {
+                        "types": "./src/control-recipes.d.mts",
+                        "import": "./src/control-recipes.mjs",
+                        "default": "./src/control-recipes.mjs"
+                    }
+                },
+                "files": [
+                    "src",
+                    "!src/**/*.test.*",
+                    "!src/components/test-setup.tsx",
+                    "!src/**/README.md",
+                    "public/theme-boot.js",
+                    "THEME.md",
+                    "COMPONENTS.md",
+                    "LICENSE",
+                    "THIRD_PARTY_NOTICES.md",
+                    "public/static.css"
+                ]
+            }'''),
         }
         for path, package in reviewed.items():
             with self.subTest(package=path):

@@ -12,10 +12,10 @@ The standards SHALL accept a UI npm package without `private: true` only when it
 - **THEN** the standards fail
 
 ### Requirement: Public packages ship exactly the reviewed files
-The standards SHALL require each public UI package's name and every manifest field that decides what npm packs to equal the reviewed values exactly, and SHALL treat a field absent from the reviewed manifest as forbidden. The reviewed tokens `files` SHALL keep brand logos and artwork out of the tarball.
+The standards SHALL require each public UI package's name, every manifest field that decides what npm packs, and its pack, publish and install lifecycle scripts to equal the reviewed values exactly, and SHALL treat a field or script absent from the reviewed manifest as forbidden. The reviewed tokens `files` SHALL keep brand logos and artwork out of the tarball.
 
 #### Scenario: Any deviation in a packing field
-- **WHEN** one of those fields is added, removed, reordered or changed in any way, including a case variant, a `directories` entry, an extra `files` entry or a re-including `!!` entry
+- **WHEN** one of those fields is added, removed, reordered or changed in any way, including any of the lifecycle scripts `preprepare`, `prepare`, `postprepare`, `prepack`, `postpack`, `prepublish`, `prepublishOnly`, `publish`, `postpublish`, `preinstall`, `install` or `postinstall`, a case variant, a `directories` entry, an extra `files` entry or a re-including `!!` entry
 - **THEN** the standards fail
 
 #### Scenario: Reviewed manifest
