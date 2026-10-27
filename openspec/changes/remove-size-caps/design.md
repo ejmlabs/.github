@@ -9,7 +9,7 @@ The shared gate runs each profile's own commands. Only the `ejm-ui` profile ran 
 - **Keep safety bounds.** Admission budgets, review-context byte limits, PR size bounds, the standards file-read limit (8,000,000 bytes) and the owned-manifest count protect the gate and reviewer from hostile or runaway input. They are not download-size or dependency-count caps and stay.
 
 - **The commands belong to each product.** The shared gate only runs the commands each profile names; what `npm run check` or `scripts/check.mjs` covers is owned by that product. `ejm-ui` and `ejmlabs` remove their own budgets and size scripts in their own changes.
-- **Refresh the reviewed `@ejm/ssg` digest.** `UI_PACKING_SHA256['packages/ssg']` and its test fixture move to the cap-free manifest (no `./budget` export) at `ejm-ui` revision 06de1b0d9a8f954b7a1a0f0405a9bade1815bb6a, so the standard does not lock in the removed export once `@ejm/ssg` is public. `ejm-ui` pins this revision in the same PR as its cap removal.
+- **Refresh the reviewed `@ejm/ssg` digest.** `UI_PACKING_SHA256['packages/ssg']` and its test fixture move to the cap-free manifest (no `./budget` export) at `ejm-ui` revision b0602a06266e24dd927ba47b136a55e9f264d23b, so the standard does not lock in the removed export once `@ejm/ssg` is public. `ejm-ui` pins this revision in the same PR as its cap removal; the digest is unchanged from the previously reviewed value because the packing fields it covers did not change, and `ejm-ui` main before its cap removal (1caee5894fc0e37e455d599457864b588b1791bf) still fails on it through the `./budget` export.
 
 ## Risks
 
