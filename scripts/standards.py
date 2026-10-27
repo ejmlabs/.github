@@ -29,8 +29,18 @@ the brand materials.'''
 # The owner's public npm set. Every other UI package stays private.
 UI_PUBLIC = tuple("packages/" + name for name in ("core", "ssg", "tokens", "ui"))
 UI_PUBLISH_CONFIG = {"access": "public", "provenance": True}
-# Brand logos and artwork stay out of the tokens tarball; only these asset folders ship.
-UI_TOKEN_ASSETS = ("assets/fonts", "assets/brand", "assets/icons")
+# Every manifest field that decides what npm packs or what a package is called.
+UI_PACKING_FIELDS = ("name", "files", "main", "types", "typings", "exports", "bin", "browser", "module", "directories", "man",
+                     "bundleDependencies", "bundledDependencies", "workspaces")
+# SHA-256 of the reviewed values of those fields, present ones only, in that order, as compact JSON. Brand logos and
+# artwork stay out of the tokens tarball because its reviewed `files` list ships only assets/fonts, brand and icons.
+# Any change to what a public package ships needs a new shared revision.
+UI_PACKING_SHA256 = {
+    "packages/core": "8340bf6bd1ea23bd372acaccfa303b3fe6bc5f631ca95780b5c9b00f656dba29",
+    "packages/ssg": "fac8edac4ab77073ee7dbd66e36576892c87ca023f6f41411ea78c888e2f69e4",
+    "packages/tokens": "6a42d63e7e4e6140855f25a6b1c016e75d01582a0005319089e7f836514ba575",  # gitleaks:allow (package manifest digest)
+    "packages/ui": "e22c0b53fb8ab7ae638952245f8b94531acff1302853403e6b303ae64b8a3be7",
+}
 # The reviewed ejm-ui publish workflow; any change needs a new shared revision.
 UI_PUBLISH_SHA256 = "b28800bd599a24b07f385202bad0e8ef53bc5f503bdd600b51fbd4f461f656e9"
 UI_FONT_NOTICES = tuple("packages/" + path + "/" + name + "-OFL.txt"
@@ -163,40 +173,10 @@ def licenses(root, profile):
             raise ValueError("Owned manifest license differs from MIT: " + path)
 
 
-def path_avoids_other_assets(entry):
-    """Accept one packed path or pattern that cannot reach assets outside the allowed folders."""
-    if not isinstance(entry, str):
-        return False
-    glob = re.compile(r"[*?\[\]{}()!+@]")
-    while entry.startswith("./"):
-        entry = entry[2:]
-    entry = entry.rstrip("/")
-    first = entry.split("/")[0]
-    if "\\" in entry or ".." in entry.split("/") or first in ("", "."):
-        return False
-    if first == "assets":
-        return not glob.search(entry) and any(entry == asset or entry.startswith(asset + "/") for asset in UI_TOKEN_ASSETS)
-    return not glob.search(first)
-
-
-def tokens_ship_only_allowed_assets(package):
-    """Check every way npm can pack a file of the tokens package: `files`, `main`, `browser` and `bin`."""
-    files = package.get("files")
-    if not isinstance(files, list):
-        return False
-    for entry in files:
-        if not isinstance(entry, str):
-            return False
-        negations = len(entry) - len(entry.lstrip("!"))
-        # An odd number of leading `!` only excludes; an even number re-includes and is refused.
-        if negations % 2:
-            continue
-        if negations or not path_avoids_other_assets(entry):
-            return False
-    targets = [package.get("main"), package.get("browser")]
-    commands = package.get("bin")
-    targets += list(commands.values()) if isinstance(commands, dict) else [commands]
-    return all(target is None or path_avoids_other_assets(target) for target in targets)
+def ui_packing(package):
+    """Return the digest of a manifest's packing fields, which must match the reviewed values exactly."""
+    values = {field: package[field] for field in UI_PACKING_FIELDS if field in package}
+    return hashlib.sha256(json.dumps(values, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
 def ui_licenses(root, text):
@@ -219,8 +199,8 @@ def ui_licenses(root, text):
                   and config["provenance"] is True)
         if package.get("license") != "SEE LICENSE IN LICENSE" or not (public or package.get("private") is True):
             raise ValueError("UI npm packages must remain private and preserve their scoped license: " + prefix)
-        if public and path == "packages/tokens" and not tokens_ship_only_allowed_assets(package):
-            raise ValueError("Published tokens must list files and exclude brand logos and artwork: " + prefix)
+        if public and ui_packing(package) != UI_PACKING_SHA256[path]:
+            raise ValueError("Public UI package name and packed files differ from the reviewed values: " + prefix)
         if not path:
             continue
         if package.get("repository") != {"type": "git", "url": "git+https://github.com/ejmlabs/ejm-ui.git", "directory": path}:

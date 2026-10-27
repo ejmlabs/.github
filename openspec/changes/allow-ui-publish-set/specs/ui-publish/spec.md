@@ -11,19 +11,15 @@ The standards SHALL accept a UI npm package without `private: true` only when it
 - **WHEN** the root or any other UI package is not `private: true`, or a public package sets `"private": false` or a different `publishConfig`
 - **THEN** the standards fail
 
-### Requirement: Published tokens exclude brand artwork
-The standards SHALL require the published tokens package to list `files`, and SHALL refuse any entry that can reach `assets` outside `assets/fonts`, `assets/brand` and `assets/icons`.
+### Requirement: Public packages ship exactly the reviewed files
+The standards SHALL require each public UI package's name and every manifest field that decides what npm packs to equal the reviewed values exactly, and SHALL treat a field absent from the reviewed manifest as forbidden. The reviewed tokens `files` SHALL keep brand logos and artwork out of the tarball.
 
-#### Scenario: Broad or indirect asset entries
-- **WHEN** a tokens `files` entry is `assets`, `assets/logos`, `./assets`, an asset glob, or a leading glob, or the list is missing
+#### Scenario: Any deviation in a packing field
+- **WHEN** one of those fields is added, removed, reordered or changed in any way, including a case variant, a `directories` entry, an extra `files` entry or a re-including `!!` entry
 - **THEN** the standards fail
 
-#### Scenario: Re-inclusion and implicit targets
-- **WHEN** a `files` entry starts with an even number of `!`, or `main`, `browser` or a `bin` target reaches `assets` outside the allowed folders
-- **THEN** the standards fail
-
-#### Scenario: Allowed folders
-- **WHEN** the entries reach assets only through `assets/fonts`, `assets/brand` and `assets/icons`
+#### Scenario: Reviewed manifest
+- **WHEN** the four public packages carry the reviewed values for those fields
 - **THEN** the standards pass
 
 ### Requirement: The publish workflow is accepted only at its reviewed hash

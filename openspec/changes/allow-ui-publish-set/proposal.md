@@ -5,7 +5,7 @@ The owner decided to publish four UI packages (`@ejm/tokens`, `@ejm/core`, `@ejm
 ## What Changes
 
 - Let exactly `packages/core`, `packages/ssg`, `packages/tokens` and `packages/ui` omit `private`, only with `publishConfig` equal to `{"access": "public", "provenance": true}` and the scoped license unchanged.
-- Require the published tokens package to list `files`, and refuse any entry that can reach `assets` outside `assets/fonts`, `assets/brand` and `assets/icons`, so logos and artwork stay out of the tarball.
+- Require each public package's name and every field that decides what npm packs (`files`, `main`, `types`, `exports`, `bin`, `browser`, `directories` and the rest) to equal the reviewed values exactly, so any change to what ships needs a new shared revision and brand logos and artwork stay out of the tokens tarball.
 - Keep the root package and every other UI package private.
 - In `ejm-ui` only, allow one extra workflow, `publish.yml`, when its SHA-256 equals the reviewed file's recorded hash; any other content, a symlink, or another repository is refused.
 - Regenerate the shared workflows that embed `scripts/standards.py`.

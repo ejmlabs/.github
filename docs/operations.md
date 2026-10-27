@@ -212,11 +212,15 @@ version. Adding an owned package requires a reviewed inventory update.
 The root and the `demos`, `ink`, `shots` and `site` packages must keep
 `private: true`. `core`, `ssg`, `tokens` and `ui` are the public npm set: each may
 omit `private` only with `publishConfig` of exactly
-`{"access": "public", "provenance": true}`, and `"private": false` is refused. The
-published `tokens` package must list `files`, and an entry that can reach `assets`
-outside `assets/fonts`, `assets/brand` and `assets/icons` (such as `assets`,
-`assets/logos` or a glob) is refused, so logos and artwork stay out of the
-tarball. `.github/workflows/publish.yml` is allowed only in `ejm-ui`, as a regular
+`{"access": "public", "provenance": true}`, and `"private": false` is refused. Each
+public package must also carry exactly the reviewed `name`, `files`, `main`,
+`types`, `exports` and other packing fields (`bin`, `browser`, `module`,
+`directories`, `man` and bundled or workspace lists must be absent unless
+reviewed); the validator checks a digest of them in `scripts/standards.py`, so any
+change to what a public package ships needs a new shared revision. The reviewed
+`tokens` files reach `assets` only through `assets/fonts`, `assets/brand` and
+`assets/icons`, which keeps logos and artwork out of the tarball.
+`.github/workflows/publish.yml` is allowed only in `ejm-ui`, as a regular
 file whose SHA-256 equals the reviewed hash in `scripts/standards.py`; changing it
 needs a new shared revision. All owned packages keep
 `SEE LICENSE IN LICENSE`. Each package must name its exact repository directory

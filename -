@@ -1,0 +1,22 @@
+[
+ {
+  "Description": "Generic API Key",
+  "StartLine": 41,
+  "EndLine": 41,
+  "StartColumn": 16,
+  "EndColumn": 90,
+  "Match": "tokens\": \"REDACTED\"",
+  "Secret": "REDACTED",
+  "File": "scripts/standards.py",
+  "SymlinkFile": "",
+  "Commit": "",
+  "Entropy": 3.8075035,
+  "Author": "",
+  "Email": "",
+  "Date": "",
+  "Message": "",
+  "Tags": [],
+  "RuleID": "generic-api-key",
+  "Fingerprint": "scripts/standards.py:generic-api-key:41"
+ }
+]
