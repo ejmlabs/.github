@@ -9,10 +9,10 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 CHECKOUT = "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
 NODE = "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020"
-UV = "astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e"
+UV = "astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884"
 ATTEST = "actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be"
 UPLOAD = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
-DOWNLOAD = "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
+DOWNLOAD = "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
 # Provider settings are confined to these constants and the review-step key env.
 REVIEWER_MODEL = "xai/grok-4.5"
 REVIEWER_FALLBACK_MODELS = "[]"
