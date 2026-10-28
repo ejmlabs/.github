@@ -477,6 +477,165 @@ Between steps 2 and 3, other PRs in that repository fail **Repository
 standards** and the label override is unavailable, because label removal
 starts no workflow. Keep that window short and land step 3 first.
 
+## Throughput
+
+Shipping time is mostly waiting, not machine work. The controls below remove
+repeated waits and keep every existing requirement: a fresh independent review
+on the exact code shipped, the owner's explicit approval on GitHub, no
+force-push and no admin merge. They change no required check or admission rule.
+Only the owner posts `/ready` and `/approve`, merges, or resolves a security
+concern; no tool does any of those. The change is specified in
+`openspec/changes/raise-pr-throughput/`.
+
+### Flow metrics
+
+`scripts/flow_metrics.py` keeps one record per PR: a list of events with a
+UTC time, each of type `opened`, `ready`, `review`, `approve`, `merge` or
+`deploy`. Record every `/ready`, so repeats are countable. A gap over five
+minutes before an event, other than the gate's own review result, needs a
+`cause` on that event, one of: gate result, gate or pin rework, head drift,
+serial hold, owner. An untagged wait is an error.
+
+```sh
+python3 scripts/flow_metrics.py table records.json 2026-10-25
+```
+
+The daily table lists the PRs merged that day (UTC): the median and 90th
+percentile minutes from the first `/ready` to merge, the count of repeat
+`/ready` comments and the waiting minutes by cause. Publish it once a day. The
+operator assembles `records.json` from the PR timelines.
+
+Log each external write that was refused or waited for a prompt, with the
+times it started and was answered, so the cost of those checks can be measured:
+
+```sh
+python3 scripts/flow_metrics.py log-write writes.jsonl push TARGET prompted START ANSWERED
+```
+
+### Batch approval
+
+One signed batch file can name a set of PRs for the owner to click through. It
+is JSON and lists, for each PR, its URL, branch and exact head commit, plus the
+id and head of the independent review that covered it:
+
+```json
+{"items": [{"pr": "https://github.com/ejmlabs/REPO/pull/N", "branch": "NAME",
+            "head": "FULL_40_CHARACTER_SHA",
+            "pass": {"id": "REVIEW_ID", "head": "FULL_40_CHARACTER_SHA"}}]}
+```
+
+The batch authorizes no one but the owner. The owner posts `/ready` and
+`/approve` and merges on GitHub, one item at a time, and resolves any security
+concern. The gate has no security label, a concern raised by a human reviewer
+is resolved only by a human, and no other reviewer's result is enough. The
+operator never posts a command, approves, merges or resolves a concern, and
+nothing is admin-merged. The batch is only the prepared list and the evidence
+next to each item.
+
+`scripts/batch.py` is the check:
+
+- The approval is the owner's SSH signature, never a comment or a chat message.
+  `batch.py FILE canonical` prints the exact bytes that are approved: the `items`
+  and the `deploy`, sorted and compact. The owner reads that file, signs it as it
+  is (`ssh-keygen -Y sign -n ejmlabs-batch batch-to-sign.json`), and the
+  signature sits beside the batch as `FILE.sig`. What the owner reads is what the
+  owner signs; there is no digest to compare. Only this proof is built.
+- `batch.py FILE verify ALLOWED_SIGNERS IDENTITY` runs `/usr/bin/ssh-keygen -Y
+  verify -f ALLOWED_SIGNERS -I IDENTITY -n ejmlabs-batch -s FILE.sig` on those
+  bytes. It refuses when the file was edited after signing, the signature is
+  missing, from another key, over anything else (a digest line, another
+  namespace), or when the identity is not a plain name. `ALLOWED_SIGNERS` is in
+  an install directory read-only to the operator and holds the public key only;
+  nothing the operator holds can produce the signature. The verifier is a fixed
+  absolute path, never looked up on `PATH`, and the wrappers that call it use a
+  fixed environment and keep user files and variables out.
+- Only the signed file counts. `push` and `reconcile` read the batch through the
+  same signature check, so an unsigned or badly signed batch is refused for every
+  caller; only `canonical`, which the owner needs before signing, reads it
+  unchecked. No other file adds to or replaces an item, and the approved file is
+  never rewritten.
+- A push is allowed only for a listed repository and branch at the listed head,
+  and only when the item carries a review of that exact head. A PR that is
+  absent, has no review, or has a review for another commit is refused. A
+  branch may not be `main` or `master`, and a force-push or a deletion is never
+  allowed. Refusals can be logged with `BATCH_WRITE_LOG` (see Flow metrics).
+- When a head moves, `batch.py FILE reconcile ALLOWED_SIGNERS IDENTITY PR=LIVE_HEAD...` prints which PRs
+  left the batch and why. The push check already refuses a moved head. A
+  dropped PR needs a new signed entry. The command only reads.
+
+There is no standing approval for a class of changes; every PR needs a named
+entry.
+
+### Scoped external writes
+
+The operator acts only as its own identity (a GitHub App, or a machine user with
+the Write role only), never with the owner's credential. Its one write under a
+batch is to push the exact commit the batch lists for a repository and branch
+(`batch.py FILE push ALLOWED_SIGNERS IDENTITY REPO BRANCH SHA`, called from a pre-push guard). It holds
+no right to approve, merge, change settings, read secrets or push workflow
+files, and it comments no command the gate treats as an owner command. A
+deploy is not an operator write: see Deploy from main. The owner creates the
+identity and applies its permissions; the build never does.
+
+### Head drift
+
+Each merge moves `main`, so every other open PR must merge `main` and gets a
+new head. Keep this small:
+
+- Branches live one day. Re-cut a branch that is older instead of carrying it.
+- PRs in one batch change disjoint files. Before a batch, list each PR's changed
+  files; `carry_over.py` reports overlaps, and an overlapping PR waits for the
+  earlier merge instead of sharing the batch.
+- When listing a PR, record its `patch_id` from
+  `scripts/carry_over.py patch-id REPO BASE HEAD`: the verbatim id (whitespace
+  counts) of what the PR adds on top of its merge base with `main`.
+
+After `main` moved and was merged into a PR branch, the entry no longer covers
+the new head. A new batch can propose it only if the PR's own patch id is
+unchanged **and** a fresh independent review passes on the new exact head and
+tree. Get the head and tree to review with `scripts/carry_over.py request REPO
+PR HEAD`, review that tree, then run `scripts/carry_over.py carry BATCH REPO PR
+NEW_HEAD REVIEW_JSON OUT`, where `REVIEW_JSON` is `{"id": ..., "head":
+NEW_HEAD, "tree": ...}`. Fetch `origin` first. It computes the patch id
+against `origin/main` and the tree itself from the repository; the caller
+cannot name a base. It writes a new, unsigned batch file `OUT` (never over an
+existing file) in which the item has the new head and review. That file
+approves nothing: the owner reads it with `batch.py OUT canonical`, signs it
+like any batch, and only the signed file is used. If the patch id differs, the
+review is missing or names another head or tree, or no patch id was recorded,
+nothing is written and the item needs a new signed entry. The owner still
+approves the new head on GitHub.
+
+### Deploy from main
+
+A site may deploy from `main` right after a merge, with no extra wait, when the
+reviewed code is exactly what `main` now holds. The deploy starts from the
+owner's merge (a job the merge triggers) or from a step the owner starts; no
+tool or agent starts it with the owner's credential, and this repository adds no
+deploy credential to CI. What this repository provides is the check that step
+runs:
+
+1. Before the merge, compute the tree `main` will hold with
+   `scripts/deploy_record.py tree REPO main HEAD`, and have the independent
+   review cover that tree. Record it as the batch's `deploy.tree` and the review
+   id as `deploy.pass`, with the deploy repository and the protected pin of each
+   sibling input (`deploy.siblings`). The batch the owner signs must name the
+   deploy.
+2. After the merge, fetch `origin`, then the owner's deploy step runs
+   `scripts/deploy_record.py BATCH decide ALLOWED_SIGNERS IDENTITY REPO CHECKOUT
+   COMMIT NAME=SHA...` with the sibling pins as found. It first checks the
+   owner's signature on the approved file, as `verify` does, and refuses an
+   unsigned or edited batch. It then refuses unless the batch names that deploy
+   with a review (`deploy.pass`, whose tree equals `deploy.tree`), `COMMIT` is
+   the current `origin/main`, the tree git computes for `COMMIT` equals the
+   reviewed tree and every sibling is at its protected pin. With several PRs in
+   one batch the tree is the one after all the merges; a single-PR prediction
+   that differs is a refusal. On a mismatch nothing deploys and the reason is
+   reported; deploy only after a fresh review.
+3. After each deploy, run `scripts/deploy_record.py record LOG REPO COMMIT TREE
+   PREVIOUS|none TIME`. The log keeps the deployed commit, tree, time and the
+   previous version, which is what to restore on a rollback.
+
 ## Public visibility checklist
 
 Audit current source refs and history, discussions, reviews, retained Actions

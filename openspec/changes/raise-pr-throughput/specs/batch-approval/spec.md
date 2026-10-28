@@ -12,13 +12,27 @@ A batch file MUST list each pull request URL and its exact head commit, the revi
 
 #### Scenario: The file is unsigned
 
-- **WHEN** a batch file has no valid owner signature or owner-approved commit
+- **WHEN** a batch file has no valid owner signature
 - **THEN** every tool treats it as empty and reports why
 
 #### Scenario: An item is not named
 
 - **WHEN** a pull request is ready but absent from the batch file
 - **THEN** it is not offered to the owner as part of the batch
+
+### Requirement: The owner signs what the owner reads
+
+The signature MUST cover the exact canonical bytes of the items and the deploy, in a file the owner reads before signing, not a digest of it. The verifier MUST run by a fixed absolute path and in a fixed environment, never one found through the caller's `PATH` or changed by the caller's variables or user files.
+
+#### Scenario: A digest is signed instead of the file
+
+- **WHEN** the signature covers a digest line and not the canonical bytes
+- **THEN** every tool treats the file as unsigned
+
+#### Scenario: A fake verifier is first on the path
+
+- **WHEN** a program named like the verifier is placed first on `PATH`, or user site files or `PYTHONPATH` are set
+- **THEN** none of it runs and a junk signature is refused
 
 ### Requirement: The batch is a list the owner clicks through
 

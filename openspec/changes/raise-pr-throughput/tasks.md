@@ -4,17 +4,17 @@ Starts after remove-ai-review tasks 3.2 and 5.1 are done. Nothing here starts un
 
 ## 1. Measure first (all choices)
 
-- [ ] 1.1 Record `/ready`, review result, `/approve`, merge and deploy times for every PR and deploy in one place.
-- [ ] 1.2 Log every external write that was blocked or prompted, with its wait, for one day.
-- [ ] 1.3 Publish a daily table with median and 90th percentile time from first `/ready` to merge.
+- [x] 1.1 Record `/ready`, review result, `/approve`, merge and deploy times for every PR and deploy in one place. (Script and table only: the operator assembles `records.json` from the PR timelines.)
+- [x] 1.2 Log every external write that was blocked or prompted, with its wait, for one day. (Refused writes are logged by `batch.py`; the operator logs prompted writes with `flow_metrics.py log-write`.)
+- [x] 1.3 Publish a daily table with median and 90th percentile time from first `/ready` to merge.
 
 ## 2. Batch list (D1 B)
 
-- [ ] 2.1 Define the batch file: PR URLs, exact head SHAs, review ids, tree hashes and the deploy target.
-- [ ] 2.2 Define the owner's SSH signature over the canonical bytes (the only proof built), and record the signer and time in the repository.
-- [ ] 2.3 Write a read-only script that verifies the signature and shows, per entry, whether the head and review still match. It posts nothing.
-- [ ] 2.4 Drop any PR from the list when its head moves, and say so in the report.
-- [ ] 2.5 Test: an unsigned file, a bad signature, a moved head, a missing review and a PR not in the file are each refused.
+- [x] 2.1 Define the batch file: PR URLs, exact head SHAs, review ids, tree hashes and the deploy target.
+- [ ] 2.2 Define the owner's SSH signature over the canonical bytes (the only proof built), and record the signer and time in the repository. (The signature is built: `canonical` and `verify`. Recording signer and time is not.)
+- [x] 2.3 Write a read-only script that verifies the signature and shows, per entry, whether the head and review still match. It posts nothing. (`verify` and `reconcile`.)
+- [x] 2.4 Drop any PR from the list when its head moves, and say so in the report.
+- [x] 2.5 Test: an unsigned file, a bad signature, a moved head, a missing review and a PR not in the file are each refused.
 
 ## 3. Low-risk class (D1 C, only if picked)
 
@@ -23,7 +23,7 @@ Starts after remove-ai-review tasks 3.2 and 5.1 are done. Nothing here starts un
 
 ## 4. Security concerns (D2 A)
 
-- [ ] 4.1 Document in `docs/operations.md` that the gate has no security label, that a human reviewer's concern is resolved only by a human, and that no other reviewer's result is enough.
+- [x] 4.1 Document in `docs/operations.md` that the gate has no security label, that a human reviewer's concern is resolved only by a human, and that no other reviewer's result is enough.
 - [ ] 4.2 Check that no caller or workflow carries a label trigger, a label override or a model key.
 - [ ] 4.3 Only if a model review or label is ever re-enabled, after a recorded security review: test that a bot sender or a user without maintain rights cannot clear it, and record who cleared it from the GitHub event.
 
@@ -39,23 +39,23 @@ Starts after remove-ai-review tasks 3.2 and 5.1 are done. Nothing here starts un
 
 ## 6. Head drift (D4 B)
 
-- [ ] 6.1 Write the one-day branch rule and the disjoint-files rule for a batch.
-- [ ] 6.2 Add a script that compares patch ids before and after a merge of `main`.
-- [ ] 6.3 Require a fresh review on the new exact tree before the entry is offered again.
-- [ ] 6.4 Test that a changed patch drops the PR from the list.
+- [x] 6.1 Write the one-day branch rule and the disjoint-files rule for a batch.
+- [x] 6.2 Add a script that compares patch ids before and after a merge of `main`.
+- [x] 6.3 Require a fresh review on the new exact tree before the entry is offered again.
+- [x] 6.4 Test that a changed patch drops the PR from the list.
 
 ## 7. Deploy from main (D5 B)
 
-- [ ] 7.1 Record the tree hash that the pre-merge review covered.
-- [ ] 7.2 After merge, compare the `main` tree hash with the record and deploy only on a match.
-- [ ] 7.3 Record the deployed version and the previous one, for rollback.
+- [x] 7.1 Record the tree hash that the pre-merge review covered.
+- [x] 7.2 After merge, compare the `main` tree hash with the record and deploy only on a match. (`deploy_record.py decide`, run by the owner's deploy step.)
+- [x] 7.3 Record the deployed version and the previous one, for rollback.
 
 ## 8. Operator identity (D6 B, proposal only)
 
 - [ ] 8.1 Write the identity and permission list: push branches and open or update PRs; no approval, merge, label, settings, secrets or workflow rights.
 - [ ] 8.2 Make the pre-push guard allow only branch pushes of SHAs the batch file lists, and refuse force-push.
 - [ ] 8.3 Test that the identity's `/ready` and `/approve` are refused by the gate.
-- [ ] 8.4 Test that a push of any other SHA, branch or repository is refused.
+- [x] 8.4 Test that a push of any other SHA, branch or repository is refused.
 - [ ] 8.5 Owner action: restrict who can push or merge to `main` with classic branch protection restrictions that list the owner as the only user, with admin enforcement on. Set it in `scripts/configure_repositories.py` so a settings run sets it and never resets it, and assert it in the standards or readback check. Test that the operator's merge of an approved, green PR is refused. Mirror the restriction in the identity spec.
 - [ ] 8.6 The owner creates the identity and applies the permissions. The build never does.
 
