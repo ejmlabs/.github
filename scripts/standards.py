@@ -26,6 +26,26 @@ visual identity retain their owners' rights. All rights in those materials are
 reserved except where a file or its accompanying notice gives a separate
 license. Public access does not grant a right to use the marks or redistribute
 the brand materials.'''
+# The owner's public npm set. Every other UI package stays private.
+UI_PUBLIC = tuple("packages/" + name for name in ("core", "ssg", "tokens", "ui"))
+UI_PUBLISH_CONFIG = {"access": "public", "provenance": True}
+# Every manifest field that decides what npm packs or what a package is called.
+UI_PACKING_FIELDS = ("name", "files", "main", "types", "typings", "exports", "bin", "browser", "module", "directories", "man",
+                     "bundleDependencies", "bundledDependencies", "workspaces")
+# Lifecycle scripts that npm runs while packing, publishing or installing; they can change the packed files.
+UI_LIFECYCLE_SCRIPTS = ("preprepare", "prepare", "postprepare", "prepack", "postpack", "prepublish", "prepublishOnly", "publish",
+                        "postpublish", "preinstall", "install", "postinstall")
+# SHA-256 of the reviewed values of those fields and of any lifecycle scripts, present ones only, in that order, as compact JSON. Brand logos and
+# artwork stay out of the tokens tarball because its reviewed `files` list ships only assets/fonts, brand and icons.
+# Any change to a public package's packing manifest needs a new shared revision.
+UI_PACKING_SHA256 = {
+    "packages/core": "8340bf6bd1ea23bd372acaccfa303b3fe6bc5f631ca95780b5c9b00f656dba29",
+    "packages/ssg": "8f0b1dd2b3bfc85d1d15c5107d90ad0e400c0eaf5b0880877eb97468264545da",
+    "packages/tokens": "6a42d63e7e4e6140855f25a6b1c016e75d01582a0005319089e7f836514ba575",  # gitleaks:allow (package manifest digest)
+    "packages/ui": "e22c0b53fb8ab7ae638952245f8b94531acff1302853403e6b303ae64b8a3be7",
+}
+# The reviewed ejm-ui publish workflow; any change needs a new shared revision.
+UI_PUBLISH_SHA256 = "b28800bd599a24b07f385202bad0e8ef53bc5f503bdd600b51fbd4f461f656e9"
 UI_FONT_NOTICES = tuple("packages/" + path + "/" + name + "-OFL.txt"
                         for path in ("tokens/assets/fonts", "ui/src/fonts") for name in ("Manrope", "IBMPlexMono"))
 UI_FONT_HASHES = {
@@ -34,6 +54,9 @@ UI_FONT_HASHES = {
 }
 SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$")
 MODEL_KEYS = ("XAI_API_KEY",)
+# Repositories that may ship native builds. One adopts the native release by adding build.yml.
+NATIVE_RELEASE = ("ejm-cli", "ejm-harness")
+SHARED_WORKFLOWS = ("governance.yml", "draft-release.yml", "verify-build.yml", "attach-assets.yml")
 MIT_TERMS = '''Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
@@ -153,6 +176,17 @@ def licenses(root, profile):
             raise ValueError("Owned manifest license differs from MIT: " + path)
 
 
+def ui_packing(package):
+    """Return the digest of a manifest's packing fields, which must match the reviewed values exactly."""
+    values = {field: package[field] for field in UI_PACKING_FIELDS if field in package}
+    scripts = package.get("scripts")
+    if "scripts" in package and not isinstance(scripts, dict):
+        values["scripts"] = scripts
+    elif isinstance(scripts, dict) and any(name in scripts for name in UI_LIFECYCLE_SCRIPTS):
+        values["scripts"] = {name: scripts[name] for name in UI_LIFECYCLE_SCRIPTS if name in scripts}
+    return hashlib.sha256(json.dumps(values, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
 def ui_licenses(root, text):
     """Keep the UI software grant, reserved assets, and packaged font notices."""
     def scoped_license(value):
@@ -168,8 +202,13 @@ def ui_licenses(root, text):
     for path in ("", *UI_PACKAGES):
         prefix = path + "/" if path else ""
         package = json.loads(read(root, prefix + "package.json"))
-        if package.get("license") != "SEE LICENSE IN LICENSE" or package.get("private") is not True:
+        config = package.get("publishConfig")
+        public = (path in UI_PUBLIC and "private" not in package and config == UI_PUBLISH_CONFIG
+                  and config["provenance"] is True)
+        if package.get("license") != "SEE LICENSE IN LICENSE" or not (public or package.get("private") is True):
             raise ValueError("UI npm packages must remain private and preserve their scoped license: " + prefix)
+        if public and ui_packing(package) != UI_PACKING_SHA256[path]:
+            raise ValueError("Public UI package name and packed files differ from the reviewed values: " + prefix)
         if not path:
             continue
         if package.get("repository") != {"type": "git", "url": "git+https://github.com/ejmlabs/ejm-ui.git", "directory": path}:
@@ -188,13 +227,13 @@ def ui_licenses(root, text):
             raise ValueError("UI package font notice differs from the token owner: " + name)
 
 
-def consumer_workflows(revision, *, model_key="XAI_API_KEY"):
+def consumer_workflows(revision, *, model_key="XAI_API_KEY", native=False):
     """Return the normal consumer workflows for one reviewed revision."""
     if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
         raise ValueError("Standards revision must be a full lowercase commit SHA")
     if model_key not in MODEL_KEYS:
         raise ValueError("Unsupported model key name")
-    return {name: text.replace("STANDARDS_REVISION", revision).replace("XAI_API_KEY", model_key) for name, text in {
+    documents = {
         "pr.yml": """name: Human-admitted PR checks
 on:
   issue_comment:
@@ -240,7 +279,121 @@ jobs:
       version: ${{ inputs.version }}
       standards-ref: "STANDARDS_REVISION"
 """,
-    }.items()}
+    }
+    if native:
+        documents["release.yml"] = NATIVE_RELEASE_CALLER
+    return {name: text.replace("STANDARDS_REVISION", revision).replace("XAI_API_KEY", model_key) for name, text in documents.items()}
+
+
+# Build output is verified before the tag exists and attached after the draft, from the same main commit.
+NATIVE_RELEASE_CALLER = """name: Draft native release
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Full protected main commit SHA
+        required: true
+        type: string
+      version:
+        description: SemVer version matching VERSION
+        required: true
+        type: string
+      build-run-id:
+        description: Run id of the successful Build workflow for that commit
+        required: true
+        type: string
+      attest:
+        description: Attest build provenance
+        required: false
+        default: false
+        type: boolean
+permissions: {}
+jobs:
+  verify:
+    permissions:
+      actions: read
+    uses: ejmlabs/.github/.github/workflows/verify-build.yml@STANDARDS_REVISION
+    with:
+      commit: ${{ inputs.commit }}
+      build-workflow: build.yml
+      build-run-id: ${{ inputs.build-run-id }}
+  release:
+    needs: verify
+    permissions:
+      contents: write
+      pull-requests: read
+      statuses: read
+    uses: ejmlabs/.github/.github/workflows/draft-release.yml@STANDARDS_REVISION
+    with:
+      commit: ${{ inputs.commit }}
+      version: ${{ inputs.version }}
+      standards-ref: "STANDARDS_REVISION"
+  attach:
+    needs: release
+    permissions:
+      contents: write
+      actions: read
+      id-token: write
+      attestations: write
+    uses: ejmlabs/.github/.github/workflows/attach-assets.yml@STANDARDS_REVISION
+    with:
+      commit: ${{ inputs.commit }}
+      version: ${{ inputs.version }}
+      build-workflow: build.yml
+      build-run-id: ${{ inputs.build-run-id }}
+      attest: ${{ inputs.attest }}
+"""
+
+
+def native_build(text):
+    """Lint a product build workflow: read-only token, no secrets, pinned actions, one release-files artifact.
+
+    This is a line-based check of the shape, not a YAML parser: it accepts only plain block-style YAML. Review still covers what the build runs.
+    """
+    trigger = "on:\n  workflow_dispatch:\n  push:\n    branches: [main]\npermissions:\n  contents: read\n"
+    head, _, rest = text.partition("\n")
+    if re.search(r"[^\n\x20-\x7e]", text) or not re.fullmatch(r"name: [^\s\"'{}\[\]&*!|>#?%@`][^{}\[\]\t]*", head) or not rest.startswith(trigger):
+        raise ValueError("Build workflow must run only on workflow_dispatch and pushes to main with contents: read")
+    # Reject every spelling the canonical block style does not use, so a quoted key, a flow mapping,
+    # an anchor or a tag cannot hide a permission or an action from the checks below.
+    # The contents of literal block scalars (`run: |`) are script text, not YAML structure.
+    block = content = None
+    top = {"run-name", "env", "defaults", "concurrency", "jobs"}
+    current = None
+    for line in rest.removeprefix(trigger).splitlines():
+        indent = len(line) - len(line.lstrip(" "))
+        if block is not None and not line.strip(" "):
+            continue
+        if block is not None and content is None and indent > block:
+            content = indent
+        if content is not None and indent >= content:
+            continue
+        block = content = None
+        key = re.sub(r"\$\{\{.*?\}\}", "", line)
+        if not line.strip(" ") or line.lstrip(" ").startswith("#"):
+            continue
+        if not re.fullmatch(r" *(?:- )?[A-Za-z][A-Za-z0-9_-]*:(?: +[^\s\"'{}\[\]&*!|>#?][^{}\[\]\t]*| +[|>][1-9]?[+-]?| *)?| *- [^\s\"'{}\[\]&*!|>#?:-][^{}\[\]\t]*", key):
+            raise ValueError("Build workflow must use plain block-style YAML without quoted keys, flow collections or anchors")
+        if indent == 0 and not line.startswith("-"):
+            current = line.split(":")[0]
+            if current not in top:
+                raise ValueError("Build workflow repeats a top-level key or uses an unknown one")
+            top.remove(current)
+        elif current is None:
+            raise ValueError("Build workflow must set only the top-level read permission")
+        if re.search(r": *[|>][1-9]?[+-]?$", line):
+            block = len(line) - len(line.lstrip(" -"))
+    if text.lower().count("permissions") != 1 or text.lower().count("uses") != len(re.findall(r"(?m)^\s*(?:- )?uses: ", text)):
+        raise ValueError("Build workflow must use plain block-style YAML without quoted keys, flow collections or anchors")
+    if len(re.findall(r"(?m)^\s*permissions:", text)) != 1:
+        raise ValueError("Build workflow must set only the top-level read permission")
+    if re.search(r"(?i)secrets|github\.token|GITHUB_TOKEN|id-token|environment:|pull_request|workflow_run|persist-credentials: *true", text):
+        raise ValueError("Build workflow must use no secret, token, environment or untrusted trigger")
+    uses = re.findall(r"(?m)^\s*(?:- )?uses: *(\S+)", text)
+    if not uses or any(not re.fullmatch(r"[^@\s./][^@\s]*@[0-9a-f]{40}", item) for item in uses):
+        raise ValueError("Build workflow actions must be pinned to full commit SHAs")
+    if len(re.findall(r"(?m)^\s+(?:- )?name: release-files$", text)) != 1:
+        raise ValueError("Build workflow must upload exactly one artifact named release-files")
 
 
 def missing_model_key_workflows(revision, *, model_key="XAI_API_KEY"):
@@ -271,6 +424,47 @@ def _reusable_workflow(text, name, *, model_key="XAI_API_KEY"):
 "permissions": {}
 '''.replace("XAI_API_KEY", model_key)
         roots = ['"jobs":']
+    elif name == "verify-build.yml":
+        header += '''"name": "Verified build run"
+"on":
+  "workflow_call":
+    "inputs":
+      "commit":
+        "required": true
+        "type": "string"
+      "build-workflow":
+        "required": true
+        "type": "string"
+      "build-run-id":
+        "required": true
+        "type": "string"
+"permissions": {}
+'''
+        roots = ['"jobs":']
+    elif name == "attach-assets.yml":
+        header += '''"name": "Attach verified build files"
+"on":
+  "workflow_call":
+    "inputs":
+      "commit":
+        "required": true
+        "type": "string"
+      "build-workflow":
+        "required": true
+        "type": "string"
+      "build-run-id":
+        "required": true
+        "type": "string"
+      "version":
+        "required": true
+        "type": "string"
+      "attest":
+        "required": false
+        "default": false
+        "type": "boolean"
+"permissions": {}
+'''
+        roots = ['"concurrency":', '"jobs":']
     else:
         header += '''"name": "Checked draft source release"
 "on":
@@ -379,8 +573,16 @@ def workflows(root, profile):
     if directory.is_symlink() or not directory.is_dir():
         raise ValueError("Missing or unsafe workflows directory")
     allowed = {"pr.yml", "release.yml"}
+    native = profile in NATIVE_RELEASE and (directory / "build.yml").exists()
+    if native:
+        allowed.add("build.yml")
+    publish = directory / "publish.yml"
+    if profile == "ejm-ui" and publish.is_file() and not publish.is_symlink():
+        if hashlib.sha256(publish.read_bytes()).hexdigest() != UI_PUBLISH_SHA256:
+            raise ValueError("UI publish workflow differs from the reviewed revision")
+        allowed.add("publish.yml")
     if profile == ".github":
-        allowed.update(("governance.yml", "draft-release.yml"))
+        allowed.update(SHARED_WORKFLOWS)
     if any(file.name not in allowed for file in directory.iterdir()):
         raise ValueError("Unexpected workflow; use only the canonical consumers and shared reusables")
     pr = read(root, ".github/workflows/pr.yml")
@@ -392,7 +594,9 @@ def workflows(root, profile):
     model_key = re.search(r"^      (" + "|".join(MODEL_KEYS) + r"): \$\{\{ secrets\.\1 \}\}$", pr, re.M)
     if not model_key:
         raise ValueError("PR workflow must forward exactly one supported model key")
-    consumers = consumer_workflows(pin[1], model_key=model_key[1])
+    consumers = consumer_workflows(pin[1], model_key=model_key[1], native=native)
+    if native:
+        native_build(read(root, ".github/workflows/build.yml"))
     if profile == ".github":
         fixture = missing_model_key_workflows(pin[1], model_key=model_key[1])
         if pr == fixture["pr.yml"]:
@@ -401,7 +605,7 @@ def workflows(root, profile):
         if read(root, ".github/workflows/" + name) != expected:
             raise ValueError("Workflow differs from the canonical consumer: " + name)
     if profile == ".github":
-        for name in ("governance.yml", "draft-release.yml"):
+        for name in SHARED_WORKFLOWS:
             if (directory / name).exists() or (directory / name).is_symlink():
                 _reusable_workflow(read(root, ".github/workflows/" + name), name, model_key=model_key[1])
 

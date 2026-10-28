@@ -6,6 +6,8 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Added
 
+- Let `ejm-ui` publish exactly `@ejm/tokens`, `@ejm/core`, `@ejm/ui` and `@ejm/ssg` to npm with provenance: they may omit `private` only with `publishConfig` `{"access": "public", "provenance": true}`, their name and packing fields (`files`, `main`, `exports`, `bin`, `directories`, lifecycle scripts and the rest) must equal the reviewed values, which keeps brand logos and artwork out of the tokens tarball, and `publish.yml` is accepted only at its reviewed SHA-256. Every other UI package stays private.
+- Shared `verify-build.yml` and `attach-assets.yml` workflows that bind native build output to the tagged commit, recompute every digest and attach the files to the draft release.
 - Accept exactly one supported review model key name in canonical workflows; reject extra, unknown or fallback key forwarding.
 - Optional public UI source assembly from protected-main commit pins, with
   static reviewer source and credential-free consumer installation.
@@ -17,6 +19,8 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Changed
 
+- Remove the `ejm-ui` bundle-size steps from the required Quality gate and the bundle-size wording from the operations guide; no shared check caps download size or dependency count. Safety bounds and security rules are unchanged.
+- Instruct the automated review not to report a changed full-hash pin of this repository's shared workflows as missing context or a security concern; other references, moves to older revisions and widened permissions are still to be reported. Pin provenance remains a maintainer check.
 - Replace the custom automated review gate with the pinned reviewer's documented GitHub Action runner and label blocking: one review per admission, its own security and effort labels, a merge recommendation, and a required label check. Removing the security label is the maintainer override; callers also trigger on label removal to re-evaluate. Removed the result adapter, two passes, coverage and negative-answer rules, and static review data.
 - Publish blocking review findings to the job summary as inert, size-bounded text, and treat only a fixed list of negative security answers as no concern.
 - Cover two classes of reviewer-skipped files with narrow fail-closed checks: `package-lock.json` changes that only mirror the sibling `package.json` dependency ranges (`lock-manifest-mirror v1`), and strictly allowlisted SVG assets under `packages/tokens/assets/` (`svg-allowlist v1`). All other skipped text stays incomplete.

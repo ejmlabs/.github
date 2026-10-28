@@ -13,6 +13,10 @@ import standards
 from governance import GitHub
 
 
+# The recorded digests before any test patches them.
+RECORDED_PACKING = dict(standards.UI_PACKING_SHA256)
+
+
 class UIStandardsTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -33,12 +37,22 @@ class UIStandardsTests(unittest.TestCase):
             prefix = path + "/" if path else ""
             package = {"version": "0.1.0", "private": True, "license": "SEE LICENSE IN LICENSE"}
             if path:
+                package.update(name="@ejm/" + path.split("/")[1], files=["src", "!src/**/*.test.*", "LICENSE"],
+                               main="./src/index.ts", exports={".": "./src/index.ts"})
+                if path == "packages/tokens":
+                    package["files"] = ["src", "!src/**/*.test.*", "assets/fonts", "assets/brand", "assets/icons", "LICENSE"]
                 package["repository"] = {"type": "git", "url": "git+https://github.com/ejmlabs/ejm-ui.git", "directory": path}
                 self.write(prefix + "LICENSE", self.license)
                 self.write(prefix + "THIRD_PARTY_NOTICES.md", "# Third-party notices\nSee LICENSE.\n")
             self.write(prefix + "package.json", json.dumps(package))
             lock["packages"][path] = {"version": "0.1.0"}
         self.write("package-lock.json", json.dumps(lock))
+        self.private = {path: standards.read(self.root, path + "/package.json") for path in standards.UI_PACKAGES}
+        reviewed = {path: standards.ui_packing(json.loads(standards.read(self.root, path + "/package.json")))
+                    for path in standards.UI_PUBLIC}
+        packing = patch.dict(standards.UI_PACKING_SHA256, reviewed)
+        packing.start()
+        self.addCleanup(packing.stop)
         self.write("crates/ejm-tui/Cargo.toml", '[package]\nname="ejm-tui"\nversion="0.1.0"\nlicense="MIT"\npublish=false\n')
         self.write("crates/ejm-tui/Cargo.lock", '[[package]]\nname="ejm-tui"\nversion="0.1.0"\n')
         for path in standards.UI_FONT_NOTICES:
@@ -106,6 +120,196 @@ class UIStandardsTests(unittest.TestCase):
             with self.subTest(package=path, field="notice"), self.assertRaisesRegex(ValueError, "third-party notices"):
                 standards.licenses(self.root, "ejm-ui")
             self.write(notice, "# Third-party notices\nSee LICENSE.\n")
+
+    def make_public(self, path, **changes):
+        """Make a package public with the reviewed packing fields, then apply changes (None removes a field)."""
+        manifest = path + "/package.json"
+        package = json.loads(self.private[path])
+        package.pop("private", None)
+        package["publishConfig"] = {"access": "public", "provenance": True}
+        package.update(changes)
+        self.write(manifest, json.dumps({key: value for key, value in package.items() if value is not None}))
+
+    def test_exactly_the_owner_public_set_may_publish_with_the_exact_configuration(self):
+        for path in standards.UI_PUBLIC:
+            self.make_public(path)
+        standards.licenses(self.root, "ejm-ui")
+        self.assertEqual(standards.UI_PUBLIC, ("packages/core", "packages/ssg", "packages/tokens", "packages/ui"))
+        for path in standards.UI_PUBLIC:
+            original = standards.read(self.root, path + "/package.json")
+            for name, changes in (("private false", {"private": False}),
+                                  ("no config", {"publishConfig": None}),
+                                  ("restricted", {"publishConfig": {"access": "restricted", "provenance": True}}),
+                                  ("no provenance", {"publishConfig": {"access": "public"}}),
+                                  ("extra key", {"publishConfig": {"access": "public", "provenance": True, "tag": "x"}}),
+                                  ("string provenance", {"publishConfig": {"access": "public", "provenance": "true"}}),
+                                  ("integer provenance", {"publishConfig": {"access": "public", "provenance": 1}}),
+                                  ("float provenance", {"publishConfig": {"access": "public", "provenance": 1.0}}),
+                                  ("changed license", {"license": "MIT"})):
+                with self.subTest(package=path, change=name):
+                    package = json.loads(original)
+                    package.update(changes)
+                    if changes.get("publishConfig", 0) is None:
+                        del package["publishConfig"]
+                    self.write(path + "/package.json", json.dumps(package))
+                    with self.assertRaises(ValueError):
+                        standards.licenses(self.root, "ejm-ui")
+            self.write(path + "/package.json", original)
+
+    def test_other_packages_and_the_root_must_stay_private(self):
+        private_only = ("", *(path for path in standards.UI_PACKAGES if path not in standards.UI_PUBLIC))
+        self.assertEqual(private_only, ("", "packages/demos", "packages/ink", "packages/shots", "packages/site"))
+        for path in private_only:
+            manifest = (path + "/" if path else "") + "package.json"
+            original = json.loads(standards.read(self.root, manifest))
+            del original["private"]
+            original["publishConfig"] = {"access": "public", "provenance": True}
+            with self.subTest(package=path):
+                self.write(manifest, json.dumps(original))
+                with self.assertRaisesRegex(ValueError, "must remain private"):
+                    standards.licenses(self.root, "ejm-ui")
+                self.write(manifest, json.dumps({**original, "private": True}))
+                standards.licenses(self.root, "ejm-ui")
+
+    def test_public_packages_must_match_the_reviewed_packing_fields_exactly(self):
+        for path in standards.UI_PUBLIC:
+            self.make_public(path)
+        standards.licenses(self.root, "ejm-ui")
+        tokens = json.loads(standards.read(self.root, "packages/tokens/package.json"))
+        base = tokens["files"]
+        deviations = {
+            "name": ("@ejm/other", "ejm-tokens", "@EJM/tokens", ""),
+            "files": (base + ["assets"], base + ["assets/logos"], base + ["./assets"], base + ["assets/*"], base + ["!!assets"],
+                      base + ["Assets"], base + ["assets/fonts"], base[::-1], base[:-1], base + ["README.md"], ["assets"], [], "assets/fonts"),
+            "main": ("assets/logos/x.svg", "Assets/logos/x.svg", "ASSETS/LOGOS/X.SVG", "./src/other.ts", 1),
+            "types": ("Assets/logos/x.svg", "./src/other.d.ts"),
+            "typings": ("./src/index.ts",),
+            "exports": ({".": "./assets/logos/x.svg"}, {}, "./src/index.ts"),
+            "bin": ("assets/logos/x.svg", "Assets/logos/x.svg", {"x": "ASSETS/LOGOS/X.SVG"}, {"x": "./src/index.ts"}),
+            "browser": ("assets/logos/x.svg", "Assets/logos/x.svg", {"./src/index.ts": False}),
+            "module": ("./src/index.ts",),
+            "directories": ({"bin": "assets"}, {"bin": "assets/logos"}, {"bin": "Assets"}, {"man": "man"}, {}, "assets"),
+            "man": ("assets/logos/x.1", ["x.1"]),
+            "bundleDependencies": (True, []),
+            "bundledDependencies": (True, []),
+            "workspaces": (["assets"],),
+            "scripts": ({"prepack": "cp -r assets/logos assets/icons"}, {"prepare": "node x.mjs"}, {"postinstall": "node x.mjs"},
+                        {"preprepare": "x"}, {"postprepare": "x"}, {"postpack": "x"}, {"prepublish": "x"}, {"prepublishOnly": "x"},
+                        {"publish": "x"}, {"postpublish": "x"}, {"preinstall": "x"}, {"install": "x"}, "prepack", ["prepack"]),
+        }
+        for path in standards.UI_PUBLIC:
+            for field, values in deviations.items():
+                for value in values:
+                    with self.subTest(package=path, field=field, value=value):
+                        self.make_public(path, **{field: value})
+                        with self.assertRaisesRegex(ValueError, "differ from the reviewed values"):
+                            standards.licenses(self.root, "ejm-ui")
+            for field in ("name", "files", "main", "exports"):
+                with self.subTest(package=path, removed=field):
+                    self.make_public(path, **{field: None})
+                    with self.assertRaisesRegex(ValueError, "differ from the reviewed values"):
+                        standards.licenses(self.root, "ejm-ui")
+            self.make_public(path)
+            standards.licenses(self.root, "ejm-ui")
+
+    def test_packing_digest_is_exact_about_types_order_and_field_set(self):
+        package = {"name": "@ejm/x", "files": ["src"], "main": "./src/index.ts"}
+        digest = standards.ui_packing(package)
+        self.assertEqual(digest, standards.ui_packing({"main": "./src/index.ts", "files": ["src"], "name": "@ejm/x", "version": "1"}))
+        self.assertEqual(digest, standards.ui_packing({**package, "scripts": {"build": "x", "check": "y"}}))
+        self.assertNotEqual(digest, standards.ui_packing({**package, "scripts": {"build": "x", "prepack": "y"}}))
+        for changed in ({**package, "files": ["src", "src"]}, {**package, "files": [["src"]]}, {**package, "main": "./SRC/index.ts"},
+                        {**package, "directories": {}}, {**package, "bin": None}, {"files": ["src"], "name": "@ejm/x"}):
+            self.assertNotEqual(digest, standards.ui_packing(changed), changed)
+
+    def test_reviewed_values_for_public_packages_match_the_recorded_digests(self):
+        reviewed = {
+            "packages/tokens": {
+                "name": "@ejm/tokens", "main": "./src/index.ts", "types": "./src/index.ts",
+                "exports": {".": "./src/index.ts", "./tailwind.css": "./generated/tailwind.css", "./window.css": "./generated/window.css",
+                            "./neutral.css": "./generated/neutral.css", "./theme.css": "./generated/theme.css", "./theme.json": "./theme.json",
+                            "./generated/*": "./generated/*", "./assets/*": "./assets/*", "./rust/*": "./rust/*"},
+                "files": ["src", "!src/**/*.test.*", "generated", "rust", "theme.json", "README.md", "assets/fonts", "assets/brand",
+                          "assets/icons", "LICENSE", "THIRD_PARTY_NOTICES.md"]},
+            "packages/core": {
+                "name": "@ejm/core", "main": "./src/index.ts", "types": "./src/index.ts",
+                "exports": {".": "./src/index.ts", "./contract.json": "./contract.json"},
+                "files": ["src", "!src/**/*.test.*", "contract.json", "LICENSE", "THIRD_PARTY_NOTICES.md"]},
+            "packages/ssg": {
+                "name": "@ejm/ssg", "main": "./src/index.ts", "types": "./src/index.ts", "bin": {"ejm-ssg": "./bin/ejm-ssg.mjs"},
+                "exports": {".": "./src/index.ts", "./server": "./src/server.ts", "./vite": "./src/vite.mjs",
+                            "./ssg.css": "./src/ssg.css"},
+                "files": ["bin", "src", "!src/**/*.test.*", "!src/perf", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"]},
+            "packages/ui": json.loads('''
+            {
+    "name": "@ejm/ui",
+                "main": "./src/index.ts",
+                "types": "./src/index.ts",
+                "exports": {
+                    ".": "./src/index.ts",
+                    "./styles.css": "./src/styles.css",
+                    "./styles-docs.css": "./src/styles-docs.css",
+                    "./styles-app.css": "./src/styles-app.css",
+                    "./styles-terminal.css": "./src/styles-terminal.css",
+                    "./theme-boot.js": "./public/theme-boot.js",
+                    "./font-preloads": "./src/font-preloads.ts",
+                    "./catalog.json": "./src/catalog.json",
+                    "./fonts/*": "./src/fonts/*",
+                    "./art/*": "./src/art/*",
+                    "./app": "./src/app/index.ts",
+                    "./app/messages": "./src/app/messages.ts",
+                    "./app/scale": "./src/app/scale.ts",
+                    "./app/useBox": "./src/app/useBox.ts",
+                    "./app/*": "./src/app/*.tsx",
+                    "./docs": "./src/docs/index.ts",
+                    "./docs/highlight": "./src/docs/highlight.ts",
+                    "./docs/highlight-all": "./src/docs/highlight-all.ts",
+                    "./docs/hooks": "./src/docs/hooks.ts",
+                    "./docs/*": "./src/docs/*.tsx",
+                    "./motion": "./src/motion/index.ts",
+                    "./motion/useDrawOn": "./src/motion/useDrawOn.ts",
+                    "./motion/useReveal": "./src/motion/useReveal.ts",
+                    "./motion/*": "./src/motion/*.tsx",
+                    "./layout": "./src/layout/index.ts",
+                    "./layout/*": "./src/layout/*.tsx",
+                    "./shell": "./src/shell/index.ts",
+                    "./shell/*": "./src/shell/*.tsx",
+                    "./hooks": "./src/hooks/index.ts",
+                    "./hooks/*": "./src/hooks/*.ts",
+                    "./components/TerminalWorkspace": "./src/terminal/TerminalWorkspace.tsx",
+                    "./components/*": "./src/components/*.tsx",
+                    "./lib/utils": "./src/lib/utils.ts",
+                    "./styles-static.css": "./src/styles-static.css",
+                    "./components/NativeCheckbox": "./src/static/NativeCheckbox.tsx",
+                    "./shell/Disclosure": "./src/static/Disclosure.tsx",
+                    "./layout/ActionRows": "./src/static/ActionRows.tsx",
+                    "./layout/DocumentContent": "./src/static/DocumentContent.tsx",
+                    "./styles-site.css": "./src/styles-site.css",
+                    "./static.css": "./public/static.css",
+                    "./control-recipes": {
+                        "types": "./src/control-recipes.d.mts",
+                        "import": "./src/control-recipes.mjs",
+                        "default": "./src/control-recipes.mjs"
+                    }
+                },
+                "files": [
+                    "src",
+                    "!src/**/*.test.*",
+                    "!src/components/test-setup.tsx",
+                    "!src/**/README.md",
+                    "public/theme-boot.js",
+                    "THEME.md",
+                    "COMPONENTS.md",
+                    "LICENSE",
+                    "THIRD_PARTY_NOTICES.md",
+                    "public/static.css"
+                ]
+            }'''),
+        }
+        for path, package in reviewed.items():
+            with self.subTest(package=path):
+                self.assertEqual(standards.ui_packing(package), RECORDED_PACKING[path])
+        self.assertEqual(sorted(RECORDED_PACKING), sorted(standards.UI_PUBLIC))
 
     def test_font_licenses_must_be_original_and_match_the_ui_package(self):
         source, copied = standards.UI_FONT_NOTICES[0], standards.UI_FONT_NOTICES[2]

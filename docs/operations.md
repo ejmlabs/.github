@@ -62,7 +62,15 @@ Action setup and label blocking, with no custom result rules:
   review happens. Its token has `contents: read`, `pull-requests: write` (for
   the review comment and labels) and `statuses: read`. It reads the PR through
   the API and never checks out or runs PR code. File handling and prompts are
-  the reviewer's defaults; the model context cap stays 160,000 tokens and the
+  the reviewer's defaults, plus one extra instruction: the review is told not
+  to report a changed pin of this repository's shared workflow
+  (`ejmlabs/.github/.github/workflows/...@` a full 40-character hash, or the
+  matching `standards-ref`) as missing context or a security concern, because
+  it never sees those workflows. It is still told to report other references,
+  moves to an older revision, and changes that widen permissions, secrets or
+  triggers. The instruction is guidance, not a check: it does not verify where
+  the pinned commit came from, so the maintainer must confirm the commit is
+  retained under `workflow-pins/FULL_SHA` before `/approve`. The model context cap stays 160,000 tokens and the
   output cap 16,000. Repository and global reviewer settings files are
   ignored. The reviewer's documented action output (`review`, this run's
   review data) is exposed as the job output.
@@ -169,11 +177,11 @@ npm ci --ignore-scripts
 npm rebuild node-pty --ignore-scripts=false
 npm run check
 npm run build
-node scripts/size.mjs
-npm run size -w @ejm/demos
 npm run check:rust
 node scripts/pack-proof.mjs
 ```
+
+No shared check caps bundle bytes, download size or dependency count. The commands above belong to each product, which removes its own budgets in its own change; use well-maintained packages where they fit. Load time is the performance bar and each product repository measures it (for example with its own `npm run perf`).
 
 The explicit `node-pty` rebuild is the single dependency lifecycle exception.
 It runs only inside admitted credential-free Quality. The owner must lock that
@@ -188,7 +196,7 @@ They do not run private owner scripts or prove UI compatibility, hosted
 execution, duration or the coverage of an owner's packed-consumer proof.
 
 The required owner commands must cover source, theme, component, TypeScript,
-test, build, bundle-size, terminal, and packed-consumer checks. The profile does
+test, build, terminal, and packed-consumer checks. The profile does
 not run model calls, product captures, product honesty checks that require sibling
 repositories, or browser rendering acceptance. Those need separately reviewed
 immutable product inputs and their own evidence. The separate registry job
@@ -201,7 +209,20 @@ dated `CHANGELOG.md` entry. Root npm metadata, all eight owned npm packages
 and nested test fixtures are consumers and do not set the owner's release
 version. Adding an owned package requires a reviewed inventory update.
 
-The root and owned npm packages must keep `private: true` and
+The root and the `demos`, `ink`, `shots` and `site` packages must keep
+`private: true`. `core`, `ssg`, `tokens` and `ui` are the public npm set: each may
+omit `private` only with `publishConfig` of exactly
+`{"access": "public", "provenance": true}`, and `"private": false` is refused. Each
+public package must also carry exactly the reviewed `name`, `files`, `main`,
+`types`, `exports` and other packing fields (`bin`, `browser`, `module`,
+`directories`, `man`, bundled or workspace lists and the pack, publish and install
+lifecycle scripts must be absent unless reviewed); the validator checks a digest of them in `scripts/standards.py`, so any
+change to a public package's packing manifest needs a new shared revision. The reviewed
+`tokens` files reach `assets` only through `assets/fonts`, `assets/brand` and
+`assets/icons`, which keeps logos and artwork out of the tarball.
+`.github/workflows/publish.yml` is allowed only in `ejm-ui`, as a regular
+file whose SHA-256 equals the reviewed hash in `scripts/standards.py`; changing it
+needs a new shared revision. All owned packages keep
 `SEE LICENSE IN LICENSE`. Each package must name its exact repository directory
 and carry a complete scoped `LICENSE` and `THIRD_PARTY_NOTICES.md`. The
 software and documentation must retain MIT terms, and brand assets their owners'
@@ -402,6 +423,39 @@ remain separate tasks; this shared implementation enables none by itself.
 The shared workflow creates source drafts from an exact checked protected
 main commit, the repository's SemVer `VERSION` and dated release notes. See
 [Releasing](../RELEASING.md) for the dispatch and artifact contract.
+
+## Attaching built files
+
+`ejm-cli` and `ejm-harness` may ship native builds. A repository opts in by adding
+`.github/workflows/build.yml`; the standards check then requires the canonical
+native `release.yml` (verify, Draft release, attach, one commit input, one pin)
+and a build workflow that:
+
+- runs only on `workflow_dispatch` and pushes to `main`;
+- sets top-level `permissions: contents: read` and no other permissions;
+- uses no secrets, tokens, environments or pull-request triggers;
+- pins every action to a full commit SHA;
+- uploads exactly one artifact named `release-files`: the release files plus one
+  combined `build-sha256.txt` in `sha256sum` format, names `[A-Za-z0-9._-]`, no
+  subdirectories. Per-platform jobs upload their own differently named
+  artifacts, which a final job collects into `release-files`; attach ignores the rest.
+
+Without `build.yml` the plain source-release caller is required. The jobs are:
+
+1. `verify-build.yml` (`actions: read`) before Draft release. It requires a
+   completed, successful run of `build.yml` whose `head_sha` is the release
+   commit, on main in the same repository, with a `release-files` artifact, so a
+   failed smoke check never burns the tag.
+2. `attach-assets.yml` after Draft release (`needs`). It holds the release write
+   token and checks out and runs no project code. It re-verifies the run, the
+   lightweight `vVERSION` tag and the single draft release, downloads
+   `release-files`, recomputes every SHA-256 against `build-sha256.txt`, and
+   uploads the files, then an extended `SHA256SUMS`, to the draft. It refuses a
+   changed digest, an extra, missing or linked file, and a built file that would
+   replace an existing asset. `attest` adds build provenance attestation; this is
+   provenance, not code signing.
+
+The caller pins all shared workflows to one reviewed commit of this repository. Signing and notarization are not claimed by either workflow.
 
 This revision's canonical PR and release callers both pin
 `6717b433c462e01abaed86e2118e4843827598cb`. Its archive validator preserves

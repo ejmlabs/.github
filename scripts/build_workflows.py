@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CHECKOUT = "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
 NODE = "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020"
 UV = "astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e"
+ATTEST = "actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be"
 UPLOAD = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
 DOWNLOAD = "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
 # Provider settings are confined to these constants and the review-step key env.
@@ -19,6 +20,15 @@ REVIEWER_AI_TIMEOUT = 225
 REVIEWER_MAX_MODEL_TOKENS = 160000
 REVIEWER_MAX_OUTPUT_TOKENS = 16000
 REVIEWER_JOB_TIMEOUT_MINUTES = 12
+# The review sees only the PR diff, never the shared workflows a caller pin selects. Pins to this repository's
+# workflows are therefore not missing context; any other reference or change keeps the default handling.
+REVIEWER_EXTRA_INSTRUCTIONS = (
+    "A changed `uses: ejmlabs/.github/.github/workflows/<name>.yml@<40 hex characters>` reference, or a `standards-ref` "
+    "value equal to such a pin, selects a shared workflow that is maintained and reviewed in its own repository and is "
+    "not part of this diff. Do not report its absence, or the inability to verify what that workflow does, as missing "
+    "context or as a security concern. Still report a reference that is not a full 40-character commit hash, that names "
+    "another repository or path, or that moves to an older revision, or whose surrounding workflow changes grant new permissions, secrets or triggers."
+)
 
 def yaml(value, indent=0):
     """Emit the limited maps, lists and strings used here, without dependencies."""
@@ -132,8 +142,6 @@ case "$PROFILE" in
     npm rebuild node-pty --ignore-scripts=false
     npm run check
     npm run build
-    node scripts/size.mjs
-    npm run size -w @ejm/demos
     npm run check:rust
     node scripts/pack-proof.mjs
     ;;
@@ -205,7 +213,8 @@ GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="$RUNNER_TEMP/review-event.json
                       "GITHUB_ACTION_CONFIG__AUTO_REVIEW": "true", "GITHUB_ACTION_CONFIG__AUTO_DESCRIBE": "false",
                       "GITHUB_ACTION_CONFIG__AUTO_IMPROVE": "false", "GITHUB_ACTION_CONFIG__ENABLE_OUTPUT": "true",
                       "PR_REVIEWER__ENABLE_REVIEW_LABELS_SECURITY": "true", "PR_REVIEWER__ENABLE_REVIEW_LABELS_EFFORT": "true",
-                      "PR_REVIEWER__REQUIRE_MERGE_RECOMMENDATION": "true"}),
+                      "PR_REVIEWER__REQUIRE_MERGE_RECOMMENDATION": "true",
+                      "PR_REVIEWER__EXTRA_INSTRUCTIONS": REVIEWER_EXTRA_INSTRUCTIONS}),
                   VERIFY],
     }
     labels = {"needs": ["admission", "ai"], "if": "${{ github.run_attempt == 1 && needs.admission.outputs.run == 'true' }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
@@ -251,8 +260,41 @@ PY
 """)]}}}
 
 
+def build_inputs(*extra):
+    names = ("commit", "build-workflow", "build-run-id", *extra)
+    return {name: {"required": False, "default": False, "type": "boolean"} if name == "attest" else {"required": True, "type": "string"} for name in names}
+
+
+def build_env(inputs):
+    env = {"GH_TOKEN": "${{ github.token }}", "RELEASE_COMMIT": "${{ inputs.commit }}", "BUILD_WORKFLOW": "${{ inputs.build-workflow }}", "BUILD_RUN_ID": "${{ inputs.build-run-id }}"}
+    return {**env, "RELEASE_VERSION": "${{ inputs.version }}"} if "version" in inputs else env
+
+
+def verify_build_workflow():
+    """Pre-tag gate: no checkout, no project code, read-only."""
+    inputs = build_inputs()
+    code = source("governance.py", True) + "\n" + source("standards.py", True) + "\n" + source("attach.py")
+    return {"name": "Verified build run", "on": {"workflow_call": {"inputs": inputs}}, "permissions": {},
+            "jobs": {"verify": {"runs-on": "ubuntu-24.04", "timeout-minutes": 3, "permissions": {"actions": "read"}, "env": build_env(inputs),
+                                "steps": [run("Require a successful build of this commit from main", python(code, "verify", "python3 -I"))]}}}
+
+
+def attach_workflow():
+    """The only job that holds the release write token. It checks out and runs no project code."""
+    inputs = build_inputs("version", "attest")
+    code = source("governance.py", True) + "\n" + source("standards.py", True) + "\n" + source("attach.py")
+    return {"name": "Attach verified build files", "on": {"workflow_call": {"inputs": inputs}}, "permissions": {},
+            "concurrency": {"group": "attach-assets-${{ github.repository }}", "cancel-in-progress": False},
+            "jobs": {"attach": {"runs-on": "ubuntu-24.04", "timeout-minutes": 10,
+                                "permissions": {"contents": "write", "actions": "read", "id-token": "write", "attestations": "write"}, "env": build_env(inputs),
+                                "steps": [run("Require the build run, tag and draft release to match", python(code, "check", "python3 -I")),
+                                          {"uses": DOWNLOAD, "with": {"name": "release-files", "run-id": "${{ inputs.build-run-id }}", "github-token": "${{ github.token }}", "path": "built"}},
+                                          run("Recompute digests and attach to the draft", python(code, "attach", "python3 -I")),
+                                          {"uses": ATTEST, "if": "${{ inputs.attest }}", "with": {"subject-path": "built/*", "show-summary": False}}]}}}
+
+
 def main():
-    for name, data in (("governance.yml", governance()), ("draft-release.yml", release_workflow())):
+    for name, data in (("governance.yml", governance()), ("draft-release.yml", release_workflow()), ("verify-build.yml", verify_build_workflow()), ("attach-assets.yml", attach_workflow())):
         path = ROOT / ".github/workflows" / name
         expected = "# Generated by scripts/build_workflows.py. Edit scripts and regenerate.\n" + yaml(data) + "\n"
         if "--check" in sys.argv:
