@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Package admitted sources as data without running any project code."""
+import http.client
 import json
 import os
 import re
@@ -7,6 +8,7 @@ import subprocess
 import sys
 import urllib.request
 from pathlib import Path
+from typing import IO, Any, Never
 
 MAX_SOURCE_FILES = 10_000
 MAX_SOURCE_BYTES = 128_000_000
@@ -17,17 +19,17 @@ MAX_HARNESS_METADATA_BYTES = 8_000_000
 MAX_HARNESS_SELECTION_BYTES = 4_096
 
 
-def run(*args):
+def run(*args: str) -> bytes:
     return subprocess.run(args, check=True, capture_output=True).stdout
 
 
-def full_sha(value):
+def full_sha(value: str) -> str:
     if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value):
         raise ValueError("Source and diff revisions must be full lowercase commit SHAs")
     return value
 
 
-def ui_revision(root):
+def ui_revision(root: str | Path) -> str:
     """Read the optional owner source pin from protected main, never PR source."""
     root = Path(root).resolve()
     path = root / ".github/ui-source.json"
@@ -43,11 +45,11 @@ def ui_revision(root):
         raise ValueError("UI source must be the fixed ejmlabs/ejm-ui owner")
     revision = value["revision"]
     if not isinstance(revision, str):
-        raise ValueError("UI source revision must be a commit SHA")
+        raise ValueError("UI source revision must be a commit SHA")  # noqa: TRY004 - callers and tests expect ValueError for every invalid pin
     return full_sha(revision)
 
 
-def source_archive(root, sha, prefix, format_):
+def source_archive(root: str | Path, sha: str, prefix: str, format_: str) -> bytes:
     """Export committed bytes, without allowing source-controlled archive attributes."""
     full_sha(sha)
     prefix = prefix.rstrip("/")
@@ -87,7 +89,7 @@ def source_archive(root, sha, prefix, format_):
             attributes.write_bytes(original)
 
 
-def harness_pin(root, revision):
+def harness_pin(root: str | Path, revision: str) -> str:
     """Read a small ordinary pin blob, never a source-controlled filesystem path."""
     full_sha(revision)
     entry = run("git", "-C", str(root), "ls-tree", "-l", "-z", revision, "--", HARNESS_PIN)
@@ -104,11 +106,11 @@ def harness_pin(root, revision):
 
 
 class NoHarnessRedirects(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, request, response, code, message, headers, new_url):
+    def redirect_request(self, request: urllib.request.Request, response: IO[bytes], code: int, message: str, headers: http.client.HTTPMessage, new_url: str) -> Never:  # noqa: ARG002 - signature fixed by the base class
         raise ValueError("Harness source authority must not redirect")
 
 
-def harness_json(path, token):
+def harness_json(path: str, token: str) -> dict[str, Any]:
     """Read bounded metadata only from the fixed harness API authority."""
     if not re.fullmatch(r"branches/main|compare/[0-9a-f]{40}\.\.\.[0-9a-f]{40}\?per_page=1", path):
         raise ValueError("Invalid harness metadata path")
@@ -120,19 +122,19 @@ def harness_json(path, token):
     try:
         with urllib.request.build_opener(NoHarnessRedirects()).open(request, timeout=30) as response:
             if response.status != 200 or response.geturl() != url:
-                raise ValueError("Unexpected harness metadata response")
+                raise ValueError("Unexpected harness metadata response")  # noqa: TRY301 - reported through the same verification error below
             data = response.read(MAX_HARNESS_METADATA_BYTES + 1)
         if not data or len(data) > MAX_HARNESS_METADATA_BYTES:
-            raise ValueError("Harness metadata exceeds its byte limit")
+            raise ValueError("Harness metadata exceeds its byte limit")  # noqa: TRY301 - reported through the same verification error below
         value = json.loads(data)
         if not isinstance(value, dict):
-            raise ValueError("Harness metadata must be an object")
-        return value
+            raise ValueError("Harness metadata must be an object")  # noqa: TRY004, TRY301 - reported through the same verification error below
+        return value  # noqa: TRY300 - the return must stay inside the try so parse failures are reported
     except (OSError, ValueError):
         raise ValueError("Could not verify protected harness source metadata") from None
 
 
-def select_harness(profile, head, base, token):
+def select_harness(profile: str, head: str, base: str, token: str) -> dict[str, str] | None:
     if profile == "ejm-cli":
         revision = harness_pin("product", full_sha(head))
         try:
@@ -164,7 +166,7 @@ def select_harness(profile, head, base, token):
     return None
 
 
-def load_harness_selection(profile, head, base):
+def load_harness_selection(profile: str, head: str, base: str) -> dict[str, Any]:
     file = Path("harness-selection.json")
     if file.is_symlink():
         raise ValueError("Unsafe harness source selection")
@@ -189,7 +191,7 @@ def load_harness_selection(profile, head, base):
     return selection
 
 
-def archive_harness(selection):
+def archive_harness(selection: dict[str, Any]) -> bytes:
     revision = full_sha(selection["revision"])
     if run("git", "-C", "harness", "rev-parse", "HEAD").decode().strip() != revision:
         raise ValueError("Harness checkout does not match selected source")
@@ -199,9 +201,9 @@ def archive_harness(selection):
     return source_archive("harness", revision, "ejm-harness", "tar")
 
 
-def main():
+def main() -> None:
     if sys.argv[1:] == ["ui-pin"]:
-        with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
             output.write("revision=" + ui_revision("base") + "\n")
         return
     head, base = full_sha(os.environ["PR_HEAD"]), full_sha(os.environ["PR_BASE"])
@@ -216,7 +218,7 @@ def main():
         if selection is not None:
             with Path("harness-selection.json").open("x") as output:
                 output.write(json.dumps(selection))
-        with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
             output.write("revision=" + (selection["revision"] if selection else "") + "\n")
         return
     if len(sys.argv) != 1:

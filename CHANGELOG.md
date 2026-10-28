@@ -6,6 +6,7 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Added
 
+- Shared strict lint layer in `templates/lint/` (ESLint, ruff, ShellCheck and Rust lint tables) and `scripts/sync_lint.py`, which copies it into a repository and reports drift. No shared workflow changes.
 - Let `ejm-ui` publish exactly `@ejm/tokens`, `@ejm/core`, `@ejm/ui` and `@ejm/ssg` to npm with provenance: they may omit `private` only with `publishConfig` `{"access": "public", "provenance": true}`, their name and packing fields (`files`, `main`, `exports`, `bin`, `directories`, lifecycle scripts and the rest) must equal the reviewed values, which keeps brand logos and artwork out of the tokens tarball, and `publish.yml` is accepted only at its reviewed SHA-256. Every other UI package stays private.
 - Shared `verify-build.yml` and `attach-assets.yml` workflows that bind native build output to the tagged commit, recompute every digest and attach the files to the draft release.
 - Accept exactly one supported review model key name in canonical workflows; reject extra, unknown or fallback key forwarding.
@@ -19,6 +20,7 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Changed
 
+- Type-annotate the scripts and tests, and enforce `mypy --strict` and ruff with the shared strict layer through a unit test run by the existing gate command. Behaviour is unchanged; the generated workflows differ only in the embedded script bytes.
 - Remove the `ejm-ui` bundle-size steps from the required Quality gate and the bundle-size wording from the operations guide; no shared check caps download size or dependency count. Safety bounds and security rules are unchanged.
 - Instruct the automated review not to report a changed full-hash pin of this repository's shared workflows as missing context or a security concern; other references, moves to older revisions and widened permissions are still to be reported. Pin provenance remains a maintainer check.
 - Replace the custom automated review gate with the pinned reviewer's documented GitHub Action runner and label blocking: one review per admission, its own security and effort labels, a merge recommendation, and a required label check. Removing the security label is the maintainer override; callers also trigger on label removal to re-evaluate. Removed the result adapter, two passes, coverage and negative-answer rules, and static review data.

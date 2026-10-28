@@ -1,0 +1,19 @@
+## Context
+
+The shared gate runs each repository's own check command (`scripts/check`, `npm run check`, `npm run verify`, `scripts/check.mjs`, and for this repository `python3 -m unittest discover -s tests -v` plus `build_workflows.py --check`). Changing those commands changes `governance.yml`, which every consumer pins by SHA, so this plan keeps every new check inside the repositories' own commands. Measured counts behind each decision are in `data/strict-lint/plan.md`.
+
+## Decisions
+
+- **Home: files in this repository, synced.** An `@ejm` package in ejm-ui would need public npm publication: the standards allow exactly four public UI packages and pin `publish.yml` by hash, so a fifth package is a gate change plus an owner approval, and only ejmlabs and ejm-chess sit beside an ejm-ui checkout today. `templates/lint/` is not read by `build_workflows.py` (it embeds only `templates/community/*.md`), so adding it changes no workflow.
+- **TypeScript base: `@tsconfig/strictest@2.0.8`.** It is the maintained community base and sets exactly the target: `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitOverride`, `noPropertyAccessFromIndexSignature`, `noFallthroughCasesInSwitch`, `noImplicitReturns`, `noUnusedLocals`, `noUnusedParameters`, `allowUnreachableCode: false`, `allowUnusedLabels: false`, `isolatedModules`. Repositories add only environment options. `checkJs` stays off: it cost 1279 errors in ejm-ui's 66 `.mjs` scripts, mostly implicit `any` parameters; JavaScript gets the untyped lint layer and moves to TypeScript when touched.
+- **Typed lint pins TypeScript 6.0.3.** typescript-eslint 8.71.2 supports TypeScript below 6.1. Repositories that compile with TypeScript 7 keep a separate lint package with TypeScript 6.0.3, as gerry's `frontend/lint` and ejm-harness's root already do.
+- **ESLint presets unmodified, plus five rules.** `strictTypeChecked` and `stylisticTypeChecked` as published, plus: unused disable directives and unused inline configs are errors; every `eslint-disable` needs a description and a rule name (eslint-comments `require-description`, `no-unlimited-disable`); `ban-ts-comment` refuses `@ts-ignore`, `@ts-expect-error` and `@ts-nocheck`; `consistent-type-imports`; `switch-exhaustiveness-check`. React repositories add `eslint-plugin-react-hooks` `recommended`.
+- **Python: mypy `--strict`, not pyright strict.** pyright strict reported 2944 errors here against mypy's 949, and 51291 against 8596 in gerry, the difference being `Unknown` types from untyped third-party code. ejm-harness already runs mypy `--strict`.
+- **ruff: `ALL` minus a reasoned list.** The list drops docstring and copyright policy, formatter-owned rules, print in command-line tools, exception-message style, pytest-only assertion advice for unittest code, size and magic-number thresholds, subprocess-call noise and type-checking import moves (unsafe with runtime-evaluated annotations). Tests may use `assert`, private access and `Any` parameters.
+- **Rust: the union of ejm-harness and ejm-cli.** `nursery` is left out: it is the unstable group and most hits were `significant_drop_tightening`, `redundant_pub_crate` and `missing_const_for_fn` suggestions (136 in ejm-harness, 58 in ejm-cli).
+- **Shell: ShellCheck 0.11.0 through `shellcheck-py`**, `enable=all` minus SC2250 (braces on every variable: 542 of 709 hits in box-setup, style only).
+- **Drift is checked when syncing, not by the gate.** `sync_lint.py --check` reports differences; gate enforcement of the copies can come later as a standards change if drift appears.
+
+## Risks
+
+The copies can drift between syncs; the header in each copy names its source, and `--check` finds drift. If typescript-eslint gains TypeScript 7 support, the TypeScript 6.0.3 pin and the separate lint packages go away in a later change.

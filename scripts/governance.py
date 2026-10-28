@@ -7,6 +7,7 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import Any, cast
 
 REPOS = {"ejmlabs/" + name for name in (".github", "ejmlabs", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui")}
 CONTEXTS = ("Human readiness", "Maintainer approval", "Quality", "Repository standards", "AI review")
@@ -17,87 +18,86 @@ BLOCKING_LABELS = {SECURITY_LABEL.lower()}
 LABEL_BLOCKED = "Blocked by the review's security verdict or label; a maintainer may remove the label to override"
 
 
-def command(text):
+def command(text: str) -> tuple[str, ...]:
     match = COMMAND.fullmatch(text.strip())
     if not match:
         raise ValueError("Use /ready, /approve, or /revoke followed by the full 40-character head SHA")
     return match.groups()
 
 
-def human(user, permission):
-    return user.get("type") == "User" and permission in {"admin", "maintain"}
+def human(user: dict[str, Any], permission: str) -> bool:
+    return bool(user.get("type") == "User" and permission in {"admin", "maintain"})
 
 
-def same_repository(pr):
-    return (pr["head"].get("repo") or {}).get("full_name") == pr["base"]["repo"]["full_name"]
+def same_repository(pr: dict[str, Any]) -> bool:
+    return bool((pr["head"].get("repo") or {}).get("full_name") == pr["base"]["repo"]["full_name"])
 
 
-def current_head(pr, sha):
-    return pr["state"] == "open" and not pr.get("draft") and pr["base"]["ref"] == "main" and pr["head"]["sha"] == sha
+def current_head(pr: dict[str, Any], sha: str) -> bool:
+    return bool(pr["state"] == "open" and not pr.get("draft") and pr["base"]["ref"] == "main" and pr["head"]["sha"] == sha)
 
 
-def current_pr(pr, sha):
+def current_pr(pr: dict[str, Any], sha: str) -> bool:
     return current_head(pr, sha) and same_repository(pr)
 
 
 class GitHub:
-    def __init__(self):
+    def __init__(self) -> None:
         self.repo = os.environ["GITHUB_REPOSITORY"]
         if self.repo not in REPOS:
             raise ValueError("Repository has not adopted the ejmlabs policy")
         self.token = os.environ["GH_TOKEN"]
         self.root = "https://api.github.com/repos/" + self.repo
 
-    def request(self, path, method="GET", data=None):
+    def request(self, path: str, method: str = "GET", data: dict[str, Any] | None = None) -> dict[str, Any]:
         url = path if path.startswith("https://api.github.com/") else self.root + path
         body = None if data is None else json.dumps(data).encode()
-        req = urllib.request.Request(url, data=body, method=method, headers={
+        req = urllib.request.Request(url, data=body, method=method, headers={  # noqa: S310 - url is always https://api.github.com/
             "Authorization": "Bearer " + self.token, "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json",
         })
-        with urllib.request.urlopen(req, timeout=30) as response:
-            return json.loads(response.read() or "null")
+        with urllib.request.urlopen(req, timeout=30) as response:  # noqa: S310 - url is always https://api.github.com/
+            return cast("dict[str, Any]", json.loads(response.read() or "null"))
 
-    def pages(self, path, limit=10):
-        result = []
+    def pages(self, path: str, limit: int = 10) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
         for page in range(1, limit + 1):
-            batch = self.request(path + ("&" if "?" in path else "?") + f"per_page=100&page={page}")
+            batch = cast("list[dict[str, Any]]", self.request(path + ("&" if "?" in path else "?") + f"per_page=100&page={page}"))
             result.extend(batch)
             if len(batch) < 100:
                 return result
         raise ValueError("Metadata limit exceeded; maintainer triage is required")
 
-    def permission(self, login):
+    def permission(self, login: str) -> str:
         if not re.fullmatch(r"[A-Za-z0-9-]+", login):
             return "none"
         role = self.request(f"/collaborators/{login}/permission")
-        return role.get("role_name", role["permission"])
+        return cast("str", role.get("role_name", role["permission"]))
 
-    def statuses(self, sha):
-        result = {}
+    def statuses(self, sha: str) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
         for status in self.pages(f"/commits/{sha}/statuses"):
             result.setdefault(status["context"], status)
         return result
 
-    def status(self, sha, context, state, description):
+    def status(self, sha: str, context: str, state: str, description: str) -> None:
         self.request(f"/statuses/{sha}", "POST", {
             "context": context, "state": state, "description": description[:140],
             "target_url": f"https://github.com/{self.repo}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
         })
 
 
-def outputs(**items):
-    with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
-        for key, value in items.items():
-            out.write(f"{key}={value}\n")
+def outputs(**items: str | int) -> None:
+    with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as out:
+        out.writelines(f"{key}={value}\n" for key, value in items.items())
 
 
-def first_attempt():
+def first_attempt() -> None:
     if os.environ.get("GITHUB_RUN_ATTEMPT", "1") != "1":
         raise ValueError("Workflow reruns cannot replay admission; use a fresh human command after revocation")
 
 
-def live_decision(api, number, sha, comment_id, kind):
+def live_decision(api: GitHub, number: int | str, sha: str, comment_id: int | str, kind: str) -> dict[str, Any]:
     comment = api.request(f"/issues/comments/{int(comment_id)}")
     if comment["issue_url"] != f"https://api.github.com/repos/{api.repo}/issues/{int(number)}":
         raise ValueError("Human decision belongs to another PR")
@@ -108,7 +108,7 @@ def live_decision(api, number, sha, comment_id, kind):
     return comment
 
 
-def live_ready(api, number, sha, comment_id):
+def live_ready(api: GitHub, number: int | str, sha: str, comment_id: int | str) -> dict[str, Any]:
     first_attempt()
     pr = api.request(f"/pulls/{number}")
     if not current_pr(pr, sha):
@@ -121,7 +121,7 @@ def live_ready(api, number, sha, comment_id):
     return pr
 
 
-def dismiss_bot_approvals(api, number, sha, reason):
+def dismiss_bot_approvals(api: GitHub, number: int | str, sha: str, reason: str) -> None:
     for review in api.pages(f"/pulls/{number}/reviews"):
         if review["user"]["login"] == "github-actions[bot]" and review["state"] == "APPROVED" and review["commit_id"] == sha:
             path = f"/pulls/{number}/reviews/{review['id']}"
@@ -132,7 +132,7 @@ def dismiss_bot_approvals(api, number, sha, reason):
                     raise
 
 
-def invalidate(api, number, sha, reason):
+def invalidate(api: GitHub, number: int | str, sha: str, reason: str) -> None:
     statuses = api.statuses(sha)
     ready = statuses.get("Human readiness", {})
     for context in ("Human readiness", "Maintainer approval"):
@@ -147,7 +147,7 @@ def invalidate(api, number, sha, reason):
                 raise
 
 
-def admit(api, event):
+def admit(api: GitHub, event: dict[str, Any]) -> None:
     outputs(run="false")
     first_attempt()
     issue = event.get("issue", {})
@@ -198,7 +198,7 @@ def admit(api, event):
             })
             live_ready(api, number, sha, ready_id[1])
             if live_decision(api, number, sha, comment_id, "approve")["body"] != comment["body"]:
-                raise ValueError("Approval changed while its native review was recorded")
+                raise ValueError("Approval changed while its native review was recorded")  # noqa: TRY301 - the except below records the failure, then re-raises
             api.status(sha, "Maintainer approval", "success", f"[approve:{comment_id}] Human maintainer approved this commit")
         except (ValueError, KeyError, urllib.error.URLError):
             api.status(sha, "Maintainer approval", "failure", "Human approval could not be recorded; fresh command required")
@@ -220,7 +220,7 @@ def admit(api, event):
             profile=api.repo.split("/")[1])
 
 
-def finish(api):
+def finish(api: GitHub) -> None:
     first_attempt()
     number, sha, admission = os.environ["PR_NUMBER"], os.environ["PR_HEAD"], os.environ["ADMISSION_ID"]
     try:
@@ -237,7 +237,7 @@ def finish(api):
         try:
             marker = re.search(r"\[approve:(\d+)\]", approval.get("description", ""))
             if not marker:
-                raise ValueError("Successful approval is missing its human decision")
+                raise ValueError("Successful approval is missing its human decision")  # noqa: TRY301 - the except below records the failure, then re-raises
             live_decision(api, number, sha, marker[1], "approve")
         except (ValueError, KeyError, urllib.error.URLError):
             api.status(sha, "Maintainer approval", "failure", "Human approval no longer valid; fresh command required")
@@ -255,22 +255,20 @@ def finish(api):
         api.status(sha, context, "success" if ok else "failure", "Passed for admitted commit" if ok else failed)
 
 
-def blocking_labels(api, number):
+def blocking_labels(api: GitHub, number: int | str) -> tuple[dict[str, Any], list[str]]:
     pr = api.request(f"/pulls/{int(number)}")
     return pr, [label["name"] for label in pr["labels"] if label["name"].lower() in BLOCKING_LABELS]
 
 
-def is_value_no(value):
+def is_value_no(value: object) -> bool:
     """The reviewer's own rule for a negative answer (pr_agent.algo.utils.is_value_no, 0.48.0)."""
     if not value:
         return True
     value_str = str(value).strip().lower()
-    if value_str == 'no' or value_str == 'none' or value_str == 'false':
-        return True
-    return False
+    return value_str in {"no", "none", "false"}
 
 
-def labels(api):
+def labels(api: GitHub) -> None:
     # Decide from this run's documented action output, so removing the label early cannot pass.
     try:
         review = json.loads(os.environ.get("REVIEW_OUTPUT", ""))
@@ -285,7 +283,7 @@ def labels(api):
         raise ValueError("Blocking review label present: " + ", ".join(found))
 
 
-def relabel(api, event):
+def relabel(api: GitHub, event: dict[str, Any]) -> None:
     """Re-evaluate a completed, label-blocked review after a label is removed."""
     if ((event.get("label") or {}).get("name") or "").lower() not in BLOCKING_LABELS:
         print("A non-blocking label was removed; nothing to re-evaluate")
@@ -304,7 +302,7 @@ def relabel(api, event):
     api.status(sha, "AI review", "success", f"Review label override by maintainer @{sender['login']}")
 
 
-def main():
+def main() -> None:
     api = GitHub()
     mode = sys.argv[1]
     if mode == "admit":

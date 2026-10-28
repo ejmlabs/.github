@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from importlib.metadata import version
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -17,14 +18,14 @@ import build_workflows
 
 @unittest.skipUnless(importlib.util.find_spec("pr_agent"), "Pinned reviewer is not installed")
 class ProviderSettingsProof(unittest.TestCase):
-    def test_label_gate_uses_the_reviewers_own_negative_answer_rule(self):
-        from pr_agent.algo.utils import is_value_no
+    def test_label_gate_uses_the_reviewers_own_negative_answer_rule(self) -> None:
         import governance
+        from pr_agent.algo.utils import is_value_no  # type: ignore[import-not-found]  # optional reviewer packages are absent from the dev group
         for value in (None, "", "No", " no ", "NONE", "false", "False.", "No.", "Yes", "n/a", 0, 1, True, False, [], ["No"]):
             with self.subTest(value=value):
                 self.assertEqual(governance.is_value_no(value), is_value_no(value))
 
-    def test_provider_reasoning_and_no_fallback(self):
+    def test_provider_reasoning_and_no_fallback(self) -> None:
         self.assertEqual(version("pr-agent"), "0.48.0")
         self.assertEqual(version("litellm"), "1.105.0")
         review = next(step for step in build_workflows.governance()["jobs"]["ai"]["steps"]
@@ -36,10 +37,10 @@ class ProviderSettingsProof(unittest.TestCase):
                     mock.patch("socket.socket.connect", side_effect=AssertionError("Network is forbidden")), \
                     mock.patch("socket.create_connection", side_effect=AssertionError("Network is forbidden")), \
                     contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                import litellm
-                from pr_agent.config_loader import get_settings
-                from pr_agent.algo.ai_handlers import litellm_ai_handler
-                from pr_agent.algo.pr_processing import retry_with_fallback_models
+                import litellm  # type: ignore[import-not-found]  # optional reviewer packages are absent from the dev group
+                from pr_agent.algo.ai_handlers import litellm_ai_handler  # type: ignore[import-not-found]  # optional reviewer packages are absent from the dev group
+                from pr_agent.algo.pr_processing import retry_with_fallback_models  # type: ignore[import-not-found]  # optional reviewer packages are absent from the dev group
+                from pr_agent.config_loader import get_settings  # type: ignore[import-not-found]  # optional reviewer packages are absent from the dev group
 
                 get_settings().reload()
                 response = litellm.ModelResponse(choices=[{"message": {"content": "Offline response"}, "finish_reason": "stop"}])
@@ -49,19 +50,20 @@ class ProviderSettingsProof(unittest.TestCase):
                     result = asyncio.run(retry_with_fallback_models(
                         lambda model: handler.chat_completion(model, "Synthetic system", "Synthetic change")))
                     self.assertEqual(result, ("Offline response", "stop"))
+                    assert completion.await_args is not None
                     self.assertEqual(completion.await_args.kwargs["model"], "xai/grok-4.5")
                     self.assertEqual(completion.await_args.kwargs["reasoning_effort"], "high")
                     self.assertTrue(completion.await_args.kwargs.get("api_key") == dummy_key)
 
                     completion.reset_mock()
-                    completion.side_effect = asyncio.TimeoutError("Synthetic failure")
-                    attempted = []
+                    completion.side_effect = TimeoutError("Synthetic failure")
+                    attempted: list[str] = []
 
-                    async def fail(model):
+                    async def fail(model: str) -> Any:
                         attempted.append(model)
                         return await handler.chat_completion(model, "Synthetic system", "Synthetic change")
 
-                    with self.assertRaises(Exception):
+                    with self.assertRaisesRegex(Exception, "Failed to generate prediction"):
                         asyncio.run(retry_with_fallback_models(fail))
                     self.assertEqual(attempted, ["xai/grok-4.5"])
                     self.assertGreaterEqual(completion.await_count, 1)

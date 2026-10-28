@@ -6,16 +6,21 @@ import json
 import os
 import re
 import subprocess
-import sys
 import tarfile
 import urllib.error
 import zipfile
 from pathlib import Path
+from typing import IO, TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from governance import CONTEXTS, GitHub, command, human, outputs
+    from prepare import source_archive
+    from standards import DOCS, UI_FONT_NOTICES, UI_PACKAGES, read, semver, versions
 
 # The workflow generator embeds governance.py, standards.py, and prepare.py first.
 
 
-def validate_archive(data, format_, prefix, required):
+def validate_archive(data: bytes, format_: str, prefix: str, required: dict[str, bytes]) -> None:
     if format_ == "zip":
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             for path, content in required.items():
@@ -25,11 +30,11 @@ def validate_archive(data, format_, prefix, required):
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as archive:
             for path, content in required.items():
                 member = archive.getmember(prefix + "/" + path)
-                if not member.isfile() or archive.extractfile(member).read() != content:
+                if not member.isfile() or cast("IO[bytes]", archive.extractfile(member)).read() != content:
                     raise ValueError("Source archive license/document differs: " + path)
 
 
-def archive_requirements(root, sha, profile):
+def archive_requirements(root: Path, sha: str, profile: str) -> dict[str, bytes]:
     names = subprocess.run(["git", "-C", str(root), "ls-tree", "-r", "--name-only", sha], check=True, capture_output=True).stdout.decode().splitlines()
     if len(names) > 100_000:
         raise ValueError("Source tree exceeds release inspection limit")
@@ -45,7 +50,7 @@ def archive_requirements(root, sha, profile):
     return {path: read(root, path, preserve_newlines=True).encode("utf-8") for path in required}
 
 
-def release(api, root, sha, requested):
+def release(api: "GitHub", root: Path, sha: str, requested: str) -> None:
     if os.environ.get("GITHUB_RUN_ATTEMPT", "1") != "1":
         raise ValueError("Release reruns are not allowed; inspect the existing tag and draft")
     if not re.fullmatch(r"[0-9a-f]{40}", sha) or not semver(requested):
@@ -109,7 +114,7 @@ def release(api, root, sha, requested):
     files = sorted(output.iterdir())
     (output / "SHA256SUMS").write_text("".join(hashlib.sha256(file.read_bytes()).hexdigest() + "  " + file.name + "\n" for file in files))
     notes = read(root, "CHANGELOG.md")
-    match = re.search(r"^## \[" + re.escape(version) + r"\] - .+\n([\s\S]*?)(?=^## |\Z)", notes, re.M)
+    match = re.search(r"^## \[" + re.escape(version) + r"\] - .+\n([\s\S]*?)(?=^## |\Z)", notes, re.MULTILINE)
     if not match or not match[1].strip():
         raise ValueError("Release needs nonempty dated notes")
     Path("release-notes.md").write_text(match[1].strip() + "\n\nSource archives only. See RELEASING.md for dependency pins and binary publication gates.\n")

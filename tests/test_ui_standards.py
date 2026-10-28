@@ -6,19 +6,19 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import standards
 from governance import GitHub
 
-
 # The recorded digests before any test patches them.
 RECORDED_PACKING = dict(standards.UI_PACKING_SHA256)
 
 
 class UIStandardsTests(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
@@ -32,10 +32,10 @@ class UIStandardsTests(unittest.TestCase):
         self.write("LICENSE", self.license)
         self.write("VERSION", "0.1.0\n")
         self.write("CHANGELOG.md", "## [0.1.0] - 2026-10-19\nInitial source.\n")
-        lock = {"version": "0.1.0", "packages": {}}
+        lock: dict[str, Any] = {"version": "0.1.0", "packages": {}}
         for path in ("", *standards.UI_PACKAGES):
             prefix = path + "/" if path else ""
-            package = {"version": "0.1.0", "private": True, "license": "SEE LICENSE IN LICENSE"}
+            package: dict[str, Any] = {"version": "0.1.0", "private": True, "license": "SEE LICENSE IN LICENSE"}
             if path:
                 package.update(name="@ejm/" + path.split("/")[1], files=["src", "!src/**/*.test.*", "LICENSE"],
                                main="./src/index.ts", exports={".": "./src/index.ts"})
@@ -58,17 +58,17 @@ class UIStandardsTests(unittest.TestCase):
         for path in standards.UI_FONT_NOTICES:
             self.write(path, self.font)
 
-    def write(self, name, value):
+    def write(self, name: str, value: str) -> None:
         path = self.root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(value.encode())
 
-    def test_ui_versions_accept_scoped_licenses_and_preserve_notice_bytes(self):
+    def test_ui_versions_accept_scoped_licenses_and_preserve_notice_bytes(self) -> None:
         self.assertEqual(standards.versions(self.root, "ejm-ui"), "0.1.0")
         self.assertEqual(standards.read(self.root, standards.UI_FONT_NOTICES[0], preserve_newlines=True), self.font)
         self.assertEqual(standards.read(self.root, standards.UI_FONT_NOTICES[0]), self.font.replace("\r\n", "\n"))
 
-    def test_owned_package_and_lock_versions_cannot_drift(self):
+    def test_owned_package_and_lock_versions_cannot_drift(self) -> None:
         paths = ("package.json", *(path + "/package.json" for path in standards.UI_PACKAGES))
         for path in paths:
             original = (self.root / path).read_bytes()
@@ -92,12 +92,12 @@ class UIStandardsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Cargo lock package"):
             standards.versions(self.root, "ejm-ui")
 
-    def test_new_owned_package_requires_policy_review(self):
+    def test_new_owned_package_requires_policy_review(self) -> None:
         self.write("packages/unreviewed/package.json", '{"version":"0.1.0"}')
         with self.assertRaisesRegex(ValueError, "inventory changed"):
             standards.versions(self.root, "ejm-ui")
 
-    def test_license_cannot_expand_to_reserved_material_or_lose_software_terms(self):
+    def test_license_cannot_expand_to_reserved_material_or_lose_software_terms(self) -> None:
         for changed in ("MIT License\nCopyright 2026 Example\n" + standards.MIT_TERMS,
                         self.license.replace(standards.MIT_TERMS, "Incomplete terms.")):
             with self.subTest(license=changed[:40]):
@@ -105,7 +105,7 @@ class UIStandardsTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "reserved brand rights"):
                     standards.licenses(self.root, "ejm-ui")
 
-    def test_package_identity_privacy_and_notices_are_required(self):
+    def test_package_identity_privacy_and_notices_are_required(self) -> None:
         for path in standards.UI_PACKAGES:
             manifest_path = path + "/package.json"
             original = json.loads(standards.read(self.root, manifest_path))
@@ -121,7 +121,7 @@ class UIStandardsTests(unittest.TestCase):
                 standards.licenses(self.root, "ejm-ui")
             self.write(notice, "# Third-party notices\nSee LICENSE.\n")
 
-    def make_public(self, path, **changes):
+    def make_public(self, path: str, **changes: Any) -> None:
         """Make a package public with the reviewed packing fields, then apply changes (None removes a field)."""
         manifest = path + "/package.json"
         package = json.loads(self.private[path])
@@ -130,7 +130,7 @@ class UIStandardsTests(unittest.TestCase):
         package.update(changes)
         self.write(manifest, json.dumps({key: value for key, value in package.items() if value is not None}))
 
-    def test_exactly_the_owner_public_set_may_publish_with_the_exact_configuration(self):
+    def test_exactly_the_owner_public_set_may_publish_with_the_exact_configuration(self) -> None:
         for path in standards.UI_PUBLIC:
             self.make_public(path)
         standards.licenses(self.root, "ejm-ui")
@@ -156,7 +156,7 @@ class UIStandardsTests(unittest.TestCase):
                         standards.licenses(self.root, "ejm-ui")
             self.write(path + "/package.json", original)
 
-    def test_other_packages_and_the_root_must_stay_private(self):
+    def test_other_packages_and_the_root_must_stay_private(self) -> None:
         private_only = ("", *(path for path in standards.UI_PACKAGES if path not in standards.UI_PUBLIC))
         self.assertEqual(private_only, ("", "packages/demos", "packages/ink", "packages/shots", "packages/site"))
         for path in private_only:
@@ -171,7 +171,7 @@ class UIStandardsTests(unittest.TestCase):
                 self.write(manifest, json.dumps({**original, "private": True}))
                 standards.licenses(self.root, "ejm-ui")
 
-    def test_public_packages_must_match_the_reviewed_packing_fields_exactly(self):
+    def test_public_packages_must_match_the_reviewed_packing_fields_exactly(self) -> None:
         for path in standards.UI_PUBLIC:
             self.make_public(path)
         standards.licenses(self.root, "ejm-ui")
@@ -179,8 +179,8 @@ class UIStandardsTests(unittest.TestCase):
         base = tokens["files"]
         deviations = {
             "name": ("@ejm/other", "ejm-tokens", "@EJM/tokens", ""),
-            "files": (base + ["assets"], base + ["assets/logos"], base + ["./assets"], base + ["assets/*"], base + ["!!assets"],
-                      base + ["Assets"], base + ["assets/fonts"], base[::-1], base[:-1], base + ["README.md"], ["assets"], [], "assets/fonts"),
+            "files": ([*base, "assets"], [*base, "assets/logos"], [*base, "./assets"], [*base, "assets/*"], [*base, "!!assets"],
+                      [*base, "Assets"], [*base, "assets/fonts"], base[::-1], base[:-1], [*base, "README.md"], ["assets"], [], "assets/fonts"),
             "main": ("assets/logos/x.svg", "Assets/logos/x.svg", "ASSETS/LOGOS/X.SVG", "./src/other.ts", 1),
             "types": ("Assets/logos/x.svg", "./src/other.d.ts"),
             "typings": ("./src/index.ts",),
@@ -212,7 +212,7 @@ class UIStandardsTests(unittest.TestCase):
             self.make_public(path)
             standards.licenses(self.root, "ejm-ui")
 
-    def test_packing_digest_is_exact_about_types_order_and_field_set(self):
+    def test_packing_digest_is_exact_about_types_order_and_field_set(self) -> None:
         package = {"name": "@ejm/x", "files": ["src"], "main": "./src/index.ts"}
         digest = standards.ui_packing(package)
         self.assertEqual(digest, standards.ui_packing({"main": "./src/index.ts", "files": ["src"], "name": "@ejm/x", "version": "1"}))
@@ -222,7 +222,7 @@ class UIStandardsTests(unittest.TestCase):
                         {**package, "directories": {}}, {**package, "bin": None}, {"files": ["src"], "name": "@ejm/x"}):
             self.assertNotEqual(digest, standards.ui_packing(changed), changed)
 
-    def test_reviewed_values_for_public_packages_match_the_recorded_digests(self):
+    def test_reviewed_values_for_public_packages_match_the_recorded_digests(self) -> None:
         reviewed = {
             "packages/tokens": {
                 "name": "@ejm/tokens", "main": "./src/index.ts", "types": "./src/index.ts",
@@ -240,7 +240,7 @@ class UIStandardsTests(unittest.TestCase):
                 "exports": {".": "./src/index.ts", "./server": "./src/server.ts", "./vite": "./src/vite.mjs",
                             "./ssg.css": "./src/ssg.css"},
                 "files": ["bin", "src", "!src/**/*.test.*", "!src/perf", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"]},
-            "packages/ui": json.loads('''
+            "packages/ui": json.loads("""
             {
     "name": "@ejm/ui",
                 "main": "./src/index.ts",
@@ -304,14 +304,14 @@ class UIStandardsTests(unittest.TestCase):
                     "THIRD_PARTY_NOTICES.md",
                     "public/static.css"
                 ]
-            }'''),
+            }"""),
         }
         for path, package in reviewed.items():
             with self.subTest(package=path):
                 self.assertEqual(standards.ui_packing(package), RECORDED_PACKING[path])
         self.assertEqual(sorted(RECORDED_PACKING), sorted(standards.UI_PUBLIC))
 
-    def test_font_licenses_must_be_original_and_match_the_ui_package(self):
+    def test_font_licenses_must_be_original_and_match_the_ui_package(self) -> None:
         source, copied = standards.UI_FONT_NOTICES[0], standards.UI_FONT_NOTICES[2]
         self.write(source, self.font + "Changed terms.\n")
         with self.assertRaisesRegex(ValueError, "original OFL"):
@@ -323,7 +323,7 @@ class UIStandardsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "differs from the token owner"):
             standards.licenses(self.root, "ejm-ui")
 
-    def test_original_public_font_notices_pass_the_unpatched_hash_allowlist(self):
+    def test_original_public_font_notices_pass_the_unpatched_hash_allowlist(self) -> None:
         self.hashes.stop()
         fixtures = Path(__file__).parent / "fixtures" / "font-notices"
         for name in ("Manrope", "IBMPlexMono"):
@@ -332,13 +332,16 @@ class UIStandardsTests(unittest.TestCase):
             self.write("packages/ui/src/fonts/" + name + "-OFL.txt", original)
         standards.licenses(self.root, "ejm-ui")
 
-    def test_ui_repository_is_explicit_and_other_owners_remain_rejected(self):
+    def test_ui_repository_is_explicit_and_other_owners_remain_rejected(self) -> None:
         with patch.dict(os.environ, {"GITHUB_REPOSITORY": "ejmlabs/ejm-ui", "GH_TOKEN": "fixture"}, clear=True):
             self.assertEqual(GitHub().repo, "ejmlabs/ejm-ui")
         for repository in ("attacker/ejm-ui", "ejmlabs/ejm-ui-other", "ejmlabs/unreviewed"):
-            with self.subTest(repository=repository), patch.dict(os.environ, {"GITHUB_REPOSITORY": repository}, clear=True):
-                with self.assertRaisesRegex(ValueError, "has not adopted"):
-                    GitHub()
+            with (
+                self.subTest(repository=repository),
+                patch.dict(os.environ, {"GITHUB_REPOSITORY": repository}, clear=True),
+                self.assertRaisesRegex(ValueError, "has not adopted"),
+            ):
+                GitHub()
 
 
 if __name__ == "__main__":

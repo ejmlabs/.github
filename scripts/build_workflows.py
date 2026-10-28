@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Embed trusted scripts in reusable workflows so private callers need no read token."""
-import json
 import base64
+import json
 import sys
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 CHECKOUT = "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
@@ -14,7 +15,7 @@ UPLOAD = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
 DOWNLOAD = "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
 # Provider settings are confined to these constants and the review-step key env.
 REVIEWER_MODEL = "xai/grok-4.5"
-REVIEWER_FALLBACK_MODELS = '[]'
+REVIEWER_FALLBACK_MODELS = "[]"
 REVIEWER_REASONING_EFFORT = "high"
 REVIEWER_AI_TIMEOUT = 225
 REVIEWER_MAX_MODEL_TOKENS = 160000
@@ -30,7 +31,7 @@ REVIEWER_EXTRA_INSTRUCTIONS = (
     "another repository or path, or that moves to an older revision, or whose surrounding workflow changes grant new permissions, secrets or triggers."
 )
 
-def yaml(value, indent=0):
+def yaml(value: dict[str, Any] | list[Any], indent: int = 0) -> str:
     """Emit the limited maps, lists and strings used here, without dependencies."""
     pad = " " * indent
     if isinstance(value, dict):
@@ -49,23 +50,23 @@ def yaml(value, indent=0):
     raise TypeError(type(value))
 
 
-def source(name, library=False):
+def source(name: str, *, library: bool = False) -> str:
     text = (ROOT / "scripts" / name).read_text()
     return text.split('\nif __name__ == "__main__":')[0] if library else text
 
 
-def python(text, args="", executable="python3"):
+def python(text: str, args: str = "", executable: str = "python3") -> str:
     # GitHub evaluates expressions even inside quoted script strings. Encoding the
     # trusted library preserves literal consumer expressions without evaluating them.
     encoded = base64.b64encode(text.encode()).decode()
     return executable + " - " + args + " <<'TRUSTED_PYTHON'\nimport base64\nexec(compile(base64.b64decode('" + encoded + "'), 'trusted-workflow.py', 'exec'))\nTRUSTED_PYTHON\n"
 
 
-def run(name, script, **extra):
+def run(name: str, script: str, **extra: str | bool | int | dict[str, Any] | list[Any]) -> dict[str, Any]:
     return {"name": name, "shell": "bash", "run": script, **extra}
 
 
-def checkout(path, ref, **extra):
+def checkout(path: str, ref: str, **extra: str | bool | int | dict[str, Any] | list[Any]) -> dict[str, Any]:
     return {"uses": CHECKOUT, "with": {"path": path, "ref": ref, "persist-credentials": False, "fetch-depth": 1, "submodules": False, **extra}}
 
 
@@ -86,9 +87,9 @@ PY
 """)
 
 
-def governance():
+def governance() -> dict[str, Any]:
     templates = {path.name: path.read_text() for path in sorted((ROOT / "templates/community").glob("*.md"))}
-    standards_check = source("standards.py", True) + "\nstandards(Path(sys.argv[1]), sys.argv[2], " + repr(templates) + ")\n"
+    standards_check = source("standards.py", library=True) + "\nstandards(Path(sys.argv[1]), sys.argv[2], " + repr(templates) + ")\n"
     admission = {
         "if": "${{ github.run_attempt == 1 && github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association) && ((github.event.action == 'created' && github.event.sender.type == 'User' && (startsWith(github.event.comment.body, '/ready ') || startsWith(github.event.comment.body, '/approve ') || startsWith(github.event.comment.body, '/revoke '))) || (github.event.action != 'created' && (startsWith(github.event.comment.body, '/ready ') || startsWith(github.event.comment.body, '/approve ') || startsWith(github.event.changes.body.from, '/ready ') || startsWith(github.event.changes.body.from, '/approve ')))) }}",
         "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
@@ -235,10 +236,10 @@ GITHUB_EVENT_NAME=pull_request GITHUB_EVENT_PATH="$RUNNER_TEMP/review-event.json
     return {"name": "Human-admitted PR checks", "on": {"workflow_call": {"secrets": {"XAI_API_KEY": {"required": False}, "EJM_HARNESS_TOKEN": {"required": False}}}}, "permissions": {}, "jobs": {"admission": admission, "prepare": prepare, "quality": quality, "registry": registry, "standards": standards, "ai": ai, "labels": labels, "finish": finish, "override": override}}
 
 
-def release_workflow():
+def release_workflow() -> dict[str, Any]:
     inputs = {"commit": {"required": True, "type": "string"}, "version": {"required": True, "type": "string"}, "standards-ref": {"required": True, "type": "string"}}
     # Embed libraries, not their command entry points, before the release entry point.
-    code = source("governance.py", True) + "\n" + source("standards.py", True) + "\n" + source("prepare.py", True) + "\n" + source("release.py")
+    code = source("governance.py", library=True) + "\n" + source("standards.py", library=True) + "\n" + source("prepare.py", library=True) + "\n" + source("release.py")
     return {"name": "Checked draft source release", "on": {"workflow_call": {"inputs": inputs}}, "permissions": {},
             "concurrency": {"group": "draft-release-${{ github.repository }}", "cancel-in-progress": False},
             "jobs": {"draft": {"if": "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 8,
@@ -260,29 +261,29 @@ PY
 """)]}}}
 
 
-def build_inputs(*extra):
+def build_inputs(*extra: str) -> dict[str, Any]:
     names = ("commit", "build-workflow", "build-run-id", *extra)
     return {name: {"required": False, "default": False, "type": "boolean"} if name == "attest" else {"required": True, "type": "string"} for name in names}
 
 
-def build_env(inputs):
+def build_env(inputs: dict[str, Any]) -> dict[str, Any]:
     env = {"GH_TOKEN": "${{ github.token }}", "RELEASE_COMMIT": "${{ inputs.commit }}", "BUILD_WORKFLOW": "${{ inputs.build-workflow }}", "BUILD_RUN_ID": "${{ inputs.build-run-id }}"}
     return {**env, "RELEASE_VERSION": "${{ inputs.version }}"} if "version" in inputs else env
 
 
-def verify_build_workflow():
+def verify_build_workflow() -> dict[str, Any]:
     """Pre-tag gate: no checkout, no project code, read-only."""
     inputs = build_inputs()
-    code = source("governance.py", True) + "\n" + source("standards.py", True) + "\n" + source("attach.py")
+    code = source("governance.py", library=True) + "\n" + source("standards.py", library=True) + "\n" + source("attach.py")
     return {"name": "Verified build run", "on": {"workflow_call": {"inputs": inputs}}, "permissions": {},
             "jobs": {"verify": {"runs-on": "ubuntu-24.04", "timeout-minutes": 3, "permissions": {"actions": "read"}, "env": build_env(inputs),
                                 "steps": [run("Require a successful build of this commit from main", python(code, "verify", "python3 -I"))]}}}
 
 
-def attach_workflow():
+def attach_workflow() -> dict[str, Any]:
     """The only job that holds the release write token. It checks out and runs no project code."""
     inputs = build_inputs("version", "attest")
-    code = source("governance.py", True) + "\n" + source("standards.py", True) + "\n" + source("attach.py")
+    code = source("governance.py", library=True) + "\n" + source("standards.py", library=True) + "\n" + source("attach.py")
     return {"name": "Attach verified build files", "on": {"workflow_call": {"inputs": inputs}}, "permissions": {},
             "concurrency": {"group": "attach-assets-${{ github.repository }}", "cancel-in-progress": False},
             "jobs": {"attach": {"runs-on": "ubuntu-24.04", "timeout-minutes": 10,
@@ -293,7 +294,7 @@ def attach_workflow():
                                           {"uses": ATTEST, "if": "${{ inputs.attest }}", "with": {"subject-path": "built/*", "show-summary": False}}]}}}
 
 
-def main():
+def main() -> None:
     for name, data in (("governance.yml", governance()), ("draft-release.yml", release_workflow()), ("verify-build.yml", verify_build_workflow()), ("attach-assets.yml", attach_workflow())):
         path = ROOT / ".github/workflows" / name
         expected = "# Generated by scripts/build_workflows.py. Edit scripts and regenerate.\n" + yaml(data) + "\n"

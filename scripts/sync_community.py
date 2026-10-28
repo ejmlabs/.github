@@ -2,6 +2,7 @@
 """Refresh uniform consumer guidance from a reviewed standards checkout."""
 import argparse
 from pathlib import Path
+
 from standards import COMMUNITY_GUIDES
 
 parser = argparse.ArgumentParser(description=__doc__)

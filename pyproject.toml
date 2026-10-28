@@ -1,0 +1,19 @@
+[project]
+name = "ejmlabs-dotgithub"
+version = "0.0.0"
+description = "Shared standards and workflows; this project only locks the development tools."
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = ["ruff==0.17.0", "mypy==2.4.0"]
+
+[tool.uv]
+package = false
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+files = ["scripts", "tests"]
+mypy_path = "scripts"
