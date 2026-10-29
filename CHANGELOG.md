@@ -6,6 +6,7 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Added
 
+- Shared agent guidance in `templates/agents/`: the `ejmlabs-*` skills (workflow, engineering, security, testing and writing, plus one per language and platform stack) and the AGENTS.md house rules block, with `scripts/sync_agents.py`, which copies them into a repository, links each skill for Claude Code discovery, and reports drift. No shared workflow changes.
 - Shared strict lint layer in `templates/lint/` (ESLint, ruff, ShellCheck and Rust lint tables) and `scripts/sync_lint.py`, which copies it into a repository and reports drift. No shared workflow changes.
 - Let `ejm-ui` publish exactly `@ejm/tokens`, `@ejm/core`, `@ejm/ui` and `@ejm/ssg` to npm with provenance: they may omit `private` only with `publishConfig` `{"access": "public", "provenance": true}`, their name and packing fields (`files`, `main`, `exports`, `bin`, `directories`, lifecycle scripts and the rest) must equal the reviewed values, which keeps brand logos and artwork out of the tokens tarball, and `publish.yml` is accepted only at its reviewed SHA-256. Every other UI package stays private.
 - Shared `verify-build.yml` and `attach-assets.yml` workflows that bind native build output to the tagged commit, recompute every digest and attach the files to the draft release.

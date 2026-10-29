@@ -517,6 +517,37 @@ The scripts and tests here are held to the layer: `tests/test_strict.py` runs
 `uv` is missing. Run `uv run --locked --group dev ruff check .` and
 `uv run --locked --group dev mypy` locally.
 
+## Shared agent guidance
+
+`templates/agents/` holds the guidance every repository's coding agents load:
+the shared `ejmlabs-*` skills under `skills/` and the house rules block in
+`house-rules.md`. Like the lint layer, nothing here is embedded in a shared
+workflow, so changing it moves no pin.
+
+A consumer's `AGENTS.md` carries the house rules between
+`<!-- ejmlabs:house-rules:start -->` and `<!-- ejmlabs:house-rules:end -->`
+markers and routes every skill by its `.agents/skills/NAME/SKILL.md` path.
+Every repository gets the core skills (`ejmlabs-workflow`,
+`ejmlabs-engineering`, `ejmlabs-security`, `ejmlabs-testing`,
+`ejmlabs-writing`); the stack skills for each language and platform a
+repository uses (the other `ejmlabs-*` directories under
+`templates/agents/skills/`) are added by name and kept on every later sync.
+
+```
+python3 scripts/sync_agents.py ../repository ejmlabs-rust ejmlabs-cloudflare
+python3 scripts/sync_agents.py ../repository --check
+```
+
+The script copies the skills verbatim, replaces the house rules block, and
+gives every skill in `.agents/skills/` a relative link at
+`.claude/skills/NAME`, because Claude Code discovers project skills only
+there. It removes dangling links and refuses symlinked targets and real
+directories where a link belongs. `--check` reports a changed or unknown
+`ejmlabs-*` skill, a changed block, a missing link and a skill that
+`AGENTS.md` does not route. `tests/test_sync_agents.py` also holds the shared
+skills to the authoring rules: a description of at most 300 characters, a
+body of at most 100 lines, links only inside the skill, and no em dashes.
+
 ## Bootstrap and rollout
 
 1. Test the shared implementation and retain its exact commit under
