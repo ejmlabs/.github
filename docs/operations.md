@@ -7,7 +7,10 @@ maintainer decision, and five strict required statuses bound to GitHub Actions:
 Human readiness, Maintainer approval, Quality, Repository standards and AI
 review. Require resolved conversations, linear history and stale approval
 dismissal. Enforce administrators. Block force pushes and branch deletion. Use
-squash merges and delete merged branches.
+squash merges and delete merged branches. Allow auto-merge: a maintainer may
+post `/approve` right after `/ready` and arm auto-merge, and the PR merges
+itself once every required status passes. Strict statuses still hold it until
+it is up to date with main.
 
 Default workflow tokens are read-only. Allow only full-SHA actions from the
 selected core and dependency setup sources and this shared repository. Enable
@@ -166,7 +169,7 @@ tool as part of source preparation. Each repository needs its own authorized
 adoption and verified settings readback.
 
 The profile emits one Ubuntu 24.04 Quality job with the existing 45-minute
-limit, two Cargo build jobs, and no repository or model credentials. It installs Node 24
+limit, Cargo builds on every runner core, and no repository or model credentials. It installs Node 24
 and Rust 1.99.1 with Clippy and rustfmt. It does not install the Cargo audit
 binaries used by the other Rust profiles. An adopting owner must provide these
 command interfaces. They run in order and stop at the first failure:
@@ -271,7 +274,8 @@ The action supplies pinned Node/npm, wasm-bindgen, its Rust WebAssembly target,
 Chrome and Linux libdbus development files. Keep system installation here;
 product checks must not invoke sudo. Guard the browser npm/Playwright setup on
 `relay/package.json`: absence skips that step, but a present manifest without
-its lockfile fails. Keep Cargo build jobs at two.
+its lockfile fails. Shared jobs set `CARGO_BUILD_JOBS=default`, which overrides
+the products' local two-job cap in `.cargo/config.toml`.
 
 Land and verify the setup action before adopting source that needs it. Keep the
 working harness pin until a separate reviewed API update passes the complete
@@ -339,6 +343,36 @@ lifecycle scripts disabled before `./scripts/check`. Root ESLint includes
 registry sources. The separate registry gate checks native, WebAssembly,
 schema, auth and build behavior. Keep the product guide and its check script
 in sync when those prerequisites change.
+
+## Gate speed and the trusted build cache
+
+Every Quality matrix entry starts at once; no job waits for a matrix slot.
+`cargo-deny` and `cargo-machete` come from their prebuilt release archives,
+each checked against the SHA-256 recorded in `scripts/tools.py` before the
+binary is extracted. A new tool version needs new reviewed digests. Only
+`worker-build`, which publishes no binaries, still compiles in the registry
+job.
+
+Rust profiles (`ejm-cli`, `ejm-harness`, `ejm-ide`, `ejm-ui`) may adopt a
+build cache by adding the canonical `cache.yml` caller. On each push to main
+it runs the shared `warm-cache.yml`, which checks out that main commit and its
+pinned harness and UI sources in the gate's layout, runs the same toolchain
+and gate commands as Quality and the registry gate, and saves the Cargo
+registry and target directories under `gate-<job>-<OS>-<main SHA>`. It holds
+`contents: read` and no secrets.
+
+The gate never saves a cache. Quality and the registry gate restore only the
+exact key for the admitted PR's base commit and delete whatever a prefix match
+or miss leaves behind. Extraction marks every admitted source file newer than
+any restored build, so Cargo rebuilds every local crate and reuses only
+dependency artifacts. A miss costs a cold build, never a wrong result.
+Release builds (`build.yml`) never restore a cache.
+
+Residual risk: a job running admitted PR code can hold the job's cache token.
+Such code could write the key for a main commit before that commit's warm job
+saves it, and a later gate on that base would restore it. Human admission of
+the exact head is the boundary that keeps such code out. Remove `cache.yml`
+from a product to stop restores there.
 
 ## Missing model key acceptance staging
 
@@ -417,6 +451,42 @@ changes and owner package checks do not establish site publication.
 Consumers without a manifest keep their existing dependency setup. UI
 governance, public source approval, package publication and site deployment
 remain separate tasks; this shared implementation enables none by itself.
+
+## Site deploys
+
+Site repositories (`ejmlabs`, `ejm-cli`, `ejm-harness`, `ejm-ide`, `ejm-ui`)
+adopt continuous deploys by adding the canonical `deploy.yml` caller. Each push
+to main runs the shared `deploy-site.yml`:
+
+1. `build` checks out that main commit and main's pinned `ejm-ui`, runs the
+   site's build commands from `scripts/deploy.py` with `contents: read` and no
+   secrets, and uploads the deployable files as one artifact.
+2. `staging` deploys those files with `wrangler deploy --env staging`.
+3. `production` waits on the `production` environment's required reviewer,
+   then deploys the same files with the top-level config.
+
+The deploy jobs check out and run no product code. They install Wrangler from
+the lockfile in `deploy/`, embedded in the workflow, with install scripts
+disabled. `scripts/deploy.py` refuses any config that declares a Wrangler
+`build` command. It refuses a staging deploy unless `env.staging` names its
+own Worker and its own routes, because `--env staging` otherwise inherits the
+production custom domain. Before a production deploy it reads the environment
+and fails unless a human reviewer is required. GitHub creates a missing
+environment with no rules, so create both environments before adopting the
+caller:
+
+- `staging`: deployments from protected branches only, no reviewer.
+- `production`: deployments from protected branches only, at least one
+  required reviewer.
+- A `CLOUDFLARE_API_TOKEN` environment secret in each, scoped to the account's
+  Workers scripts, routes and custom domains on `ejmlabs.com`, plus R2 read
+  for sites that bind a bucket.
+
+A newer main commit replaces a production deploy still waiting for approval.
+Use fresh staging hostnames: a custom domain whose DNS record already exists
+makes Wrangler prompt, and CI cannot answer. Roll back by redeploying an
+earlier Worker version in Cloudflare or by approving an earlier run's
+production job while it is still available.
 
 ## Draft source releases
 
