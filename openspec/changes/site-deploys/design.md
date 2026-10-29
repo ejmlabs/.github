@@ -8,6 +8,7 @@ Building a site runs product code and its dependencies. The deploy token must ne
 - **Trusted deployer.** Deploy jobs install Wrangler 4.151.3 from a lockfile embedded in the workflow, with `--ignore-scripts`, and run only `scripts/deploy.py`. Configs with a Wrangler `build` command are refused, because it would run product code beside the token.
 - **Staging cannot reach production.** `--env staging` inherits top-level routes when the env omits them, so a staging deploy requires `env.staging` with its own name and routes.
 - **Approval is checked, not assumed.** GitHub creates a missing environment without protection, so the production step reads the environment and refuses to deploy without a required reviewer.
+- **The caller passes the token.** A called workflow sees an environment's secrets only when its caller passes them, so `deploy.yml` passes `secrets: inherit`. Inherit needs no `workflow_call` secret declaration, which keeps the reviewed scaffold, and only the deploy steps reference `CLOUDFLARE_API_TOKEN`. The first callers passed nothing, so their staging deploys stopped on an empty token before any change reached Cloudflare.
 - **Latest wins in production.** The production job's concurrency cancels an older run still waiting for approval; staging deploys queue in order.
 
 ## Risks

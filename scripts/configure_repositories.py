@@ -69,6 +69,7 @@ def installed_consumers(name: str, revision: str | None) -> None:
         expected["cache.yml"] = WARM_CACHE_CALLER.replace("STANDARDS_REVISION", revision)
     if name in SITE_DEPLOY and any(entry["name"] == "deploy.yml" for entry in entries):
         allowed.add("deploy.yml")
+        # Activation approves only the current form, which passes the environment's token to the deploy jobs.
         expected["deploy.yml"] = SITE_DEPLOY_CALLER.replace("STANDARDS_REVISION", revision)
     if {entry["name"] for entry in entries} != allowed:
         raise ValueError(name + ": unexpected or missing workflows on main")

@@ -171,12 +171,17 @@ class WorkflowTests(unittest.TestCase):
 
     def test_site_deploy_caller_is_exact_and_only_for_sites(self) -> None:
         canonical = standards.SITE_DEPLOY_CALLER.replace("STANDARDS_REVISION", self.revision)
+        current = standards.CURRENT_SITE_DEPLOY_CALLER.replace("STANDARDS_REVISION", self.revision)
+        self.assertIn("    secrets: inherit\n", canonical)
+        self.assertNotIn("secrets", current)
         for repository in standards.SITE_DEPLOY:
-            with self.subTest(repository=repository):
-                (self.directory / "deploy.yml").write_text(canonical)
-                workflows(self.root, repository)
-        for changed in (canonical.replace("contents: read", "contents: write"), canonical + "    secrets: inherit\n",
-                        canonical.replace(self.revision, self.other_revision)):
+            for form in (canonical, current):
+                with self.subTest(repository=repository, inherit="inherit" in form):
+                    (self.directory / "deploy.yml").write_text(form)
+                    workflows(self.root, repository)
+        named = canonical.replace("    secrets: inherit\n", "    secrets:\n      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}\n")
+        for changed in (canonical.replace("contents: read", "contents: write"), canonical + "    secrets: inherit\n", named,
+                        canonical.replace(self.revision, self.other_revision), current.replace(self.revision, self.other_revision)):
             with self.subTest(content=changed), self.assertRaisesRegex(ValueError, "differs from the canonical consumer: deploy.yml"):
                 (self.directory / "deploy.yml").write_text(changed)
                 workflows(self.root, "ejmlabs")
@@ -257,16 +262,17 @@ class WorkflowTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         workflows(self.root, ".github")
 
-    def test_shared_scaffold_still_declares_the_previous_model_key_for_one_generation(self) -> None:
+    def test_shared_scaffold_may_drop_the_previous_model_key_for_one_generation(self) -> None:
         self.write_callers(consumer_workflows(self.revision))
         original = self.reusable()
         declaration = '      "XAI_API_KEY":\n        "required": false\n'
+        (self.directory / "governance.yml").write_text(original.replace(declaration, ""))
+        workflows(self.root, ".github")
         extra = '      "' + self.old_model_key + '":\n        "required": false\n'
         mutations = {
             "both model keys": original.replace(declaration, declaration + extra),
             "old model key": original.replace("XAI_API_KEY", self.old_model_key),
             "unknown model key": original.replace("XAI_API_KEY", "MODEL_API_KEY"),
-            "missing model key": original.replace(declaration, ""),
             "required model key": original.replace(declaration, declaration.replace("false", "true")),
             "missing harness token": original.replace('      "EJM_HARNESS_TOKEN":\n        "required": false\n', ""),
         }

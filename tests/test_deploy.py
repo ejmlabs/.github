@@ -1,7 +1,9 @@
+import os
 import sys
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import deploy
@@ -41,6 +43,14 @@ class DeployTests(unittest.TestCase):
                             {"protection_rules": [{"type": "required_reviewers", "reviewers": []}]}):
             with self.subTest(environment=environment):
                 self.assertEqual(deploy.required_reviewers(environment), 0)
+
+    def test_an_empty_token_stops_before_any_deploy_step(self) -> None:
+        for environment in deploy.ENVIRONMENTS:
+            with self.subTest(environment=environment), mock.patch.dict(os.environ, {"CLOUDFLARE_API_TOKEN": "", "PROFILE": "ejmlabs"}), \
+                    mock.patch.object(sys, "argv", ["deploy.py", environment]), mock.patch.object(deploy, "require_approval") as approval, \
+                    self.assertRaisesRegex(ValueError, "secrets: inherit"):
+                deploy.main()
+            approval.assert_not_called()
 
     def test_every_site_packs_its_config(self) -> None:
         for profile, (_, config, files) in deploy.SITES.items():
