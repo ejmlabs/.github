@@ -5,6 +5,7 @@ workflows, repository standards checks, and the templates that consumers sync (c
 the strict lint layer, agent skills and house rules). Consumers pin reviewed full commit SHAs.
 
 <!-- ejmlabs:house-rules:start -->
+
 ## House rules
 
 These apply to every ejmlabs repository. They are synced from
@@ -26,6 +27,7 @@ there. A rule below or a repository skill may add to them, never relax them.
 - Never claim a check passed, a test ran or a deploy is live unless you saw it in this session.
 - No paid model calls or live services in tests. No secrets in code, logs, fixtures or assets.
 - Never use em dashes. Write plain, exact sentences.
+
 <!-- ejmlabs:house-rules:end -->
 
 ## Rules
