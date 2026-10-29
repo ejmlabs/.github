@@ -550,7 +550,8 @@ skills to the authoring rules: a description of at most 300 characters, a
 body of at most 100 lines, links only inside the skill, and no em dashes.
 
 The templates are formatted with Prettier at 100 columns with prose wrap
-preserved, and the house rules block is stable under it. Consumers exclude
+preserved, and their Python samples with ruff at 88 columns, so a consumer's
+formatter passes them; the house rules block is stable under Prettier. Consumers exclude
 `.agents/skills/ejmlabs-*/` from their own formatter, because `--check`, not
 the formatter, owns those copies.
 
