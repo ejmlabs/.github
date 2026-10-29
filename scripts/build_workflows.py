@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from deploy import SITES
+
 ROOT = Path(__file__).resolve().parent.parent
 CHECKOUT = "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
 NODE = "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020"
@@ -13,6 +15,16 @@ UV = "astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884"
 ATTEST = "actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be"
 UPLOAD = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
 DOWNLOAD = "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
+CACHE_RESTORE = "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
+CACHE_SAVE = "actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
+# Runner images for each profile's quality job; every other profile uses Linux. The cache warm job builds the same set.
+QUALITY_OS = {"ejm-harness": ["ubuntu-24.04", "macos-15", "windows-2025"], "ejm-cli": ["ubuntu-24.04", "macos-15"], "ejm-ide": ["macos-15"]}
+# Cargo target directory each gate job builds, per profile. Only these profiles get a trusted build cache.
+RUST_TARGETS = {"quality": {"ejm-cli": "product/target", "ejm-harness": "product/target", "ejm-ide": "product/src-tauri/target",
+                            "ejm-ui": "product/crates/ejm-tui/target"},
+                "registry": {"ejm-harness": "product/registry/target"}}
+# The repositories' .cargo/config.toml caps local builds at two jobs; hosted runners use every core.
+CARGO_ENV = {"CARGO_BUILD_JOBS": "default", "CARGO_INCREMENTAL": "0"}
 # Provider settings are confined to these constants and the review-step key env.
 REVIEWER_MODEL = "xai/grok-4.5"
 REVIEWER_FALLBACK_MODELS = "[]"
@@ -78,13 +90,94 @@ if os.environ.get('RUNNER_DEBUG') == '1':
 """))
 ARTIFACT = {"uses": DOWNLOAD, "with": {"artifact-ids": "${{ needs.prepare.outputs.artifact }}", "merge-multiple": True, "path": "prepared"}}
 EXTRACT = run("Extract source data safely", """python3 - <<'PY'
+import os
 import tarfile
 from pathlib import Path
 for file in Path('prepared').glob('*.tar'):
     with tarfile.open(file) as archive:
         archive.extractall('.', filter='data')
+        # Admitted sources must be newer than any restored build, so Cargo rebuilds every local crate.
+        for member in archive.getmembers():
+            if member.isfile():
+                os.utime(member.name)
 PY
 """)
+INSTALL_TOOLS = python(source("tools.py"), "cargo-deny cargo-machete", "python3 -I")
+RUST_TOOLS = run("Install pinned Rust tools", """if [[ "$PROFILE" == ejm-* ]]; then
+  rustup toolchain install 1.99.1 --profile minimal --component clippy,rustfmt
+  rustup default 1.99.1
+  if [[ "$PROFILE" != ejm-ui ]]; then
+""" + INSTALL_TOOLS + """  fi
+fi
+""")
+GATE = run("Run the project's required gate without secrets or write tokens", """cd product
+if [[ -d ../ejm-ui ]]; then
+  npm --prefix ../ejm-ui ci --ignore-scripts
+fi
+case "$PROFILE" in
+  ejm-cli) ./scripts/check ;;
+  ejm-harness) npm ci --ignore-scripts; npm --prefix registry ci --ignore-scripts; ./scripts/check ;;
+  ejm-ide) npm ci --ignore-scripts; npm run verify; npm run site:check; npm run site:build ;;
+  ejm-ui)
+    export npm_config_ignore_scripts=true
+    npm ci --ignore-scripts
+    npm rebuild node-pty --ignore-scripts=false
+    npm run check
+    npm run build
+    npm run check:rust
+    node scripts/pack-proof.mjs
+    ;;
+  ejmlabs) node scripts/check.mjs; npm --prefix site test; npm --prefix site run build ;;
+  .github) python3 -m unittest discover -s tests -v; python3 scripts/build_workflows.py --check ;;
+  *) exit 1 ;;
+esac
+""")
+REGISTRY = run("Run separate registry gate when applicable", """if [[ "$PROFILE" == ejm-harness ]]; then
+  rustup toolchain install 1.99.1 --profile minimal --component clippy,rustfmt --target wasm32-unknown-unknown
+  rustup default 1.99.1
+""" + INSTALL_TOOLS + """  cargo install worker-build --version 0.8.7 --locked
+  cd product
+  if [[ -d ../ejm-ui ]]; then
+    npm --prefix ../ejm-ui ci --ignore-scripts
+  fi
+  npm ci --ignore-scripts
+  npm --prefix registry ci --ignore-scripts
+  ./scripts/check-registry
+fi
+""")
+
+
+def build_steps(profile: str) -> list[dict[str, Any]]:
+    """Toolchain and gate steps shared by the quality job and the cache warm job, so both build the same artifacts."""
+    return [{"uses": NODE, "with": {"node-version": "24"}}, {"uses": UV, "with": {"version": "0.9.26"}},
+            run("Install Linux harness keyring build prerequisites", """sudo apt-get update
+sudo apt-get install --yes --no-install-recommends pkg-config libdbus-1-dev
+""", **{"if": "${{ " + profile + " == 'ejm-harness' && runner.os == 'Linux' }}"}),
+            RUST_TOOLS,
+            {"name": "Prepare ejm-cli remote test prerequisites", "if": "${{ " + profile + " == 'ejm-cli' }}", "uses": "./product/.github/actions/setup-ci"},
+            GATE]
+
+
+def os_matrix(profile: str) -> str:
+    choices = "".join(profile + " == '" + name + "' && '" + json.dumps(images, separators=(",", ":")) + "' || " for name, images in QUALITY_OS.items())
+    return "${{ fromJSON(" + choices + "'[\"ubuntu-24.04\"]') }}"
+
+
+def rust_cache(job: str, profile: str, revision: str) -> tuple[str, dict[str, str]]:
+    """Return the condition and inputs of a job's Cargo cache, keyed by the exact main commit that built it."""
+    targets = RUST_TARGETS[job]
+    condition = "contains(fromJSON('" + json.dumps(sorted(targets), separators=(",", ":")) + "'), " + profile + ")"
+    target = "${{ fromJSON('" + json.dumps(targets, separators=(",", ":")) + "')[" + profile + "] }}"
+    return condition, {"path": "~/.cargo/registry/index\n~/.cargo/registry/cache\n~/.cargo/git/db\n" + target + "\n",
+                       "key": "gate-" + job + "-${{ runner.os }}-${{ " + revision + " }}"}
+
+
+def restore(job: str) -> list[dict[str, Any]]:
+    """Restore only the build main made at the admitted base; a prefix match or any other entry is deleted unused."""
+    condition, cache = rust_cache(job, "needs.admission.outputs.profile", "needs.admission.outputs.base")
+    return [{"uses": CACHE_RESTORE, "id": "cache", "if": "${{ " + condition + " }}", "with": cache},
+            run("Discard any cache that is not main's exact build", 'rm -rf ~/.cargo/registry/index ~/.cargo/registry/cache ~/.cargo/git/db "$TARGET_DIR"\n',
+                **{"if": "${{ " + condition + " && steps.cache.outputs.cache-hit != 'true' }}"}, env={"TARGET_DIR": cache["path"].splitlines()[-1]})]
 
 
 def governance() -> dict[str, Any]:
@@ -113,64 +206,14 @@ def governance() -> dict[str, Any]:
     }
     quality = {
         "needs": ["admission", "prepare"], "if": "${{ github.run_attempt == 1 }}", "runs-on": "${{ matrix.os }}", "timeout-minutes": 45, "permissions": {},
-        "strategy": {"fail-fast": False, "max-parallel": 2, "matrix": {"os": "${{ fromJSON(needs.admission.outputs.profile == 'ejm-harness' && '[\"ubuntu-24.04\",\"macos-15\",\"windows-2025\"]' || needs.admission.outputs.profile == 'ejm-cli' && '[\"ubuntu-24.04\",\"macos-15\"]' || needs.admission.outputs.profile == 'ejm-ide' && '[\"macos-15\"]' || '[\"ubuntu-24.04\"]') }}"}},
-        "env": {"CARGO_BUILD_JOBS": "2", "CARGO_INCREMENTAL": "0", "PROFILE": "${{ needs.admission.outputs.profile }}", "CI": "true"},
-        "steps": [ARTIFACT, EXTRACT, {"uses": NODE, "with": {"node-version": "24"}}, {"uses": UV, "with": {"version": "0.9.26"}},
-                  run("Install Linux harness keyring build prerequisites", """sudo apt-get update
-sudo apt-get install --yes --no-install-recommends pkg-config libdbus-1-dev
-""", **{"if": "${{ needs.admission.outputs.profile == 'ejm-harness' && runner.os == 'Linux' }}"}),
-                  run("Install pinned Rust tools", """if [[ "$PROFILE" == ejm-* ]]; then
-  rustup toolchain install 1.99.1 --profile minimal --component clippy,rustfmt
-  rustup default 1.99.1
-  if [[ "$PROFILE" != ejm-ui ]]; then
-    cargo install cargo-deny --version 0.20.2 --locked
-    cargo install cargo-machete --version 0.9.2 --locked
-  fi
-fi
-"""),
-                  {"name": "Prepare ejm-cli remote test prerequisites", "if": "${{ needs.admission.outputs.profile == 'ejm-cli' }}", "uses": "./product/.github/actions/setup-ci"},
-                  run("Run the project's required gate without secrets or write tokens", """cd product
-if [[ -d ../ejm-ui ]]; then
-  npm --prefix ../ejm-ui ci --ignore-scripts
-fi
-case "$PROFILE" in
-  ejm-cli) ./scripts/check ;;
-  ejm-harness) npm ci --ignore-scripts; npm --prefix registry ci --ignore-scripts; ./scripts/check ;;
-  ejm-ide) npm ci --ignore-scripts; npm run verify; npm run site:check; npm run site:build ;;
-  ejm-ui)
-    export npm_config_ignore_scripts=true
-    npm ci --ignore-scripts
-    npm rebuild node-pty --ignore-scripts=false
-    npm run check
-    npm run build
-    npm run check:rust
-    node scripts/pack-proof.mjs
-    ;;
-  ejmlabs) node scripts/check.mjs; npm --prefix site test; npm --prefix site run build ;;
-  .github) python3 -m unittest discover -s tests -v; python3 scripts/build_workflows.py --check ;;
-  *) exit 1 ;;
-esac
-""")],
+        "strategy": {"fail-fast": False, "matrix": {"os": os_matrix("needs.admission.outputs.profile")}},
+        "env": {**CARGO_ENV, "PROFILE": "${{ needs.admission.outputs.profile }}", "CI": "true"},
+        "steps": [ARTIFACT, EXTRACT, *restore("quality"), *build_steps("needs.admission.outputs.profile")],
     }
     registry = {
         "needs": ["admission", "prepare"], "if": "${{ github.run_attempt == 1 }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 25, "permissions": {},
-        "env": {"CARGO_BUILD_JOBS": "2", "CARGO_INCREMENTAL": "0", "PROFILE": "${{ needs.admission.outputs.profile }}"},
-        "steps": [ARTIFACT, EXTRACT, {"uses": NODE, "if": "${{ needs.admission.outputs.profile == 'ejm-harness' }}", "with": {"node-version": "24"}},
-                  run("Run separate registry gate when applicable", """if [[ "$PROFILE" == ejm-harness ]]; then
-  rustup toolchain install 1.99.1 --profile minimal --component clippy,rustfmt --target wasm32-unknown-unknown
-  rustup default 1.99.1
-  cargo install cargo-deny --version 0.20.2 --locked
-  cargo install cargo-machete --version 0.9.2 --locked
-  cargo install worker-build --version 0.8.7 --locked --jobs 2
-  cd product
-  if [[ -d ../ejm-ui ]]; then
-    npm --prefix ../ejm-ui ci --ignore-scripts
-  fi
-  npm ci --ignore-scripts
-  npm --prefix registry ci --ignore-scripts
-  ./scripts/check-registry
-fi
-""")],
+        "env": {**CARGO_ENV, "PROFILE": "${{ needs.admission.outputs.profile }}"},
+        "steps": [ARTIFACT, EXTRACT, *restore("registry"), {"uses": NODE, "if": "${{ needs.admission.outputs.profile == 'ejm-harness' }}", "with": {"node-version": "24"}}, REGISTRY],
     }
     standards = {
         "needs": ["admission", "prepare"], "if": "${{ github.run_attempt == 1 }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 3, "permissions": {},
@@ -294,7 +337,76 @@ def attach_workflow() -> dict[str, Any]:
                                           {"uses": ATTEST, "if": "${{ inputs.attest }}", "with": {"subject-path": "built/*", "show-summary": False}}]}}}
 
 
+DEPENDENCY = {"persist-credentials": False, "fetch-depth": 1, "submodules": False}
+
+
+def deploy_workflow() -> dict[str, Any]:
+    """Build a site once without credentials, deploy it to staging, then deploy the same files to production after a human approves."""
+    profile = "github.event.repository.name"
+    push = "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}"
+    build = 'cd product\ncase "$PROFILE" in\n' + "".join(
+        "  " + name + ")\n" + "".join("    " + line + "\n" for line in commands.splitlines()) + '    tar -cf "$RUNNER_TEMP/site.tar" ' + " ".join(files) + "\n    ;;\n"
+        for name, (commands, _, files) in SITES.items()) + "  *) exit 1 ;;\nesac\n"
+    manifest, lock = ((ROOT / "deploy" / name).read_text() for name in ("package.json", "package-lock.json"))
+    install = 'mkdir -p "$RUNNER_TEMP/deployer"\ncd "$RUNNER_TEMP/deployer"\n' + python(
+        "from pathlib import Path\nPath('package.json').write_text(" + repr(manifest) + ")\nPath('package-lock.json').write_text(" + repr(lock) + ")\n"
+    ) + "npm ci --ignore-scripts --no-audit --no-fund\n"
+
+    def deploy(environment: str, needs: str, permissions: dict[str, str], env: dict[str, str]) -> dict[str, Any]:
+        return {"needs": needs, "if": push, "runs-on": "ubuntu-24.04", "timeout-minutes": 10, "environment": environment, "permissions": permissions,
+                # A newer main commit replaces a production deploy still waiting for approval; staging deploys run in order.
+                "concurrency": {"group": "deploy-" + environment + "-${{ github.repository }}", "cancel-in-progress": environment == "production"},
+                "env": {"PROFILE": "${{ " + profile + " }}"},
+                "steps": [{"uses": DOWNLOAD, "with": {"name": "site", "path": "artifact"}}, {"uses": NODE, "with": {"node-version": "24"}},
+                          run("Install the pinned deployer", install, env={"GH_TOKEN": "", "GITHUB_TOKEN": "", "NPM_CONFIG_USERCONFIG": "/dev/null"}),
+                          run("Deploy the built site to " + environment, python(source("deploy.py"), environment, "python3 -I"),
+                              env={"CLOUDFLARE_API_TOKEN": "${{ secrets.CLOUDFLARE_API_TOKEN }}", **env})]}
+
+    jobs = {
+        "build": {"if": push, "runs-on": "ubuntu-24.04", "timeout-minutes": 20, "permissions": {"contents": "read"}, "env": {"PROFILE": "${{ " + profile + " }}"},
+                  "steps": [checkout("product", "${{ github.sha }}"),
+                            run("Read main's reviewed dependency pins", python(source("prepare.py"), "warm-pins"), id="pins"),
+                            {"uses": CHECKOUT, "if": "${{ steps.pins.outputs.ui != '' }}",
+                             "with": {"repository": "ejmlabs/ejm-ui", "ref": "${{ steps.pins.outputs.ui }}", "path": "ejm-ui", **DEPENDENCY}},
+                            {"uses": NODE, "with": {"node-version": "24"}},
+                            run("Build the site without credentials", build),
+                            {"uses": UPLOAD, "with": {"name": "site", "path": "${{ runner.temp }}/site.tar", "retention-days": 7, "if-no-files-found": "error"}}]},
+        "staging": deploy("staging", "build", {}, {}),
+        # Reads the environment's rules so a missing or unprotected production environment fails instead of deploying.
+        "production": deploy("production", "staging", {"actions": "read"}, {"GH_TOKEN": "${{ github.token }}"}),
+    }
+    return {"name": "Deploy site", "on": {"workflow_call": {}}, "permissions": {}, "jobs": jobs}
+
+
+def warm_workflow() -> dict[str, Any]:
+    """The only writer of gate build caches: it builds reviewed main, in the gate's layout, and saves what the gate may restore."""
+    profile = "github.event.repository.name"
+    sources = [checkout("product", "${{ github.sha }}"),
+               run("Read main's reviewed dependency pins", python(source("prepare.py"), "warm-pins"), id="pins"),
+               {"uses": CHECKOUT, "if": "${{ steps.pins.outputs.harness != '' }}",
+                "with": {"repository": "ejmlabs/ejm-harness", "ref": "${{ steps.pins.outputs.harness }}", "path": "ejm-harness", **DEPENDENCY}},
+               {"uses": CHECKOUT, "if": "${{ steps.pins.outputs.ui != '' }}",
+                "with": {"repository": "ejmlabs/ejm-ui", "ref": "${{ steps.pins.outputs.ui }}", "path": "ejm-ui", **DEPENDENCY}},
+               # The gate builds exported archives, so the warm build must not see Git metadata either.
+               run("Match the gate's exported source layout", "rm -rf product/.git ejm-harness/.git ejm-ui/.git\n")]
+
+    def job(name: str, steps: list[dict[str, Any]], extra: dict[str, Any]) -> dict[str, Any]:
+        condition, cache = rust_cache(name, profile, "github.sha")
+        return {"if": "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && " + condition + " }}", **extra, "permissions": {"contents": "read"},
+                "steps": [*sources, *steps, {"uses": CACHE_SAVE, "if": "${{ !cancelled() }}", "with": cache}]}
+
+    quality = job("quality", build_steps(profile), {"runs-on": "${{ matrix.os }}", "timeout-minutes": 45, "strategy": {"fail-fast": False, "matrix": {"os": os_matrix(profile)}},
+                                                     "env": {**CARGO_ENV, "PROFILE": "${{ " + profile + " }}", "CI": "true"}})
+    registry = job("registry", [{"uses": NODE, "if": "${{ " + profile + " == 'ejm-harness' }}", "with": {"node-version": "24"}}, REGISTRY],
+                   {"runs-on": "ubuntu-24.04", "timeout-minutes": 25, "env": {**CARGO_ENV, "PROFILE": "${{ " + profile + " }}"}})
+    # A newer main commit makes the older warm build useless, since the gate restores only the exact base it admits.
+    return {"name": "Warm trusted gate build caches", "on": {"workflow_call": {}}, "permissions": {},
+            "concurrency": {"group": "warm-cache-${{ github.repository }}", "cancel-in-progress": True},
+            "jobs": {"quality": quality, "registry": registry}}
+
+
 def main() -> None:
+    # warm_workflow() and deploy_workflow() are emitted once this repository pins standards that accept their files.
     for name, data in (("governance.yml", governance()), ("draft-release.yml", release_workflow()), ("verify-build.yml", verify_build_workflow()), ("attach-assets.yml", attach_workflow())):
         path = ROOT / ".github/workflows" / name
         expected = "# Generated by scripts/build_workflows.py. Edit scripts and regenerate.\n" + yaml(data) + "\n"

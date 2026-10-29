@@ -6,6 +6,9 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Added
 
+- Continuous site deploys: the shared `deploy-site.yml`, called by an optional canonical `deploy.yml`, builds each push to main without credentials, deploys it to staging, and deploys the same files to production after the `production` environment's required reviewer approves. Deploy jobs run only a pinned Wrangler and `scripts/deploy.py`.
+- A trusted build cache for the Rust gates: the shared `warm-cache.yml`, called by an optional canonical `cache.yml` on pushes to main, builds reviewed main in the gate's layout and is the only cache writer. Quality and the registry gate restore only the exact entry for the admitted base and discard anything else.
+- `scripts/tools.py`, which installs prebuilt `cargo-deny` and `cargo-machete` after checking each archive against a reviewed SHA-256.
 - Shared strict lint layer in `templates/lint/` (ESLint, ruff, ShellCheck and Rust lint tables) and `scripts/sync_lint.py`, which copies it into a repository and reports drift. No shared workflow changes.
 - Let `ejm-ui` publish exactly `@ejm/tokens`, `@ejm/core`, `@ejm/ui` and `@ejm/ssg` to npm with provenance: they may omit `private` only with `publishConfig` `{"access": "public", "provenance": true}`, their name and packing fields (`files`, `main`, `exports`, `bin`, `directories`, lifecycle scripts and the rest) must equal the reviewed values, which keeps brand logos and artwork out of the tokens tarball, and `publish.yml` is accepted only at its reviewed SHA-256. Every other UI package stays private.
 - Shared `verify-build.yml` and `attach-assets.yml` workflows that bind native build output to the tagged commit, recompute every digest and attach the files to the draft release.
@@ -20,6 +23,8 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Changed
 
+- Faster shared gate: every Quality matrix entry starts at once (no `max-parallel`), Cargo uses every runner core (`CARGO_BUILD_JOBS=default`), and the audit tools are no longer compiled from source on every run.
+- `scripts/configure_repositories.py` enables auto-merge, so an approved PR merges itself when its required statuses pass.
 - Type-annotate the scripts and tests, and enforce `mypy --strict` and ruff with the shared strict layer through a unit test run by the existing gate command. Behaviour is unchanged; the generated workflows differ only in the embedded script bytes.
 - Remove the `ejm-ui` bundle-size steps from the required Quality gate and the bundle-size wording from the operations guide; no shared check caps download size or dependency count. Safety bounds and security rules are unchanged.
 - Instruct the automated review not to report a changed full-hash pin of this repository's shared workflows as missing context or a security concern; other references, moves to older revisions and widened permissions are still to be reported. Pin provenance remains a maintainer check.

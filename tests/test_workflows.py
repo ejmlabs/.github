@@ -166,6 +166,55 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertIn("rustup toolchain install", steps[index - 1]["run"])
         self.assertIn("./scripts/check", steps[index + 1]["run"])
 
+    def test_warm_cache_builds_reviewed_main_like_the_gate_and_is_the_only_cache_writer(self) -> None:
+        warm = generated_yaml(workflows.yaml(workflows.warm_workflow()))
+        for name, job in warm["jobs"].items():
+            with self.subTest(job=name):
+                gate = self.governance["jobs"][name]
+                self.assertEqual(job["permissions"], {"contents": "read"})
+                self.assertNotIn("secrets.", json.dumps(job))
+                self.assertIn("github.event_name == 'push' && github.ref == 'refs/heads/main'", job["if"])
+                # Same environment and build steps as the gate, so the saved artifacts are the ones the gate reuses.
+                self.assertEqual({key: value.replace("github.event.repository.name", "needs.admission.outputs.profile") for key, value in job["env"].items()}, gate["env"])
+                steps = [step for step in gate["steps"] if step not in (workflows.ARTIFACT, workflows.EXTRACT) and not step.get("uses", "").startswith("actions/cache/")
+                         and step.get("name") != "Discard any cache that is not main's exact build"]
+                self.assertEqual(json.dumps(job["steps"][-1 - len(steps):-1]).replace("github.event.repository.name", "needs.admission.outputs.profile"), json.dumps(steps))
+                save, restore = job["steps"][-1], next(step for step in gate["steps"] if step.get("id") == "cache")
+                self.assertTrue(save["uses"].startswith("actions/cache/save@"))
+                self.assertEqual(save["with"]["path"].replace("github.event.repository.name", "needs.admission.outputs.profile"), restore["with"]["path"])
+                self.assertEqual(save["with"]["key"].replace("github.sha", "needs.admission.outputs.base"), restore["with"]["key"])
+                checkouts = [step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@")]
+                self.assertEqual([step["with"]["path"] for step in checkouts], ["product", "ejm-harness", "ejm-ui"])
+                self.assertTrue(all(step["with"]["persist-credentials"] is False for step in checkouts))
+        self.assertEqual(warm["jobs"]["quality"]["strategy"]["matrix"]["os"].replace("github.event.repository.name", "needs.admission.outputs.profile"),
+                         self.governance["jobs"]["quality"]["strategy"]["matrix"]["os"])
+
+    def test_site_deploy_builds_without_credentials_and_holds_the_token_only_in_trusted_steps(self) -> None:
+        document = generated_yaml(workflows.yaml(workflows.deploy_workflow()))
+        jobs = document["jobs"]
+        self.assertEqual(document["permissions"], {})
+        build = jobs["build"]
+        self.assertEqual(build["permissions"], {"contents": "read"})
+        self.assertNotIn("environment", build)
+        self.assertNotIn("secrets.", json.dumps(build))
+        self.assertEqual((jobs["staging"]["needs"], jobs["production"]["needs"]), ("build", "staging"))
+        self.assertEqual((jobs["staging"]["environment"], jobs["production"]["environment"]), ("staging", "production"))
+        for name in ("staging", "production"):
+            with self.subTest(job=name):
+                steps = jobs[name]["steps"]
+                # The deploy job checks out and runs no product code: only the built files, the pinned deployer and trusted scripts.
+                self.assertEqual([step["uses"].split("@")[0] for step in steps if "uses" in step], ["actions/download-artifact", "actions/setup-node"])
+                self.assertTrue(all("secrets." not in json.dumps(step) for step in steps[:-1]))
+                self.assertEqual(steps[-1]["env"]["CLOUDFLARE_API_TOKEN"], "${{ secrets.CLOUDFLARE_API_TOKEN }}")
+                self.assertEqual(embedded_source(steps[-1]["run"]), workflows.source("deploy.py"))
+                install = steps[-2]["run"]
+                self.assertIn("npm ci --ignore-scripts", install)
+                lock = (workflows.ROOT / "deploy/package-lock.json").read_text()
+                self.assertIn(repr(lock), embedded_source(install) or "")
+        self.assertEqual(jobs["production"]["permissions"], {"actions": "read"})
+        self.assertTrue(jobs["production"]["concurrency"]["cancel-in-progress"])
+        self.assertFalse(jobs["staging"]["concurrency"]["cancel-in-progress"])
+
     def test_harness_dbus_setup_is_linux_only_and_before_the_required_gate(self) -> None:
         installers = [(name, index, step) for name, job in self.governance["jobs"].items()
                       for index, step in enumerate(job["steps"]) if "libdbus-1-dev" in step.get("run", "")]
@@ -257,17 +306,48 @@ class WorkflowSecurityTests(unittest.TestCase):
                 root = Path(directory)
                 (root / "bin").mkdir()
                 log = root / "commands.jsonl"
-                for executable in ("rustup", "cargo"):
+                # The python3 stub records its arguments and the trusted source it would run, never fetching anything.
+                for executable in ("rustup", "cargo", "python3"):
                     stub = root / "bin" / executable
-                    stub.write_text("#!/usr/bin/env python3\nimport json, os, sys\nwith open(os.environ['COMMAND_LOG'], 'a') as log:\n    log.write(json.dumps(sys.argv[1:]) + '\\n')\n")
+                    stub.write_text("#!" + sys.executable + "\nimport json, os, sys\nsource = sys.stdin.read() if os.path.basename(sys.argv[0]) == 'python3' else ''\n"
+                                    "with open(os.environ['COMMAND_LOG'], 'a') as log:\n    log.write(json.dumps([os.path.basename(sys.argv[0]), *sys.argv[1:], source]) + '\\n')\n")
                     stub.chmod(0o755)
                 env = {**os.environ, "PROFILE": profile, "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"], "COMMAND_LOG": str(log)}
                 subprocess.run(["bash", "-e", "-c", script], cwd=root, env=env, check=True, capture_output=True, text=True)
                 calls = [json.loads(line) for line in log.read_text().splitlines()]
-                expected = [["toolchain", "install", "1.99.1", "--profile", "minimal", "--component", "clippy,rustfmt"], ["default", "1.99.1"]]
-                if profile != "ejm-ui":
-                    expected.extend([["install", "cargo-deny", "--version", "0.20.2", "--locked"], ["install", "cargo-machete", "--version", "0.9.2", "--locked"]])
-                self.assertEqual(calls, expected)
+                expected = [["rustup", "toolchain", "install", "1.99.1", "--profile", "minimal", "--component", "clippy,rustfmt", ""], ["rustup", "default", "1.99.1", ""]]
+                self.assertEqual([call for call in calls if call[0] != "python3"], expected)
+                installs = [call for call in calls if call[0] == "python3"]
+                if profile == "ejm-ui":
+                    self.assertEqual(installs, [])
+                else:
+                    # Prebuilt, digest-pinned binaries replace compiling the audit tools from source on every run.
+                    self.assertEqual([call[1:-1] for call in installs], [["-I", "-", "cargo-deny", "cargo-machete"]])
+                    self.assertEqual(embedded_source(installs[0][-1]), workflows.source("tools.py"))
+
+    def test_rust_gates_use_every_core_and_never_wait_for_a_matrix_slot(self) -> None:
+        for name in ("quality", "registry"):
+            with self.subTest(job=name):
+                job = self.governance["jobs"][name]
+                self.assertEqual(job["env"]["CARGO_BUILD_JOBS"], "default")
+                self.assertNotIn("max-parallel", job.get("strategy", {}))
+        self.assertNotIn("--jobs", workflows.REGISTRY["run"])
+
+    def test_gate_restores_only_an_exact_main_build_and_discards_anything_else(self) -> None:
+        for name, cache_id in (("quality", "cache"), ("registry", "cache")):
+            with self.subTest(job=name):
+                steps = self.governance["jobs"][name]["steps"]
+                restore = next(step for step in steps if step.get("uses", "").startswith("actions/cache/"))
+                self.assertTrue(restore["uses"].startswith("actions/cache/restore@"), "the admitted gate must never save a cache")
+                self.assertEqual(restore["id"], cache_id)
+                self.assertNotIn("restore-keys", restore["with"])
+                self.assertEqual(restore["with"]["key"], "gate-" + name + "-${{ runner.os }}-${{ needs.admission.outputs.base }}")
+                discard = steps[steps.index(restore) + 1]
+                self.assertIn("steps.cache.outputs.cache-hit != 'true'", discard["if"])
+                self.assertEqual(discard["env"]["TARGET_DIR"], restore["with"]["path"].splitlines()[-1])
+                # The restore follows extraction, which marks every admitted source newer than any cached build.
+                self.assertLess(steps.index(next(step for step in steps if step.get("name") == "Extract source data safely")), steps.index(restore))
+                self.assertFalse(any(step.get("uses", "").startswith("actions/cache/save") for step in steps))
 
     def test_privileged_jobs_run_only_trusted_scripts_and_actions(self) -> None:
         trusted_sources: set[str | None] = {workflows.source(name) for name in ("governance.py", "prepare.py")}

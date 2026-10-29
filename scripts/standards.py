@@ -57,7 +57,36 @@ SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-
 MODEL_KEYS = ("XAI_API_KEY",)
 # Repositories that may ship native builds. One adopts the native release by adding build.yml.
 NATIVE_RELEASE = ("ejm-cli", "ejm-harness")
-SHARED_WORKFLOWS = ("governance.yml", "draft-release.yml", "verify-build.yml", "attach-assets.yml")
+SHARED_WORKFLOWS = ("governance.yml", "draft-release.yml", "verify-build.yml", "attach-assets.yml", "warm-cache.yml", "deploy-site.yml")
+# Repositories whose Rust gate builds may restore main's trusted cache. One adopts it by adding cache.yml.
+WARM_CACHE = ("ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui")
+# Repositories that serve a Cloudflare site. One adopts staging and approved production deploys by adding deploy.yml.
+SITE_DEPLOY = ("ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui", "ejmlabs")
+# Each push to main deploys to staging; production waits for a required reviewer on the production environment.
+SITE_DEPLOY_CALLER = """name: Deploy site
+on:
+  push:
+    branches: [main]
+permissions: {}
+jobs:
+  deploy:
+    permissions:
+      contents: read
+      actions: read
+    uses: ejmlabs/.github/.github/workflows/deploy-site.yml@STANDARDS_REVISION
+"""
+# The only writer of gate caches: a push to main builds the reviewed commit and saves it.
+WARM_CACHE_CALLER = """name: Warm trusted gate build caches
+on:
+  push:
+    branches: [main]
+permissions: {}
+jobs:
+  warm:
+    permissions:
+      contents: read
+    uses: ejmlabs/.github/.github/workflows/warm-cache.yml@STANDARDS_REVISION
+"""
 MIT_TERMS = """Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
@@ -466,6 +495,20 @@ def _reusable_workflow(text: str, name: str, *, model_key: str = "XAI_API_KEY") 
 "permissions": {}
 """
         roots = ['"concurrency":', '"jobs":']
+    elif name == "deploy-site.yml":
+        header += """"name": "Deploy site"
+"on":
+  "workflow_call": {}
+"permissions": {}
+"""
+        roots = ['"jobs":']
+    elif name == "warm-cache.yml":
+        header += """"name": "Warm trusted gate build caches"
+"on":
+  "workflow_call": {}
+"permissions": {}
+"""
+        roots = ['"concurrency":', '"jobs":']
     else:
         header += """"name": "Checked draft source release"
 "on":
@@ -496,11 +539,13 @@ def _reusable_workflow(text: str, name: str, *, model_key: str = "XAI_API_KEY") 
     # are data here; fake uses/on text inside a script is not workflow structure.
     # The admitted CLI owns one setup action in its credential-free quality job.
     # Match its complete canonical step and job, not a general local-action path.
+    # The cache warm job builds reviewed main with the same hook, selected by repository name instead of admission.
+    profile = "github.event.repository.name" if name == "warm-cache.yml" else "needs.admission.outputs.profile"
     cli_setup = """      -
         "name": "Prepare ejm-cli remote test prerequisites"
-        "if": "${{ needs.admission.outputs.profile == 'ejm-cli' }}"
+        "if": "${{ PROFILE == 'ejm-cli' }}"
         "uses": "./product/.github/actions/setup-ci"
-"""
+""".replace("PROFILE", profile)
     structural = []
     local_uses = []
     parents: list[tuple[int, str | None]] = []
@@ -553,6 +598,11 @@ def _reusable_workflow(text: str, name: str, *, model_key: str = "XAI_API_KEY") 
         legacy = '    "environment": "legacy-review"'
         if len(review) != 1 or environments != [legacy] or legacy not in review[0].splitlines():
             raise ValueError("Only the review job must declare the legacy-review environment: " + name)
+    elif name == "deploy-site.yml":
+        deploys = {job: re.findall(r'(?ms)^  "' + job + r'":\n(.*?)(?=^  "[^\"]+":|\Z)', visible) for job in ("staging", "production")}
+        expected = ['    "environment": "staging"', '    "environment": "production"']
+        if environments != expected or any(len(found) != 1 or line not in found[0].splitlines() for (_, found), line in zip(deploys.items(), expected, strict=True)):
+            raise ValueError("Only the staging and production deploy jobs may declare their environments: " + name)
     elif environments:
         raise ValueError("Only the governance review job may declare an environment: " + name)
 
@@ -563,7 +613,7 @@ def _reusable_workflow(text: str, name: str, *, model_key: str = "XAI_API_KEY") 
         steps = re.search(r'(?ms)^    "steps":\n(.*?)(?=^    "[^\"]+":|\Z)', quality[1]) if quality else None
         hook = re.search(r"(?m)^" + re.escape(cli_setup) + r"(?=^      -\n|\Z)", steps[1]) if steps else None
         allowed = None
-        if name == "governance.yml" and hook:
+        if name in ("governance.yml", "warm-cache.yml") and hook:
             start = cast("re.Match[str]", quality).start(1) + cast("re.Match[str]", steps).start(1) + hook.start()
             allowed = visible[:start].count("\n") + len(cli_setup.splitlines()) - 1
         if local_uses != [allowed]:
@@ -583,6 +633,12 @@ def workflows(root: Path, profile: str) -> None:
         if hashlib.sha256(publish.read_bytes()).hexdigest() != UI_PUBLISH_SHA256:
             raise ValueError("UI publish workflow differs from the reviewed revision")
         allowed.add("publish.yml")
+    warm = directory / "cache.yml"
+    if profile in WARM_CACHE and warm.is_file() and not warm.is_symlink():
+        allowed.add("cache.yml")
+    deploy = directory / "deploy.yml"
+    if profile in SITE_DEPLOY and deploy.is_file() and not deploy.is_symlink():
+        allowed.add("deploy.yml")
     if profile == ".github":
         allowed.update(SHARED_WORKFLOWS)
     if any(file.name not in allowed for file in directory.iterdir()):
@@ -597,6 +653,10 @@ def workflows(root: Path, profile: str) -> None:
     if not model_key:
         raise ValueError("PR workflow must forward exactly one supported model key")
     consumers = consumer_workflows(pin[1], model_key=model_key[1], native=native)
+    if "cache.yml" in allowed:
+        consumers["cache.yml"] = WARM_CACHE_CALLER.replace("STANDARDS_REVISION", pin[1])
+    if "deploy.yml" in allowed:
+        consumers["deploy.yml"] = SITE_DEPLOY_CALLER.replace("STANDARDS_REVISION", pin[1])
     if native:
         native_build(read(root, ".github/workflows/build.yml"))
     if profile == ".github":
