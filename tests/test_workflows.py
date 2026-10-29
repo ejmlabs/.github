@@ -525,7 +525,7 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertNotIn("codex" + "-action", json.dumps(self.governance))
         ai = self.governance["jobs"]["ai"]
         self.assertIn("needs.admission.outputs.run == 'true'", ai["if"])
-        caller = consumer_workflows("a" * 40)["pr.yml"]
+        caller = consumer_workflows("a" * 40, current=True)["pr.yml"]
         found = re.search(r"(?ms)^on:\n(.*?)(?=^\S)", caller)
         assert found is not None
         triggers = found[1]
@@ -533,6 +533,10 @@ class WorkflowSecurityTests(unittest.TestCase):
         # Label removal only re-evaluates; it runs base-branch workflow code and never admits.
         self.assertIn("  pull_request_target:\n    types: [unlabeled]\n", triggers)
         self.assertNotRegex(caller, r"(?m)^\s+pull_request:")
+        found = re.search(r"(?ms)^on:\n(.*?)(?=^\S)", consumer_workflows("a" * 40)["pr.yml"])
+        assert found is not None
+        triggers = found[1]
+        self.assertEqual(re.findall(r"(?m)^  (\w+):", triggers), ["issue_comment"])
         admission = self.governance["jobs"]["admission"]["if"]
         self.assertIn("github.event_name == 'issue_comment'", admission)
 
