@@ -3,6 +3,6 @@
   "private": true,
   "description": "The pinned Wrangler that deploys built ejmlabs sites; no project code runs beside it.",
   "dependencies": {
-    "wrangler": "4.151.3"
+    "wrangler": "4.155.0"
   }
 }
