@@ -3,14 +3,19 @@
 ## Permissions and required settings
 
 Protect main with PRs, one native approval recorded from an explicit human
-maintainer decision, and five strict required statuses bound to GitHub Actions:
-Human readiness, Maintainer approval, Quality, Repository standards and AI
-review. Require resolved conversations, linear history and stale approval
-dismissal. Enforce administrators. Block force pushes and branch deletion. Use
-squash merges and delete merged branches. Allow auto-merge: a maintainer may
-post `/approve` right after `/ready` and arm auto-merge, and the PR merges
-itself once every required status passes. Strict statuses still hold it until
-it is up to date with main.
+maintainer decision, and four strict required statuses bound to GitHub Actions:
+Human readiness, Maintainer approval, Quality and Repository standards. They
+are enforced for administrators too: `scripts/configure_repositories.py` sets
+`enforce_admins`, and there is no administrator bypass. Require resolved
+conversations, linear history and stale approval dismissal. Block force pushes
+and branch deletion. Use squash merges and delete merged branches. Allow
+auto-merge: a maintainer may post `/approve` right after `/ready` and arm
+auto-merge, and the PR merges itself once every required status passes.
+Strict statuses still hold it until it is up to date with main.
+
+No automated model review runs or is required. Maintainers review every change
+themselves before `/approve`. Turning any model review back on, as a status, a
+label or an advisory comment, needs the security review's sign-off first.
 
 Default workflow tokens are read-only. Allow only full-SHA actions from the
 selected core and dependency setup sources and this shared repository. Enable
@@ -35,7 +40,9 @@ Trusted main handles issue-comment events. Bot and unrelated comments are
 filtered before a runner starts. Admission checks the human's current
 maintain/admin role, full current head, non-draft PR, main target and original
 command. Decisions must be separate, unedited comments. New commits require
-new decisions.
+new decisions. Wait for Human readiness to turn green before posting
+`/approve`, and never post `/ready` and `/approve` together or on the same head
+within seconds.
 The head repository must match the base repository. Fork PRs and deleted-fork
 heads require manual review instead of automated admission.
 
@@ -50,74 +57,12 @@ explicit revocation and a new human command.
 | Preparation | 5 minutes |
 | Quality | 45 minutes |
 | Separate registry gate | 25 minutes |
-| AI review job | 12 minutes |
-| Each model call | 225 seconds |
 | Source handoff artifacts | 3 days |
 
-The AI review gate uses the pinned open-source reviewer's documented GitHub
-Action setup and label blocking, with no custom result rules:
-
-- `ai` (needs admission, protected environment `legacy-review`) rechecks
-  admission, requires the model key, installs the hash-locked reviewer, runs
-  its GitHub Action runner for the admitted PR and rechecks admission. Only
-  review runs, at high reasoning effort with no fallback model. The runner's
-  fail-on-tool-errors setting stays at its default, so the job fails when no
-  review happens. Its token has `contents: read`, `pull-requests: write` (for
-  the review comment and labels) and `statuses: read`. It reads the PR through
-  the API and never checks out or runs PR code. File handling and prompts are
-  the reviewer's defaults, plus one extra instruction: the review is told not
-  to report a changed pin of this repository's shared workflow
-  (`ejmlabs/.github/.github/workflows/...@` a full 40-character hash, or the
-  matching `standards-ref`) as missing context or a security concern, because
-  it never sees those workflows. It is still told to report other references,
-  moves to an older revision, and changes that widen permissions, secrets or
-  triggers. The instruction is guidance, not a check: it does not verify where
-  the pinned commit came from, so the maintainer must confirm the commit is
-  retained under `workflow-pins/FULL_SHA` before `/approve`. The model context cap stays 160,000 tokens and the
-  output cap 16,000. Repository and global reviewer settings files are
-  ignored. The reviewer's documented action output (`review`, this run's
-  review data) is exposed as the job output.
-- The review publishes the reviewer's own labels: `Possible security concern`
-  and `Review effort N/5`, and a merge recommendation in its comment.
-- `labels` (needs `ai`, `pull-requests: read`) receives that output through
-  its environment only, never in a script. It fails when the output is missing
-  or unparsable, has no security verdict, or the verdict is not "no" under
-  the reviewer's own negative-answer rule (empty, no, none or false). The
-  reviewer applies the same rule to set its label, so removing the label
-  before this job runs cannot pass. It also fails while the PR carries the
-  `Possible security concern` label. Effort labels and the merge
-  recommendation are advisory.
-- `finish` publishes **AI review** as success only when both jobs passed for
-  the admitted commit. A `labels` failure gets the fixed description "Blocked
-  by the review's security verdict or label; a maintainer may remove the
-  label to override".
-- Override: a maintainer reviews the concern and removes the label. GitHub
-  records the removal in the PR timeline. Callers also trigger on
-  `pull_request_target` `unlabeled`, which runs the `override` job from
-  trusted main with no secrets, no checkout and `statuses: write`. It changes
-  **AI review** to success only when the current head's status is that
-  label-blocked failure, the removed label is `Possible security concern`,
-  the remover is a current human maintain or admin user, and no blocking
-  label remains. It never runs before a completed review of the current head.
-  Any other removal leaves the status unchanged. If the label is absent, for
-  example because publication failed or the verdict was missing, a maintainer
-  adds it and then removes it.
-
-`scripts/configure_repositories.py` creates the `Possible security concern`
-label and reads it back, because the review token may be unable to create it.
-
-Automated review covers only what the reviewer sends to the model. It does not
-cover files the reviewer always excludes (lockfiles such as
-`package-lock.json`, `pnpm-lock.yaml` and `yarn.lock`, minified files and
-maps, images, SVG and other assets, binaries) or files clipped by the token
-budget. The review comment's coverage footer lists files left out. Maintainer
-approval must cover them: inspect every excluded or clipped file, especially
-lockfile `resolved` and `integrity` changes, before `/approve`. This is an
-owner decision to keep the reviewer's default file handling.
-
-The model reads attacker-controlled PR title, description, commits and diff,
-which can steer its security verdict to "no". This residual risk is accepted;
-human Maintainer approval is the backstop.
+There is no automated model review. The gate has no model job, no review
+status, no review label and no label override, and no job receives a model key.
+Maintainer approval, which covers every file in the diff including lockfiles,
+generated files, images and other assets, is the only review.
 
 A failed required check blocks merge. These checks cannot prove correctness,
 so human review and the other gates remain necessary. Metadata-only PRs remain
@@ -125,20 +70,9 @@ fail-closed and require a human review.
 
 Builds receive no model key, source-read secret, deployment credential or
 write token. Never reuse a cache produced by PR code in a privileged job.
-Installation has no token or model key. Only the review step receives the model
-key and the job token. Use INFO logging. Never enable step or runner debug
-logging on this path. Preparation and review jobs reject runner debug mode
-before processing sources or using the model key.
+Never enable step or runner debug logging on this path. The preparation job
+rejects runner debug mode before processing sources.
 
-Use only provider prepaid credits on a dedicated account, invoiced billing limit $0,
-automatic top-up off, and an ACL-restricted key limited to the configured model and chat
-endpoint, with request and token rate limits. Review provider audit logs weekly.
-The service sends alerts at 50% and 80% of the credit balance. Hostile diffs
-reaching the provider are an accepted defensive-use risk. These provider-side
-controls are REQUIRED. The model token cap is 160,000 and the output cap
-16,000; files clipped by the cap are listed in the review comment and need
-human review.
-The prepaid balance is raised by stage and is currently $50.
 Set a separate workflow execution budget and
 alerts. Per-run limits do not cap aggregate spending. Restrict repository
 roles and permitted dispatches; organization owners retain control of policy.
@@ -148,8 +82,8 @@ roles and permitted dispatches; organization owners retain control of policy.
 The explicit `ejm-ui` profile defines the requirements for a future adoption
 by the owner of the `@ejm/*` UI contracts, tokens, themes, and shared site tools.
 It requires `README.md#development` as the contributor guide and uses the same
-five required statuses, human maintainer decisions, exact-commit approval and
-revocation rules, the automated review gate, spending bounds,
+four required statuses, human maintainer decisions, exact-commit approval and
+revocation rules, spending bounds,
 replay rejection, and source-release checks as the
 other profiles. It needs no private harness source or cross-repository token.
 
@@ -266,7 +200,7 @@ A shared policy test does not prove a hosted Studio run or site deployment.
 
 Only the CLI profile runs `./product/.github/actions/setup-ci` from the exact
 admitted source, in the credential-free Quality job. Privileged preparation,
-AI review, result publication and source-release jobs never execute this
+result publication and source-release jobs never execute this
 product action. The allowlist accepts only the complete canonical step under
 the CLI profile condition.
 
@@ -376,33 +310,30 @@ from a product to stop restores there.
 
 ## Missing model key acceptance staging
 
-The shared-only caller supports label `acceptance:missing-model-key`. The
-normal and fixture routes are restricted to `ejmlabs/.github` and pin the same
-immutable governance revision. With the label, the fixture forwards no
-secrets; without it, the normal route forwards its declared secrets. Neither
-uses `secrets: inherit`. Changing the label starts no workflow. Product callers
-do not accept this fixture form.
-
-Use a dedicated, unmerged acceptance PR with fresh exact-head human readiness
-and approval. Verify that the model job stops at the missing-key guard before
-the reviewer runs. Inspect step states, all five statuses and the native review.
-Keep the fixture unmerged and remove its label when closing it.
+The shared-only caller supports label `acceptance:missing-model-key`. It was
+used to check that a missing model key failed closed. No model key or model job
+remains, so the fixture has no remaining purpose; its exact form stays
+accepted by the standards check for one generation and is removed with the
+previous caller form. The normal and fixture routes are restricted to
+`ejmlabs/.github` and pin the same immutable governance revision. With the
+label, the fixture forwards no secrets; without it, the normal route forwards
+its declared secrets. Neither uses `secrets: inherit`. Changing the label
+starts no workflow. Product callers do not accept this fixture form.
 
 For active revocation, put a bounded hold in credential-free Quality and
 require a flushed log marker before the exact-head revoke comment. Verify
 cancellation of the original step, job and run, failed human statuses, native
 approval dismissal and no later successful human status from finalization.
-The revoke event must skip source preparation, builds and AI. Model steps must
-remain skipped or unstarted. In-progress metadata alone does not prove the
-hold was active.
+The revoke event must skip source preparation and builds. In-progress metadata
+alone does not prove the hold was active.
 
 ## Credentials
 
-Store the review model key only as an environment secret of `legacy-review`.
-Restrict that environment's deployment branches to main only. Never store the
-review model key as a repository or organization secret. Enforce the required
-prepaid-credit controls. Missing keys fail closed. Rotate a leaked key at the provider, remove its stored value,
-audit affected runs and readmit work only after containment.
+No job receives a model key. The shared workflow still declares an optional,
+unused `XAI_API_KEY` secret so callers in the previous form can pass it for one
+generation; the next shared revision removes the declaration. After every
+caller is on the new revision, the owner removes the stored model key secret
+and closes or empties the prepaid provider account.
 
 Public harness source needs no private checkout token. Pin its exact revision
 in `.github/harness-revision`; trusted preparation archives it for the
@@ -603,26 +534,41 @@ The scripts and tests here are held to the layer: `tests/test_strict.py` runs
    failed checks and duplicate release tags in GitHub before claiming those
    paths verified. Local policy tests do not establish event delivery.
 
-### Adopting the documented reviewer gate
+### Removing the AI review
 
-The label-removal trigger changes the canonical caller, and each repository's
-required **Repository standards** check runs the standards embedded at the pin
-on its main. Adopt in three steps, each through an ordinary admitted PR with
-no administrator bypass:
+Each repository's required **Repository standards** check runs the standards
+embedded at the pin on its main, so a change is checked by the previous pin's
+standards. Roll out in this order, each step through an ordinary admitted PR
+with no administrator bypass:
 
-1. Merge the shared change here and retain its commit under
-   `workflow-pins/FULL_SHA`.
-2. In every caller, including this repository's own `pr.yml`, change only the
-   governance and release pins to that commit. Keep the old caller form and
-   the old `CONTRIBUTING.md`; the old standards accept them.
-3. Once main runs the new pin, change the caller to the new form (the
-   `pull_request_target` `unlabeled` trigger and job condition) and run
-   `scripts/sync_community.py` for `CONTRIBUTING.md` in the same PR. The new
-   standards accept it.
+1. The owner removes **AI review** from the required checks on main in all six
+   repositories and reads back that exactly four remain. This comes first so
+   no repository ever requires a status the gate no longer publishes. Do it in
+   the repository settings UI, or with the settings script from the removal
+   commit's tree. Do not run `scripts/configure_repositories.py` from main
+   until the removal has merged: main's script still sets five contexts.
+2. Merge the standards change here first (the commit that accepts both caller
+   forms and a shared workflow with or without the review job), then change
+   this repository's own `pr.yml` pins to it. The previous standards reject a
+   shared workflow without the review job, so the removal cannot be the first
+   change. Retain each merged commit under `workflow-pins/FULL_SHA`.
+3. Merge the removal here. It is checked by the standards from step 2.
+4. In every caller, including this repository's own `pr.yml`, change only the
+   governance and release pins to the removal commit, keeping the previous
+   caller form. The previous standards accept that PR; the new standards
+   accept both forms, so the order across repositories is free.
+5. Once main runs the new pin, change each caller to the new form (no
+   `pull_request_target` trigger, no `XAI_API_KEY` forward). A pin change and a
+   form change in one PR fail the previous standards, so they are separate PRs.
+6. The owner deletes the `legacy-review` environment (its secret and branch
+   rule) in each repository and closes the prepaid provider
+   account.
+7. The next shared revision removes the previous caller form, the optional
+   secret declaration and the fixture form from the standards check.
 
-Between steps 2 and 3, other PRs in that repository fail **Repository
-standards** and the label override is unavailable, because label removal
-starts no workflow. Keep that window short and land step 3 first.
+`CONTRIBUTING.md` still names the removed status. It is compared byte for byte
+with the shared template, so changing it needs its own two-step adoption and
+is left for a later revision.
 
 ## Public visibility checklist
 
@@ -661,10 +607,10 @@ member readiness and recovery access; that is a separate access change.
 
 ## Acceptance limits
 
-Inspect actual runs, immutable artifacts, reviewer transcripts and source
-identities before claiming installed behavior. A green adoption PR may have
-run the previous caller; it does not prove execution of the new one. Actual
-reviews must match the admitted head. Recheck every required status, native approval and exact head before
+Inspect actual runs, immutable artifacts and source identities before
+claiming installed behavior. A green adoption PR may have run the previous
+caller; it does not prove execution of the new one. Native approvals must
+match the admitted head. Recheck every required status, native approval and exact head before
 normal protected merge.
 
 Keep genuine outside-contributor, bot, nonmaintainer and fork event tests open
@@ -676,6 +622,12 @@ product's security and contributor guides.
 
 ## Decision log
 
+- **2026-10-26, AI review removed.** The owner turned off the AI PR reviewer
+  because it added too much friction for too little value. The review job,
+  its status, the security label and its override are removed; four statuses
+  are required and enforced for administrators. This supersedes the
+  documented reviewer gating decision below. Re-enabling any model review
+  needs the security review's sign-off first.
 - **2026-10-25, documented reviewer gating.** The owner decided to replace
   the custom review gate with the reviewer's documented GitHub Action runner
   and label blocking. The custom result adapter, two passes, coverage rules,

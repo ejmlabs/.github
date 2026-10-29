@@ -5,10 +5,8 @@ import base64
 import json
 import re
 import subprocess
-import urllib.parse
 from typing import Any
 
-from governance import SECURITY_LABEL
 from standards import (
     NATIVE_RELEASE,
     SHARED_WORKFLOWS,
@@ -21,7 +19,7 @@ from standards import (
 
 NAMES = (".github", "ejmlabs", "ejm-cli", "ejm-harness", "ejm-ide")
 SUPPORTED_NAMES = (*NAMES, "ejm-ui")
-CONTEXTS = ("Human readiness", "Maintainer approval", "Quality", "Repository standards", "AI review")
+CONTEXTS = ("Human readiness", "Maintainer approval", "Quality", "Repository standards")
 
 
 def api(path: str, method: str = "GET", body: dict[str, Any] | None = None, *, optional: bool = False) -> Any:  # noqa: ANN401 - the decoded GitHub response has no fixed shape
@@ -108,9 +106,6 @@ def configure(name: str, protect: bool, hold: bool, revision: str | None = None)
         "send_secrets_and_variables": False, "require_approval_for_fork_pr_workflows": True,
     }, optional=True)
     api(root + "/vulnerability-alerts", "PUT")
-    # The review token may be unable to create labels; an existing label is the override path.
-    api(root + "/labels", "POST", {"name": SECURITY_LABEL, "color": "d73a4a",
-                                   "description": "Blocks AI review until a maintainer removes it"}, optional=True)
     api(root + "/automated-security-fixes", "PUT", optional=True)
     api(root + "/immutable-releases", "PUT", optional=True)
     # These APIs are public-only or depend on installed security products. No paid enrollment.
@@ -139,8 +134,7 @@ def configure(name: str, protect: bool, hold: bool, revision: str | None = None)
               "dependency_alerts": api(root + "/vulnerability-alerts"), "security_updates": api(root + "/automated-security-fixes", optional=True),
               "immutable_releases": api(root + "/immutable-releases", optional=True),
               "private_reporting": reporting, "external_approval": external,
-              "metadata": api(root), "rulesets": api(root + "/rulesets"),
-              "security_label": api(root + "/labels/" + urllib.parse.quote(SECURITY_LABEL))}
+              "metadata": api(root), "rulesets": api(root + "/rulesets")}
     if protect:
         result["main_protection"] = api(root + "/branches/main/protection")
     return result

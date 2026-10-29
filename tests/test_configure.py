@@ -29,12 +29,19 @@ class SettingsSafetyTests(unittest.TestCase):
         self.assertEqual(allowed, [{"github_owned_allowed": False, "verified_allowed": False,
                                    "patterns_allowed": ["actions/*@*", "astral-sh/setup-uv@*", "ejmlabs/.github/*@*"]}])
 
-    def test_review_security_label_is_created_and_read_back(self) -> None:
+    def test_no_review_label_is_created_or_read_back(self) -> None:
         with patch.object(settings, "api", return_value={}) as api:
-            settings.configure("ejm-cli", protect=False, hold=True)
-        posts = [call.args[2] for call in api.call_args_list if call.args[:2] == ("repos/ejmlabs/ejm-cli/labels", "POST")]
-        self.assertEqual([post["name"] for post in posts], ["Possible security concern"])
-        self.assertIn(("repos/ejmlabs/ejm-cli/labels/Possible%20security%20concern",), [call.args for call in api.call_args_list])
+            result = settings.configure("ejm-cli", protect=False, hold=True)
+        self.assertFalse(any("/labels" in call.args[0] for call in api.call_args_list))
+        self.assertNotIn("security_label", result)
+
+    def test_main_requires_exactly_four_statuses_and_enforces_them_for_admins(self) -> None:
+        with patch.object(settings, "api", return_value=[]) as api:
+            settings.configure("ejm-cli", protect=True, hold=True)
+        protection = next(call.args[2] for call in api.call_args_list if call.args[:2] == ("repos/ejmlabs/ejm-cli/branches/main/protection", "PUT"))
+        self.assertEqual([check["context"] for check in protection["required_status_checks"]["checks"]],
+                         ["Human readiness", "Maintainer approval", "Quality", "Repository standards"])
+        self.assertIs(protection["enforce_admins"], True)
 
     def test_workflow_writer_must_be_a_human_maintainer(self) -> None:
         for role, kind in (("write", "User"), ("admin", "Bot")):
