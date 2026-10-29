@@ -155,6 +155,23 @@ class WorkflowTests(unittest.TestCase):
         ):
             workflows(self.root, "ejm-ui")
 
+    def test_cache_warm_caller_is_exact_and_only_for_rust_gates(self) -> None:
+        canonical = standards.WARM_CACHE_CALLER.replace("STANDARDS_REVISION", self.revision)
+        for repository in standards.WARM_CACHE:
+            with self.subTest(repository=repository):
+                (self.directory / "cache.yml").write_text(canonical)
+                workflows(self.root, repository)
+        # A caller cannot widen permissions, add a trigger, or point at another revision than pr.yml.
+        for changed in (canonical.replace("contents: read", "contents: write"), canonical.replace("push:", "pull_request_target:"),
+                        canonical.replace(self.revision, self.other_revision)):
+            with self.subTest(content=changed), self.assertRaisesRegex(ValueError, "differs from the canonical consumer: cache.yml"):
+                (self.directory / "cache.yml").write_text(changed)
+                workflows(self.root, "ejm-cli")
+        for repository in ("ejmlabs", ".github"):
+            with self.subTest(repository=repository), self.assertRaisesRegex(ValueError, "Unexpected workflow"):
+                (self.directory / "cache.yml").write_text(canonical)
+                workflows(self.root, repository)
+
     def test_reviewed_ui_publish_workflow_hash_is_recorded(self) -> None:
         self.assertRegex(standards.UI_PUBLISH_SHA256, r"^[0-9a-f]{64}$")
 

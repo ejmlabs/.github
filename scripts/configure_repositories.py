@@ -9,7 +9,13 @@ import urllib.parse
 from typing import Any
 
 from governance import SECURITY_LABEL
-from standards import NATIVE_RELEASE, SHARED_WORKFLOWS, native_build
+from standards import (
+    NATIVE_RELEASE,
+    SHARED_WORKFLOWS,
+    WARM_CACHE,
+    WARM_CACHE_CALLER,
+    native_build,
+)
 
 NAMES = (".github", "ejmlabs", "ejm-cli", "ejm-harness", "ejm-ide")
 SUPPORTED_NAMES = (*NAMES, "ejm-ui")
@@ -58,6 +64,9 @@ def installed_consumers(name: str, revision: str | None) -> None:
     native = name in NATIVE_RELEASE and any(entry["name"] == "build.yml" for entry in entries)
     expected = consumer_workflows(revision, native=native)
     allowed = set(expected) | (set(SHARED_WORKFLOWS) if name == ".github" else set()) | ({"build.yml"} if native else set())
+    if name in WARM_CACHE and any(entry["name"] == "cache.yml" for entry in entries):
+        allowed.add("cache.yml")
+        expected["cache.yml"] = WARM_CACHE_CALLER.replace("STANDARDS_REVISION", revision)
     if {entry["name"] for entry in entries} != allowed:
         raise ValueError(name + ": unexpected or missing workflows on main")
     if native:
@@ -74,7 +83,7 @@ def installed_consumers(name: str, revision: str | None) -> None:
 def configure(name: str, protect: bool, hold: bool, revision: str | None = None) -> dict[str, Any]:  # noqa: FBT001 - the tests and the entry point pass these positionally or by keyword
     root = "repos/ejmlabs/" + name
     api(root, "PATCH", {"allow_squash_merge": True, "allow_merge_commit": False, "allow_rebase_merge": False,
-                             "delete_branch_on_merge": True, "allow_auto_merge": False, "has_issues": True,
+                             "delete_branch_on_merge": True, "allow_auto_merge": True, "has_issues": True,
                              "has_wiki": False, "squash_merge_commit_title": "PR_TITLE", "squash_merge_commit_message": "PR_BODY"})
     if hold:
         # GitHub rejects allowed_actions when enabled is false. Do not enable old workflows.

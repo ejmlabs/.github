@@ -206,6 +206,13 @@ def main() -> None:
         with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
             output.write("revision=" + ui_revision("base") + "\n")
         return
+    if sys.argv[1:] == ["warm-pins"]:
+        # Main's reviewed pins choose the dependency sources, as they do for a PR admitted onto this main commit.
+        profile = os.environ["GITHUB_REPOSITORY"].split("/")[-1]
+        harness = harness_pin("product", full_sha(os.environ["GITHUB_SHA"])) if profile in ("ejm-cli", "ejm-ide") else ""
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+            output.write("harness=" + harness + "\nui=" + ui_revision("product") + "\n")
+        return
     head, base = full_sha(os.environ["PR_HEAD"]), full_sha(os.environ["PR_BASE"])
     # Validate proposed metadata without allowing it to select privileged input.
     ui_revision("product")
