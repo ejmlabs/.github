@@ -118,6 +118,8 @@ class SharedSkillTests(unittest.TestCase):
                 self.assertEqual(metadata.get("name"), skill.parent.name)
                 description = metadata.get("description", "")
                 self.assertTrue(0 < len(description) <= 300 and "<" not in description and ">" not in description)
+                # plain YAML scalars: ": " or " #" would break strict frontmatter loaders
+                self.assertFalse(": " in description or " #" in description or description[0] in "'\"[]{}&*!|>%@`")
                 self.assertLessEqual(len(body.splitlines()), 100)
                 for target in re.findall(r"\[[^\]]*\]\(([^)]+)\)", body):
                     if "://" not in target and not target.startswith("#"):
