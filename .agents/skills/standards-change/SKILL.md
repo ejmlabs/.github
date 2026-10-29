@@ -12,7 +12,7 @@ gate at once, so keep changes small, tested and rolled out in steps.
 
 | Change | Edit | Then |
 | --- | --- | --- |
-| Gate logic, admission, review, release | `scripts/*.py`, `review/` | `python3 scripts/build_workflows.py`, review the generated `.github/workflows/` diff |
+| Gate logic, admission, release, site deploys | `scripts/*.py` | `python3 scripts/build_workflows.py`, review the generated `.github/workflows/` diff |
 | Repository standards (versions, community files, docs) | `scripts/standards.py` | tests in `tests/test_standards.py` |
 | Community files (`CONTRIBUTING.md` and friends) | `templates/community/` | `scripts/sync_community.py` in each consumer |
 | Strict lint layer | `templates/lint/` | `scripts/sync_lint.py` in each consumer |
@@ -30,7 +30,7 @@ Never hand-edit `.github/workflows/*.yml`; they are generated with the trusted s
   admitted PRs, pinned to a full SHA retained under `workflow-pins/FULL_SHA`. Templates under
   `templates/lint/` and `templates/agents/` are not embedded, so changing them moves no pin.
 - A change that a consumer's Repository standards check enforces needs the staged rollout in
-  `docs/operations.md` ("Adopting the documented reviewer gate"): pin first, then the caller
+  `docs/operations.md` ("Bootstrap and rollout"): pin first, then the caller
   form and synced files. Keep the window where other PRs fail short.
 - Widening permissions, secrets, triggers or the set of allowed actions needs a stated reason
   and the owner's review. Default tokens stay read-only. Actions stay pinned to full SHAs.

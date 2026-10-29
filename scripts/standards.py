@@ -611,21 +611,13 @@ def _reusable_workflow(text: str, name: str) -> None:
                 raise ValueError("Reusable workflow action must use an immutable SHA or the scoped CLI setup hook: " + name)
 
     visible = "\n".join(structural) + "\n"
-    if name == "governance.yml":
-        review = re.findall(r'(?ms)^  "ai":\n(.*?)(?=^  "[^\"]+":|\Z)', visible)
-        legacy = '    "environment": "legacy-review"'
-        # The review job is accepted for one generation while it is being removed.
-        if review and (len(review) != 1 or environments != [legacy] or legacy not in review[0].splitlines()):
-            raise ValueError("Only the review job must declare the legacy-review environment: " + name)
-        if not review and environments:
-            raise ValueError("Only the review job must declare the legacy-review environment: " + name)
-    elif name == "deploy-site.yml":
+    if name == "deploy-site.yml":
         deploys = {job: re.findall(r'(?ms)^  "' + job + r'":\n(.*?)(?=^  "[^\"]+":|\Z)', visible) for job in ("staging", "production")}
         expected = ['    "environment": "staging"', '    "environment": "production"']
         if environments != expected or any(len(found) != 1 or line not in found[0].splitlines() for (_, found), line in zip(deploys.items(), expected, strict=True)):
             raise ValueError("Only the staging and production deploy jobs may declare their environments: " + name)
     elif environments:
-        raise ValueError("Only the governance review job may declare an environment: " + name)
+        raise ValueError("Reusable workflows must not declare an environment: " + name)
 
     if local_uses:
         # Comments and literal block contents are data. Bind the exception to

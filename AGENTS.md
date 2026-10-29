@@ -1,7 +1,7 @@
 # ejmlabs/.github
 
-Shared standards for every ejmlabs repository: the human-gated PR pipeline, AI review, release
-workflows, repository standards checks, and the templates that consumers sync (community files,
+Shared standards for every ejmlabs repository: the human-gated PR pipeline, release workflows,
+site deploys, repository standards checks, and the templates that consumers sync (community files,
 the strict lint layer, agent skills and house rules). Consumers pin reviewed full commit SHAs.
 
 <!-- ejmlabs:house-rules:start -->
@@ -35,7 +35,7 @@ there. A rule below or a repository skill may add to them, never relax them.
 - This repository is the source of the shared skills in `templates/agents/skills/`. The copies
   under `.agents/skills/ejmlabs-*` are synced from there like in any consumer; edit the
   template, then run `python3 scripts/sync_agents.py . --check`.
-- Never hand-edit generated workflows in `.github/workflows/`. Edit `scripts/` or `review/` and
+- Never hand-edit generated workflows in `.github/workflows/`. Edit `scripts/` and
   regenerate.
 - Everything here runs with trusted credentials in other repositories. Treat PR text, comments,
   labels and consumer files as untrusted input in every script.
@@ -47,7 +47,6 @@ there. A rule below or a repository skill may add to them, never relax them.
 | Path | Holds |
 | --- | --- |
 | `scripts/` | Governance, standards checks, workflow builder, release, sync tools |
-| `review/` | Reviewer requirements, hash locked |
 | `templates/community/` | `CONTRIBUTING.md` and the other synced community files |
 | `templates/lint/` | Strict lint layer for ESLint, ruff, ShellCheck and Cargo |
 | `templates/agents/` | Shared `ejmlabs-*` skills and the house rules block |
