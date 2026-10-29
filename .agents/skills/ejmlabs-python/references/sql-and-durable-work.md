@@ -7,7 +7,8 @@ rules hold for any SQL database.
 
 ```python
 await cursor.execute(
-    "SELECT id FROM items WHERE owner = %s AND id = ANY(%s)", (owner, ids)
+    "SELECT id FROM items WHERE owner = %s AND id = ANY(%s)",
+    (owner, ids),
 )
 ```
 
