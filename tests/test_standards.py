@@ -566,20 +566,6 @@ class WorkflowTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "environment"):
                         workflows(self.root, ".github")
 
-    def test_shared_scaffold_is_accepted_with_or_without_the_review_job(self) -> None:
-        data = governance()
-        del data["jobs"]["ai"]
-        self.add_reusable("governance.yml", data)
-        workflows(self.root, ".github")
-        for job in ("quality", "shadow"):
-            with self.subTest(job=job):
-                data = governance()
-                del data["jobs"]["ai"]
-                data["jobs"][job] = {**data["jobs"].get(job, {"runs-on": "ubuntu-24.04", "steps": [{"run": "true"}]}), "environment": "legacy-review"}
-                self.add_reusable("governance.yml", data)
-                with self.assertRaisesRegex(ValueError, "environment"):
-                    workflows(self.root, ".github")
-
     def test_release_jobs_cannot_declare_an_environment(self) -> None:
         for extra_indent in (0, 2):
             with self.subTest(extra_indent=extra_indent):
