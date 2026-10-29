@@ -189,6 +189,32 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertEqual(warm["jobs"]["quality"]["strategy"]["matrix"]["os"].replace("github.event.repository.name", "needs.admission.outputs.profile"),
                          self.governance["jobs"]["quality"]["strategy"]["matrix"]["os"])
 
+    def test_site_deploy_builds_without_credentials_and_holds_the_token_only_in_trusted_steps(self) -> None:
+        document = generated_yaml(workflows.yaml(workflows.deploy_workflow()))
+        jobs = document["jobs"]
+        self.assertEqual(document["permissions"], {})
+        build = jobs["build"]
+        self.assertEqual(build["permissions"], {"contents": "read"})
+        self.assertNotIn("environment", build)
+        self.assertNotIn("secrets.", json.dumps(build))
+        self.assertEqual((jobs["staging"]["needs"], jobs["production"]["needs"]), ("build", "staging"))
+        self.assertEqual((jobs["staging"]["environment"], jobs["production"]["environment"]), ("staging", "production"))
+        for name in ("staging", "production"):
+            with self.subTest(job=name):
+                steps = jobs[name]["steps"]
+                # The deploy job checks out and runs no product code: only the built files, the pinned deployer and trusted scripts.
+                self.assertEqual([step["uses"].split("@")[0] for step in steps if "uses" in step], ["actions/download-artifact", "actions/setup-node"])
+                self.assertTrue(all("secrets." not in json.dumps(step) for step in steps[:-1]))
+                self.assertEqual(steps[-1]["env"]["CLOUDFLARE_API_TOKEN"], "${{ secrets.CLOUDFLARE_API_TOKEN }}")
+                self.assertEqual(embedded_source(steps[-1]["run"]), workflows.source("deploy.py"))
+                install = steps[-2]["run"]
+                self.assertIn("npm ci --ignore-scripts", install)
+                lock = (workflows.ROOT / "deploy/package-lock.json").read_text()
+                self.assertIn(repr(lock), embedded_source(install) or "")
+        self.assertEqual(jobs["production"]["permissions"], {"actions": "read"})
+        self.assertTrue(jobs["production"]["concurrency"]["cancel-in-progress"])
+        self.assertFalse(jobs["staging"]["concurrency"]["cancel-in-progress"])
+
     def test_harness_dbus_setup_is_linux_only_and_before_the_required_gate(self) -> None:
         installers = [(name, index, step) for name, job in self.governance["jobs"].items()
                       for index, step in enumerate(job["steps"]) if "libdbus-1-dev" in step.get("run", "")]

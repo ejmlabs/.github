@@ -172,6 +172,31 @@ class WorkflowTests(unittest.TestCase):
                 (self.directory / "cache.yml").write_text(canonical)
                 workflows(self.root, repository)
 
+    def test_site_deploy_caller_is_exact_and_only_for_sites(self) -> None:
+        canonical = standards.SITE_DEPLOY_CALLER.replace("STANDARDS_REVISION", self.revision)
+        for repository in standards.SITE_DEPLOY:
+            with self.subTest(repository=repository):
+                (self.directory / "deploy.yml").write_text(canonical)
+                workflows(self.root, repository)
+        for changed in (canonical.replace("contents: read", "contents: write"), canonical + "    secrets: inherit\n",
+                        canonical.replace(self.revision, self.other_revision)):
+            with self.subTest(content=changed), self.assertRaisesRegex(ValueError, "differs from the canonical consumer: deploy.yml"):
+                (self.directory / "deploy.yml").write_text(changed)
+                workflows(self.root, "ejmlabs")
+        with self.assertRaisesRegex(ValueError, "Unexpected workflow"):
+            (self.directory / "deploy.yml").write_text(canonical)
+            workflows(self.root, ".github")
+
+    def test_deploy_environments_belong_only_to_the_deploy_jobs(self) -> None:
+        text = (Path(__file__).resolve().parents[1] / ".github/workflows/deploy-site.yml").read_text()
+        standards._reusable_workflow(text, "deploy-site.yml")
+        build = '  "build":\n    "if":'
+        for changed in (text.replace(build, '  "build":\n    "environment": "production"\n    "if":'),
+                        text.replace('"environment": "production"', '"environment": "staging"'),
+                        text.replace('    "environment": "production"\n', "")):
+            with self.subTest(changed=changed[:0]), self.assertRaisesRegex(ValueError, "staging and production deploy jobs"):
+                standards._reusable_workflow(changed, "deploy-site.yml")
+
     def test_reviewed_ui_publish_workflow_hash_is_recorded(self) -> None:
         self.assertRegex(standards.UI_PUBLISH_SHA256, r"^[0-9a-f]{64}$")
 

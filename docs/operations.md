@@ -452,6 +452,42 @@ Consumers without a manifest keep their existing dependency setup. UI
 governance, public source approval, package publication and site deployment
 remain separate tasks; this shared implementation enables none by itself.
 
+## Site deploys
+
+Site repositories (`ejmlabs`, `ejm-cli`, `ejm-harness`, `ejm-ide`, `ejm-ui`)
+adopt continuous deploys by adding the canonical `deploy.yml` caller. Each push
+to main runs the shared `deploy-site.yml`:
+
+1. `build` checks out that main commit and main's pinned `ejm-ui`, runs the
+   site's build commands from `scripts/deploy.py` with `contents: read` and no
+   secrets, and uploads the deployable files as one artifact.
+2. `staging` deploys those files with `wrangler deploy --env staging`.
+3. `production` waits on the `production` environment's required reviewer,
+   then deploys the same files with the top-level config.
+
+The deploy jobs check out and run no product code. They install Wrangler from
+the lockfile in `deploy/`, embedded in the workflow, with install scripts
+disabled. `scripts/deploy.py` refuses any config that declares a Wrangler
+`build` command. It refuses a staging deploy unless `env.staging` names its
+own Worker and its own routes, because `--env staging` otherwise inherits the
+production custom domain. Before a production deploy it reads the environment
+and fails unless a human reviewer is required. GitHub creates a missing
+environment with no rules, so create both environments before adopting the
+caller:
+
+- `staging`: deployments from protected branches only, no reviewer.
+- `production`: deployments from protected branches only, at least one
+  required reviewer.
+- A `CLOUDFLARE_API_TOKEN` environment secret in each, scoped to the account's
+  Workers scripts, routes and custom domains on `ejmlabs.com`, plus R2 read
+  for sites that bind a bucket.
+
+A newer main commit replaces a production deploy still waiting for approval.
+Use fresh staging hostnames: a custom domain whose DNS record already exists
+makes Wrangler prompt, and CI cannot answer. Roll back by redeploying an
+earlier Worker version in Cloudflare or by approving an earlier run's
+production job while it is still available.
+
 ## Draft source releases
 
 The shared workflow creates source drafts from an exact checked protected

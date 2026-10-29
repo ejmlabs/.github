@@ -57,9 +57,24 @@ SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-
 MODEL_KEYS = ("XAI_API_KEY",)
 # Repositories that may ship native builds. One adopts the native release by adding build.yml.
 NATIVE_RELEASE = ("ejm-cli", "ejm-harness")
-SHARED_WORKFLOWS = ("governance.yml", "draft-release.yml", "verify-build.yml", "attach-assets.yml", "warm-cache.yml")
+SHARED_WORKFLOWS = ("governance.yml", "draft-release.yml", "verify-build.yml", "attach-assets.yml", "warm-cache.yml", "deploy-site.yml")
 # Repositories whose Rust gate builds may restore main's trusted cache. One adopts it by adding cache.yml.
 WARM_CACHE = ("ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui")
+# Repositories that serve a Cloudflare site. One adopts staging and approved production deploys by adding deploy.yml.
+SITE_DEPLOY = ("ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui", "ejmlabs")
+# Each push to main deploys to staging; production waits for a required reviewer on the production environment.
+SITE_DEPLOY_CALLER = """name: Deploy site
+on:
+  push:
+    branches: [main]
+permissions: {}
+jobs:
+  deploy:
+    permissions:
+      contents: read
+      actions: read
+    uses: ejmlabs/.github/.github/workflows/deploy-site.yml@STANDARDS_REVISION
+"""
 # The only writer of gate caches: a push to main builds the reviewed commit and saves it.
 WARM_CACHE_CALLER = """name: Warm trusted gate build caches
 on:
@@ -480,6 +495,13 @@ def _reusable_workflow(text: str, name: str, *, model_key: str = "XAI_API_KEY") 
 "permissions": {}
 """
         roots = ['"concurrency":', '"jobs":']
+    elif name == "deploy-site.yml":
+        header += """"name": "Deploy site"
+"on":
+  "workflow_call": {}
+"permissions": {}
+"""
+        roots = ['"jobs":']
     elif name == "warm-cache.yml":
         header += """"name": "Warm trusted gate build caches"
 "on":
@@ -576,6 +598,11 @@ def _reusable_workflow(text: str, name: str, *, model_key: str = "XAI_API_KEY") 
         legacy = '    "environment": "legacy-review"'
         if len(review) != 1 or environments != [legacy] or legacy not in review[0].splitlines():
             raise ValueError("Only the review job must declare the legacy-review environment: " + name)
+    elif name == "deploy-site.yml":
+        deploys = {job: re.findall(r'(?ms)^  "' + job + r'":\n(.*?)(?=^  "[^\"]+":|\Z)', visible) for job in ("staging", "production")}
+        expected = ['    "environment": "staging"', '    "environment": "production"']
+        if environments != expected or any(len(found) != 1 or line not in found[0].splitlines() for (_, found), line in zip(deploys.items(), expected, strict=True)):
+            raise ValueError("Only the staging and production deploy jobs may declare their environments: " + name)
     elif environments:
         raise ValueError("Only the governance review job may declare an environment: " + name)
 
@@ -609,6 +636,9 @@ def workflows(root: Path, profile: str) -> None:
     warm = directory / "cache.yml"
     if profile in WARM_CACHE and warm.is_file() and not warm.is_symlink():
         allowed.add("cache.yml")
+    deploy = directory / "deploy.yml"
+    if profile in SITE_DEPLOY and deploy.is_file() and not deploy.is_symlink():
+        allowed.add("deploy.yml")
     if profile == ".github":
         allowed.update(SHARED_WORKFLOWS)
     if any(file.name not in allowed for file in directory.iterdir()):
@@ -625,6 +655,8 @@ def workflows(root: Path, profile: str) -> None:
     consumers = consumer_workflows(pin[1], model_key=model_key[1], native=native)
     if "cache.yml" in allowed:
         consumers["cache.yml"] = WARM_CACHE_CALLER.replace("STANDARDS_REVISION", pin[1])
+    if "deploy.yml" in allowed:
+        consumers["deploy.yml"] = SITE_DEPLOY_CALLER.replace("STANDARDS_REVISION", pin[1])
     if native:
         native_build(read(root, ".github/workflows/build.yml"))
     if profile == ".github":

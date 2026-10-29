@@ -12,6 +12,8 @@ from governance import SECURITY_LABEL
 from standards import (
     NATIVE_RELEASE,
     SHARED_WORKFLOWS,
+    SITE_DEPLOY,
+    SITE_DEPLOY_CALLER,
     WARM_CACHE,
     WARM_CACHE_CALLER,
     native_build,
@@ -67,6 +69,9 @@ def installed_consumers(name: str, revision: str | None) -> None:
     if name in WARM_CACHE and any(entry["name"] == "cache.yml" for entry in entries):
         allowed.add("cache.yml")
         expected["cache.yml"] = WARM_CACHE_CALLER.replace("STANDARDS_REVISION", revision)
+    if name in SITE_DEPLOY and any(entry["name"] == "deploy.yml" for entry in entries):
+        allowed.add("deploy.yml")
+        expected["deploy.yml"] = SITE_DEPLOY_CALLER.replace("STANDARDS_REVISION", revision)
     if {entry["name"] for entry in entries} != allowed:
         raise ValueError(name + ": unexpected or missing workflows on main")
     if native:

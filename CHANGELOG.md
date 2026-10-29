@@ -6,6 +6,7 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Added
 
+- Continuous site deploys: the shared `deploy-site.yml`, called by an optional canonical `deploy.yml`, builds each push to main without credentials, deploys it to staging, and deploys the same files to production after the `production` environment's required reviewer approves. Deploy jobs run only a pinned Wrangler and `scripts/deploy.py`.
 - A trusted build cache for the Rust gates: the shared `warm-cache.yml`, called by an optional canonical `cache.yml` on pushes to main, builds reviewed main in the gate's layout and is the only cache writer. Quality and the registry gate restore only the exact entry for the admitted base and discard anything else.
 - `scripts/tools.py`, which installs prebuilt `cargo-deny` and `cargo-machete` after checking each archive against a reviewed SHA-256.
 - Shared strict lint layer in `templates/lint/` (ESLint, ruff, ShellCheck and Rust lint tables) and `scripts/sync_lint.py`, which copies it into a repository and reports drift. No shared workflow changes.

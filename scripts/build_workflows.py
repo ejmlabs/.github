@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from deploy import SITES
+
 ROOT = Path(__file__).resolve().parent.parent
 CHECKOUT = "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
 NODE = "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020"
@@ -335,16 +337,56 @@ def attach_workflow() -> dict[str, Any]:
                                           {"uses": ATTEST, "if": "${{ inputs.attest }}", "with": {"subject-path": "built/*", "show-summary": False}}]}}}
 
 
+DEPENDENCY = {"persist-credentials": False, "fetch-depth": 1, "submodules": False}
+
+
+def deploy_workflow() -> dict[str, Any]:
+    """Build a site once without credentials, deploy it to staging, then deploy the same files to production after a human approves."""
+    profile = "github.event.repository.name"
+    push = "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}"
+    build = 'cd product\ncase "$PROFILE" in\n' + "".join(
+        "  " + name + ")\n" + "".join("    " + line + "\n" for line in commands.splitlines()) + '    tar -cf "$RUNNER_TEMP/site.tar" ' + " ".join(files) + "\n    ;;\n"
+        for name, (commands, _, files) in SITES.items()) + "  *) exit 1 ;;\nesac\n"
+    manifest, lock = ((ROOT / "deploy" / name).read_text() for name in ("package.json", "package-lock.json"))
+    install = 'mkdir -p "$RUNNER_TEMP/deployer"\ncd "$RUNNER_TEMP/deployer"\n' + python(
+        "from pathlib import Path\nPath('package.json').write_text(" + repr(manifest) + ")\nPath('package-lock.json').write_text(" + repr(lock) + ")\n"
+    ) + "npm ci --ignore-scripts --no-audit --no-fund\n"
+
+    def deploy(environment: str, needs: str, permissions: dict[str, str], env: dict[str, str]) -> dict[str, Any]:
+        return {"needs": needs, "if": push, "runs-on": "ubuntu-24.04", "timeout-minutes": 10, "environment": environment, "permissions": permissions,
+                # A newer main commit replaces a production deploy still waiting for approval; staging deploys run in order.
+                "concurrency": {"group": "deploy-" + environment + "-${{ github.repository }}", "cancel-in-progress": environment == "production"},
+                "env": {"PROFILE": "${{ " + profile + " }}"},
+                "steps": [{"uses": DOWNLOAD, "with": {"name": "site", "path": "artifact"}}, {"uses": NODE, "with": {"node-version": "24"}},
+                          run("Install the pinned deployer", install, env={"GH_TOKEN": "", "GITHUB_TOKEN": "", "NPM_CONFIG_USERCONFIG": "/dev/null"}),
+                          run("Deploy the built site to " + environment, python(source("deploy.py"), environment, "python3 -I"),
+                              env={"CLOUDFLARE_API_TOKEN": "${{ secrets.CLOUDFLARE_API_TOKEN }}", **env})]}
+
+    jobs = {
+        "build": {"if": push, "runs-on": "ubuntu-24.04", "timeout-minutes": 20, "permissions": {"contents": "read"}, "env": {"PROFILE": "${{ " + profile + " }}"},
+                  "steps": [checkout("product", "${{ github.sha }}"),
+                            run("Read main's reviewed dependency pins", python(source("prepare.py"), "warm-pins"), id="pins"),
+                            {"uses": CHECKOUT, "if": "${{ steps.pins.outputs.ui != '' }}",
+                             "with": {"repository": "ejmlabs/ejm-ui", "ref": "${{ steps.pins.outputs.ui }}", "path": "ejm-ui", **DEPENDENCY}},
+                            {"uses": NODE, "with": {"node-version": "24"}},
+                            run("Build the site without credentials", build),
+                            {"uses": UPLOAD, "with": {"name": "site", "path": "${{ runner.temp }}/site.tar", "retention-days": 7, "if-no-files-found": "error"}}]},
+        "staging": deploy("staging", "build", {}, {}),
+        # Reads the environment's rules so a missing or unprotected production environment fails instead of deploying.
+        "production": deploy("production", "staging", {"actions": "read"}, {"GH_TOKEN": "${{ github.token }}"}),
+    }
+    return {"name": "Deploy site", "on": {"workflow_call": {}}, "permissions": {}, "jobs": jobs}
+
+
 def warm_workflow() -> dict[str, Any]:
     """The only writer of gate build caches: it builds reviewed main, in the gate's layout, and saves what the gate may restore."""
     profile = "github.event.repository.name"
-    dependency = {"persist-credentials": False, "fetch-depth": 1, "submodules": False}
     sources = [checkout("product", "${{ github.sha }}"),
                run("Read main's reviewed dependency pins", python(source("prepare.py"), "warm-pins"), id="pins"),
                {"uses": CHECKOUT, "if": "${{ steps.pins.outputs.harness != '' }}",
-                "with": {"repository": "ejmlabs/ejm-harness", "ref": "${{ steps.pins.outputs.harness }}", "path": "ejm-harness", **dependency}},
+                "with": {"repository": "ejmlabs/ejm-harness", "ref": "${{ steps.pins.outputs.harness }}", "path": "ejm-harness", **DEPENDENCY}},
                {"uses": CHECKOUT, "if": "${{ steps.pins.outputs.ui != '' }}",
-                "with": {"repository": "ejmlabs/ejm-ui", "ref": "${{ steps.pins.outputs.ui }}", "path": "ejm-ui", **dependency}},
+                "with": {"repository": "ejmlabs/ejm-ui", "ref": "${{ steps.pins.outputs.ui }}", "path": "ejm-ui", **DEPENDENCY}},
                # The gate builds exported archives, so the warm build must not see Git metadata either.
                run("Match the gate's exported source layout", "rm -rf product/.git ejm-harness/.git ejm-ui/.git\n")]
 
@@ -365,7 +407,7 @@ def warm_workflow() -> dict[str, Any]:
 
 def main() -> None:
     for name, data in (("governance.yml", governance()), ("draft-release.yml", release_workflow()), ("verify-build.yml", verify_build_workflow()), ("attach-assets.yml", attach_workflow()),
-                       ("warm-cache.yml", warm_workflow())):
+                       ("warm-cache.yml", warm_workflow()), ("deploy-site.yml", deploy_workflow())):
         path = ROOT / ".github/workflows" / name
         expected = "# Generated by scripts/build_workflows.py. Edit scripts and regenerate.\n" + yaml(data) + "\n"
         if "--check" in sys.argv:
