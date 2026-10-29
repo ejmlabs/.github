@@ -485,6 +485,8 @@ class WorkflowSecurityTests(unittest.TestCase):
             files = [os.fsdecode(raw) for raw in tracked.split(b"\0") if raw]
         retired = ("codex" + "-action", "OPENAI" + "_API_KEY", "OPENAI" + "__")
         for name in files:
+            if (workflows.ROOT / name).is_symlink():
+                continue  # a tracked symlink's target is scanned as its own tracked file
             content = (workflows.ROOT / name).read_bytes()
             for value in retired:
                 with self.subTest(file=name, value=value):

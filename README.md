@@ -67,6 +67,7 @@ with actionlint. The policy checks use the Python standard library.
 ## Documentation
 
 - [Repository operations](docs/operations.md)
+- [Agent instructions](AGENTS.md)
 - [Contribution rules](CONTRIBUTING.md)
 - [Release process](RELEASING.md)
 - [Security policy](SECURITY.md)
