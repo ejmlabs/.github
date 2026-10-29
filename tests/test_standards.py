@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import standards
 from build_workflows import (
     attach_workflow,
+    deploy_workflow,
     governance,
     release_workflow,
     verify_build_workflow,
