@@ -1,5 +1,7 @@
 import ast
 import base64
+import bz2
+import hashlib
 import json
 import os
 import re
@@ -16,9 +18,16 @@ import build_workflows as workflows
 from standards import consumer_workflows
 
 
-def embedded_source(script: str) -> str | None:
+def embedded_source(script: str, env: dict[str, Any] | None = None) -> str | None:
     match = re.search(r"base64\.b64decode\('([A-Za-z0-9+/=]+)'\)", script)
-    return base64.b64decode(match[1], validate=True).decode() if match else None
+    if match:
+        encoded = match[1]
+    elif "base64.b64decode(_trusted_script, validate=True)" in script and env is not None:
+        keys = [key for key in env if key.startswith("EJM_TRUSTED_SCRIPT_")]
+        encoded = "".join(env[f"EJM_TRUSTED_SCRIPT_{index}"] for index in range(len(keys)))
+    else:
+        return None
+    return bz2.decompress(base64.b64decode(encoded, validate=True)).decode()
 
 
 def generated_yaml(text: str) -> Any:
@@ -71,6 +80,16 @@ class WorkflowSecurityTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.governance = generated_yaml((workflows.ROOT / ".github/workflows/governance.yml").read_text())
         cls.release = workflows.release_workflow()
+
+    def test_generated_workflows_fit_github_size_limits(self) -> None:
+        for name in ("governance.yml", "draft-release.yml", "verify-build.yml", "attach-assets.yml", "warm-cache.yml", "deploy-site.yml"):
+            path = workflows.ROOT / ".github/workflows" / name
+            document = generated_yaml(path.read_text())
+            with self.subTest(workflow=path.name):
+                self.assertLessEqual(path.stat().st_size, 450_000)
+                for job in document.get("jobs", {}).values():
+                    for step in job.get("steps", []):
+                        self.assertLessEqual(len(step.get("run", "")), 18_000)
 
     def test_own_callers_match_the_secrets_declared_at_their_pinned_revisions(self) -> None:
         repository = subprocess.run(["git", "rev-parse", "--git-dir"], cwd=workflows.ROOT, capture_output=True, check=False)
@@ -376,16 +395,15 @@ class WorkflowSecurityTests(unittest.TestCase):
                             continue
                         script = step["run"]
                         self.assertNotIn("${{", script, "Embedded source must not expose GitHub expressions")
-                        source = embedded_source(script)
+                        source = embedded_source(script, step.get("env"))
                         if source is not None:
                             self.assertIn(source, trusted_sources)
                             self.assertRegex(script.splitlines()[0], r"^python3 - (?:admit|verify|finish|select-harness|ui-pin)? <<\x27TRUSTED_PYTHON\x27$")
-                            encoded = base64.b64encode(source.encode()).decode()
-                            self.assertEqual(script.splitlines()[1:], [
-                                "import base64",
-                                f"exec(compile(base64.b64decode('{encoded}'), 'trusted-workflow.py', 'exec'))",
-                                "TRUSTED_PYTHON",
-                            ])
+                            entry = shlex.split(script.splitlines()[0])[2:-1]
+                            expected = workflows.run("trusted", workflows.python(source, " ".join(entry)))
+                            self.assertEqual(script, expected["run"])
+                            for key, value in expected.get("env", {}).items():
+                                self.assertEqual(step.get("env", {}).get(key), value)
                         else:
                             self.assertEqual(script.splitlines()[0], "python3 - <<'PY'")
                             self.assertEqual(script.splitlines()[-1], "PY")
@@ -587,7 +605,7 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertEqual(draft["steps"][0], workflows.checkout("product", "${{ inputs.commit }}"))
         library = "\n".join([workflows.source("governance.py", library=True), workflows.source("standards.py", library=True),
                               workflows.source("prepare.py", library=True), workflows.source("release.py")])
-        self.assertEqual(draft["steps"][1]["run"], workflows.python(library))
+        self.assertEqual(embedded_source(draft["steps"][1]["run"], draft["steps"][1].get("env")), library)
         self.assertNotIn("select-harness", draft["steps"][1]["run"].splitlines()[0])
 
     def test_embedded_expressions_survive_as_literal_python_data(self) -> None:
@@ -599,6 +617,88 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertEqual(embedded_source(script), source)
         result = subprocess.run(["bash", "-e", "-c", script], check=True, capture_output=True, text=True)
         self.assertEqual(result.stdout, literal + "\nfixture\n")
+
+    def test_large_trusted_payload_runs_and_rejects_tampering(self) -> None:
+        payload = "".join(hashlib.sha256(str(i).encode()).hexdigest() for i in range(782))[:50_000]
+        source = "payload = " + repr(payload) + "\nprint(len(payload))\n"
+        step = workflows.run("large", workflows.python(source))
+        chunks = step["env"]
+        self.assertGreaterEqual(len(chunks), 2)
+        env = {**os.environ, "EJM_TRUSTED_SCRIPT_0": "poisoned", **chunks}
+        result = subprocess.run(["bash", "-e", "-c", step["run"]], env=env, capture_output=True, text=True, check=True)
+        self.assertEqual(result.stdout, "50000\n")
+        env["EJM_TRUSTED_SCRIPT_0"] = "x" + chunks["EJM_TRUSTED_SCRIPT_0"][1:]
+        result = subprocess.run(["bash", "-e", "-c", step["run"]], env=env, capture_output=True, text=True, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("integrity mismatch", result.stderr)
+        del env["EJM_TRUSTED_SCRIPT_0"]
+        result = subprocess.run(["bash", "-e", "-c", step["run"]], env=env, capture_output=True, text=True, check=False)
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_real_chunked_workflow_commands_reconstruct_trusted_source(self) -> None:
+        documents = (workflows.governance(), workflows.release_workflow(), workflows.verify_build_workflow(),
+                     workflows.attach_workflow(), workflows.warm_workflow(), workflows.deploy_workflow())
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            python = root / "python3"
+            python.write_text(
+                f"#!{sys.executable}\n"
+                "import builtins, os, sys\n"
+                "from pathlib import Path\n"
+                "real = builtins.compile\n"
+                "def capture(source, filename, mode, *args, **kwargs):\n"
+                "    if filename == 'trusted-workflow.py':\n"
+                "        Path(os.environ['CAPTURE']).write_bytes(source)\n"
+                "        return real('', filename, mode)\n"
+                "    return real(source, filename, mode, *args, **kwargs)\n"
+                "builtins.compile = capture\n"
+                "exec(real(sys.stdin.read(), '<wrapper>', 'exec'))\n"
+            )
+            python.chmod(0o755)
+            checked = 0
+            for document in documents:
+                for job in document["jobs"].values():
+                    for step in job.get("steps", []):
+                        chunks = {key: value for key, value in step.get("env", {}).items()
+                                  if key.startswith("EJM_TRUSTED_SCRIPT_")}
+                        if not chunks:
+                            continue
+                        with self.subTest(step=step["name"]):
+                            captured = root / "source.py"
+                            captured.unlink(missing_ok=True)
+                            env = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                                   "CAPTURE": str(captured), "PROFILE": "example", **chunks}
+                            result = subprocess.run(["bash", "-e", "-c", step["run"]], cwd=root, env=env,
+                                                    capture_output=True, text=True, check=False)
+                            self.assertEqual(result.returncode, 0, result.stderr)
+                            self.assertEqual(captured.read_text(), embedded_source(step["run"], chunks))
+                            checked += 1
+            self.assertGreater(checked, 0)
+
+    def test_generator_rejects_oversize_before_any_write(self) -> None:
+        from unittest import mock
+
+        self.assertEqual(len(workflows.run("exact", "x" * workflows.MAX_RUN_CHARS)["run"]), workflows.MAX_RUN_CHARS)
+        with self.assertRaisesRegex(ValueError, "oversized run step"):
+            workflows.run("too long", "x" * (workflows.MAX_RUN_CHARS + 1))
+        with mock.patch.object(workflows, "MAX_WORKFLOW_BYTES", 1), mock.patch.object(Path, "write_bytes") as write:
+            with self.assertRaisesRegex(SystemExit, "exceeds .*byte budget"):
+                workflows.main()
+            write.assert_not_called()
+
+    def test_workflow_checkout_remains_lf_with_autocrlf(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(["git", "config", "core.autocrlf", "true"], cwd=root, check=True)
+            (root / ".gitattributes").write_bytes((workflows.ROOT / ".gitattributes").read_bytes())
+            path = root / ".github/workflows/generated.yml"
+            path.parent.mkdir(parents=True)
+            path.write_bytes(b"name: sample\non: push\n")
+            subprocess.run(["git", "add", ".gitattributes", ".github/workflows/generated.yml"], cwd=root, check=True, capture_output=True)
+            path.unlink()
+            subprocess.run(["git", "checkout", "--", ".github/workflows/generated.yml"], cwd=root, check=True)
+            self.assertEqual(path.read_bytes(), b"name: sample\non: push\n")
 
 
 if __name__ == "__main__":

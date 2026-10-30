@@ -24,6 +24,7 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Changed
 
+- Bound generated workflow and run-step sizes by compressing trusted scripts and splitting large payloads into digest-checked static environment values. Consumers adopt the new revision through the normal staged pin rollout.
 - Remove the AI review from the shared gate: its job, its **AI review** status, the security label and its maintainer override, the label-removal trigger handling and the review model key from generated callers. Four statuses are required: Human readiness, Maintainer approval, Quality and Repository standards, enforced for administrators too. The standards check accepts the previous and the new caller form, and a shared workflow with or without the review job, for one generation; the shared workflow still declares the optional model key secret for that generation. Re-enabling any model review needs the security review's sign-off first.
 - Faster shared gate: every Quality matrix entry starts at once (no `max-parallel`), Cargo uses every runner core (`CARGO_BUILD_JOBS=default`), and the audit tools are no longer compiled from source on every run.
 - `scripts/configure_repositories.py` enables auto-merge, so an approved PR merges itself when its required statuses pass.

@@ -1,0 +1,2 @@
+# Generated workflows use exact UTF-8 LF bytes on every platform.
+/.github/workflows/*.yml text eol=lf
