@@ -1,5 +1,17 @@
 # Repository operations
 
+## Generated workflow size
+
+Generate shared workflows with `python3 scripts/build_workflows.py` and check
+them with `python3 scripts/build_workflows.py --check`. The generator embeds
+compressed trusted source and splits large payloads into static step environment
+values, which are decoded before execution. It rejects a run
+step over 18,000 characters or a workflow over 450,000 bytes and writes LF
+line endings. These bounds leave headroom under GitHub's limits.
+
+Consumers continue to use their existing immutable workflow pins until the
+reviewed revision is merged and adopted through the normal staged pin rollout.
+
 ## Permissions and required settings
 
 Protect main with PRs, one native approval recorded from an explicit human
