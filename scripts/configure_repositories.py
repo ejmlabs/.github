@@ -5,6 +5,7 @@ import base64
 import json
 import re
 import subprocess
+import urllib.parse
 from typing import Any
 
 from standards import (
@@ -19,7 +20,11 @@ from standards import (
 
 NAMES = (".github", "ejmlabs", "ejm-cli", "ejm-harness", "ejm-ide")
 SUPPORTED_NAMES = (*NAMES, "ejm-ui")
-CONTEXTS = ("Human readiness", "Maintainer approval", "Quality", "Repository standards")
+CONTEXTS = ("Quality", "Repository standards")
+GATE_LABELS = (
+    {"name": "gate:approve", "color": "0E8A16", "description": "Maintainer self-approve for the current head"},
+    {"name": "gate:revoke", "color": "B60205", "description": "Cancel admission and dismiss bot approvals for the current head"},
+)
 
 
 def api(path: str, method: str = "GET", body: dict[str, Any] | None = None, *, optional: bool = False) -> Any:  # noqa: ANN401 - the decoded GitHub response has no fixed shape
@@ -127,6 +132,13 @@ def configure(name: str, protect: bool, hold: bool, revision: str | None = None)
                 "conditions": {"ref_name": {"include": ["refs/tags/v*"], "exclude": []}},
                 "rules": [{"type": "update"}, {"type": "deletion"}]}
         api(root + "/rulesets" + ("/" + str(existing["id"]) if existing else ""), "PUT" if existing else "POST", rule)
+    for label in GATE_LABELS:
+        encoded = urllib.parse.quote(label["name"])
+        existing_label = api(root + "/labels/" + encoded, optional=True)
+        if existing_label:
+            api(root + "/labels/" + encoded, "PATCH", {"new_name": label["name"], "color": label["color"], "description": label["description"]})
+        else:
+            api(root + "/labels", "POST", label, optional=True)
     result = {"repository": "ejmlabs/" + name,
               "workflow_update": workflow_update,
               "actions": api(root + "/actions/permissions"), "workflow": api(root + "/actions/permissions/workflow"),

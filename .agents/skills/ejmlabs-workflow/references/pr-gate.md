@@ -1,55 +1,57 @@
 # The PR gate
 
-Opening or updating a PR authorizes no CI or AI spending. Human decisions do.
+Opening or updating a PR authorizes no CI spending by itself. Draft versus Ready
+and maintainer permission do.
 
-## Commands
+## Admission
 
-All three are standalone PR comments by a current human maintainer (GitHub maintain or admin),
-naming the full 40-character head SHA. Agents never post them, and never write permission rules
-or scripts that post them for an agent.
+| Who | How paid checks start |
+| --- | --- |
+| Maintainer author, same-repo, non-draft | Auto-admitted on open, push and Ready |
+| Outsider or fork | Only when a current maintainer marks Ready |
+| Draft PR | Never admitted |
 
-| Comment             | Effect                                                                 |
-| ------------------- | ---------------------------------------------------------------------- |
-| `/ready FULL_SHA`   | Admits that commit. Quality, Repository standards and AI review start. |
-| `/approve FULL_SHA` | Records the maintainer's approval of that commit after review.         |
-| `/revoke FULL_SHA`  | Cancels the admitted run and blocks merge.                             |
+Agents may mark a PR Ready (`gh pr ready N`) only when the user explicitly asks.
+They must not do it unprompted.
 
-Hand the user the commands ready to paste, for example:
+## Labels
+
+Exact label name equality only. Agents add these only when the user explicitly
+asks.
+
+| Label | Effect |
+| --- | --- |
+| `gate:approve` | Records a bot APPROVE for the current head, then removes the label |
+| `gate:revoke` | Cancels admitted work and dismisses bot approvals for that head |
 
 ```sh
-gh pr comment 41 --repo ejmlabs/ejmlabs --body "/ready 0123...full sha"
-gh pr comment 41 --repo ejmlabs/ejmlabs --body "/approve 0123...full sha"
+gh pr edit 41 --repo ejmlabs/ejmlabs --add-label gate:approve
+gh pr edit 41 --repo ejmlabs/ejmlabs --add-label gate:revoke
 ```
+
+Slash-command comments such as `/ready` or `/approve` are not admission or
+approval signals.
 
 ## Rules
 
-- Draft PRs cannot be admitted. Mark the PR ready first (`gh pr ready N`).
-- A new commit needs new decisions. Push your final commit before asking for the comments, so
-  the user posts them once.
-- Decisions must stay unedited. Editing or deleting one revokes it.
-- Each command is consumed once. Actions reruns and replayed events are rejected. To retry a
-  failed run: revoke, investigate, fix, push, and ask for a fresh `/ready`.
-- Fork PRs are not admitted automatically.
-- When `main` moves and the PR is behind, update the branch (`gh pr update-branch N`). That
-  makes a new head commit, so it needs fresh comments.
-- With strict up-to-date checks, land one PR per repository at a time. Every merge puts the
-  others behind, and updating them all at once only queues duplicate runs.
+- Draft PRs spend nothing. Mark Ready when the work is ready for checks.
+- A new commit needs a new admission. Push the final commit before asking the
+  user to mark Ready or add `gate:approve`.
+- Actions reruns cannot replay admission. To retry: convert to draft and Ready
+  again, or push a new commit, or ask for `gate:revoke` then a fresh Ready.
+- When `main` moves and the PR is behind, update the branch
+  (`gh pr update-branch N`). That makes a new head commit.
+- With strict up-to-date checks, land one PR per repository at a time. Every
+  merge puts the others behind.
 
 ## Required statuses
 
-**Human readiness**, **Maintainer approval**, **Quality**, **Repository standards** and, where
-the repository's caller runs it, **AI review**. Read the PR's checks for the current set. Native
-GitHub review alone does not replace the comments.
+**Quality** and **Repository standards**, plus one approving GitHub review
+(`enforce_admins`). Read the PR's checks for the current set.
 
-- AI review runs at high reasoning effort. A missing key, an incomplete review, or the
-  `Possible security concern` label fails it. A maintainer may remove the label after reviewing
-  the concern; the removal is logged and re-evaluates the gate. Address other findings in a new
-  commit.
-- AI review does not see lockfiles, minified files, assets, binaries, or files clipped by its
-  token budget (listed in its coverage footer). Point the maintainer at those files before they
-  approve.
-- Repository standards checks community files and versions against the pinned shared standard.
-  Never edit synced files by hand; resync them from `ejmlabs/.github`.
+- Repository standards checks community files and versions against the pinned
+  shared standard. Never edit synced files by hand; resync them from
+  `ejmlabs/.github`.
 
 ## Limits
 
@@ -58,7 +60,6 @@ GitHub review alone does not replace the comments.
 | Changed files           | 200        |
 | Added and deleted lines | 12,000     |
 | Quality job             | 45 minutes |
-| AI review job           | 12 minutes |
 
 Split larger work into a sequence of PRs that each pass alone.
 
@@ -69,5 +70,5 @@ gh pr checks N --repo ejmlabs/REPO
 gh pr merge N --repo ejmlabs/REPO --squash --match-head-commit FULL_SHA
 ```
 
-Merge only when every check is green. Never merge as an administrator around a failing or
-missing check.
+Merge only when every check is green. Never merge as an administrator around a
+failing or missing check.

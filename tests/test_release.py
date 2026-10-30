@@ -28,7 +28,7 @@ class API:
     def __init__(self) -> None:
         self.main, self.tree = SHA, "same-tree"
         self.existing: str | None = None
-        self.role, self.body, self.checks = "maintain", True, True
+        self.role, self.checks, self.approved = "maintain", True, True
         self.calls: list[str] = []
 
     def permission(self, _login: str) -> str:
@@ -48,18 +48,15 @@ class API:
             return {"tree": {"sha": self.tree}}
         if path == f"/git/commits/{HEAD}":
             return {"tree": {"sha": "same-tree"}}
-        if path.startswith("/issues/comments/"):
-            kind = "ready" if path.endswith("1") else "approve"
-            return {"issue_url": "https://api.github.com/repos/ejmlabs/ejmlabs/issues/4", "body": "/" + kind + " " + (HEAD if self.body else SHA), "created_at": "2026-10-19", "updated_at": "2026-10-19", "user": {"login": "maintainer", "type": "User"}}
         raise AssertionError(path)
 
-    def pages(self, _path: str) -> list[dict[str, Any]]:
+    def pages(self, path: str) -> list[dict[str, Any]]:
+        if "reviews" in path:
+            return [{"state": "APPROVED", "commit_id": HEAD, "user": {"login": "maintainer"}}] if self.approved else []
         return [{"number": 4, "merged_at": "2026-10-19", "merge_commit_sha": SHA, "base": {"ref": "main"}, "head": {"sha": HEAD}}]
 
     def statuses(self, _sha: str) -> dict[str, dict[str, str]]:
-        statuses = {key: {"state": "success", "description": "passed"} for key in namespace["CONTEXTS"]}
-        statuses["Human readiness"]["description"] = "[ready:1]"
-        statuses["Maintainer approval"]["description"] = "[approve:2]"
+        statuses = {key: {"state": "success", "description": "passed"} for key in ("Quality", "Repository standards")}
         if not self.checks:
             statuses["Quality"]["state"] = "failure"
         return statuses
@@ -95,8 +92,8 @@ class ReleaseTests(unittest.TestCase):
                 release(api, self.root, SHA, "0.1.0")
             self.assertFalse(Path("release-assets").exists())
 
-    def test_changed_main_failed_checks_edited_approval_and_different_tree_block(self) -> None:
-        for field, value in (("main", HEAD), ("checks", False), ("body", False), ("tree", "different"), ("role", "write")):
+    def test_changed_main_failed_checks_missing_approval_and_different_tree_block(self) -> None:
+        for field, value in (("main", HEAD), ("checks", False), ("approved", False), ("tree", "different"), ("role", "write")):
             api = API()
             setattr(api, field, value)
             with self.assertRaises(ValueError):

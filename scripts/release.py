@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    from governance import CONTEXTS, GitHub, command, human, outputs
+    from governance import REQUIRED_CONTEXTS, GitHub, human, outputs
     from prepare import source_archive
     from standards import DOCS, UI_FONT_NOTICES, UI_PACKAGES, read, semver, versions
 
@@ -80,19 +80,15 @@ def release(api: "GitHub", root: Path, sha: str, requested: str) -> None:
     pr = eligible[0]
     head = pr["head"]["sha"]
     statuses = api.statuses(head)
-    if any(statuses.get(name, {}).get("state") != "success" for name in CONTEXTS):
+    if any(statuses.get(name, {}).get("state") != "success" for name in REQUIRED_CONTEXTS):
         raise ValueError("Merged PR lacks a successful required check")
-    for kind, context in (("ready", "Human readiness"), ("approve", "Maintainer approval")):
-        match = re.search(r"\[" + kind + r":(\d+)\]", statuses[context]["description"])
-        if not match:
-            raise ValueError("Missing human decision evidence")
-        comment = api.request(f"/issues/comments/{match[1]}")
-        if (comment["issue_url"] != f"https://api.github.com/repos/{api.repo}/issues/{pr['number']}"
-                or command(comment["body"]) != (kind, head)
-                or comment["created_at"] != comment["updated_at"]):
-            raise ValueError("Human decision was edited or belongs to another PR")
-        if not human(comment["user"], api.permission(comment["user"]["login"])):
-            raise ValueError("Approver is no longer a human maintainer")
+    reviews = api.pages(f"/pulls/{pr['number']}/reviews")
+    approved = [
+        review for review in reviews
+        if review.get("state") == "APPROVED" and review.get("commit_id") == head
+    ]
+    if not approved:
+        raise ValueError("Merged PR lacks an approving review on the checked head")
     target_tree = api.request(f"/git/commits/{sha}")["tree"]["sha"]
     head_tree = api.request(f"/git/commits/{head}")["tree"]["sha"]
     if target_tree != head_tree:

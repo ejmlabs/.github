@@ -114,7 +114,10 @@ class WorkflowSecurityTests(unittest.TestCase):
                         self.assertTrue(declared)
                         self.assertTrue(all(secret.get("required") is False for secret in declared.values()))
                     else:
-                        self.assertEqual(set(declared), set(forwarded))
+                        # Callers may omit unused optional secrets declared at an older pin
+                        # (for example the retired review model key during the Ready-for-review rollout).
+                        self.assertTrue(set(forwarded) <= set(declared))
+                        self.assertTrue(all(key in forwarded for key, meta in declared.items() if meta.get("required")))
 
     def test_every_source_consumer_uses_the_preparation_artifact_id(self) -> None:
         jobs = self.governance["jobs"]
@@ -432,19 +435,22 @@ class WorkflowSecurityTests(unittest.TestCase):
                     self.assertNotIn(term, lowered)
                 self.assertNotRegex(lowered, r"\b(?:sol|python|pip)\b")
 
-    def test_only_a_human_command_creates_an_approval_and_four_statuses_are_required(self) -> None:
+    def test_label_approve_records_bot_approval_and_two_statuses_are_required(self) -> None:
         tree = ast.parse(workflows.source("governance.py"))
         approvals = [node for node in ast.walk(tree) if isinstance(node, ast.Dict) and any(
             isinstance(key, ast.Constant) and key.value == "event" and isinstance(value, ast.Constant) and value.value == "APPROVE"
             for key, value in zip(node.keys, node.values, strict=True))]
         self.assertEqual(len(approvals), 1)
-        admit = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "admit")
-        human_approval = next(node for node in ast.walk(admit) if isinstance(node, ast.If) and ast.unparse(node.test) == "action == 'approve'")
-        self.assertIn(approvals[0], list(ast.walk(human_approval)))
-        for name in ("governance.py", "configure_repositories.py"):
-            contexts = next(node for node in ast.parse(workflows.source(name)).body if isinstance(node, ast.Assign) and any(
-                isinstance(target, ast.Name) and target.id == "CONTEXTS" for target in node.targets))
-            self.assertEqual(ast.literal_eval(contexts.value), ("Human readiness", "Maintainer approval", "Quality", "Repository standards"))
+        source = workflows.source("governance.py")
+        self.assertIn('APPROVE_LABEL = "gate:approve"', source)
+        self.assertIn('REVOKE_LABEL = "gate:revoke"', source)
+        self.assertNotIn("command(", source)
+        contexts = next(node for node in ast.parse(workflows.source("configure_repositories.py")).body if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "CONTEXTS" for target in node.targets))
+        self.assertEqual(ast.literal_eval(contexts.value), ("Quality", "Repository standards"))
+        required = next(node for node in tree.body if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "REQUIRED_CONTEXTS" for target in node.targets))
+        self.assertEqual(ast.literal_eval(required.value), ("Quality", "Repository standards"))
 
     def test_ui_source_is_a_fixed_owner_checkout_before_the_credential_free_handoff(self) -> None:
         steps = self.governance["jobs"]["prepare"]["steps"]
@@ -458,7 +464,7 @@ class WorkflowSecurityTests(unittest.TestCase):
         archive = next(step for step in steps if step.get("name") == "Archive admitted source")
         self.assertLess(steps.index(owner), steps.index(archive))
 
-    def test_generated_workflow_admits_only_issue_comments(self) -> None:
+    def test_generated_workflow_admits_pull_request_lifecycle_and_gate_labels(self) -> None:
         self.assertEqual(self.governance, workflows.governance())
         self.assertEqual(set(self.governance["on"]), {"workflow_call"})
         self.assertNotIn("codex" + "-action", json.dumps(self.governance))
@@ -466,14 +472,20 @@ class WorkflowSecurityTests(unittest.TestCase):
         found = re.search(r"(?ms)^on:\n(.*?)(?=^\S)", caller)
         assert found is not None
         triggers = found[1]
-        self.assertEqual(re.findall(r"(?m)^  (\w+):", triggers), ["issue_comment"])
-        self.assertNotRegex(caller, r"(?m)^\s+pull_request:")
+        self.assertEqual(re.findall(r"(?m)^  (\w+):", triggers), ["pull_request"])
+        self.assertIn("types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, labeled]", caller)
+        self.assertNotIn("issue_comment", caller)
         self.assertNotIn("XAI_API_KEY", caller)
-        # The previous form stays accepted for one generation and runs no job on a label event.
+        # The previous comment-only form stays accepted for one generation.
         previous = consumer_workflows("a" * 40, current=True)["pr.yml"]
-        self.assertIn("  pull_request_target:\n    types: [unlabeled]\n", previous)
+        self.assertIn("  issue_comment:\n    types: [created, edited, deleted]\n", previous)
+        self.assertNotIn("pull_request:", previous)
         admission = self.governance["jobs"]["admission"]["if"]
-        self.assertIn("github.event_name == 'issue_comment'", admission)
+        self.assertIn("github.event_name == 'pull_request'", admission)
+        self.assertIn("gate:approve", admission)
+        self.assertIn("gate:revoke", admission)
+        self.assertNotIn("issue_comment", admission)
+        self.assertNotIn("startsWith(github.event.comment.body", admission)
 
     def test_tracked_sources_exclude_retired_review_configuration(self) -> None:
         repository = subprocess.run(["git", "rev-parse", "--git-dir"], cwd=workflows.ROOT, capture_output=True, check=False)
@@ -513,8 +525,9 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertNotRegex(text, r"secrets\.XAI_API_KEY")
         self.assertNotIn("OPENAI" + "_API_KEY", text)
         self.assertEqual(set(self.governance["jobs"]), {"admission", "prepare", "quality", "registry", "standards", "finish"})
-        # The key stays declared, optional and unused, so callers in the previous form can still pass it.
+        # Optional unused key kept for one generation so older pins' scaffold checks pass.
         self.assertEqual(self.governance["on"]["workflow_call"]["secrets"]["XAI_API_KEY"], {"required": False})
+        self.assertEqual(self.governance["on"]["workflow_call"]["secrets"]["EJM_HARNESS_TOKEN"], {"required": False})
         for job in self.governance["jobs"].values():
             self.assertNotIn("pull_request_target", job.get("if", ""))
 

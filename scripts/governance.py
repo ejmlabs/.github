@@ -1,24 +1,20 @@
 #!/usr/bin/env python3
-"""Trusted, commit-bound admission and approval for ejmlabs repositories."""
+"""Trusted admission and approval for ejmlabs repositories."""
 import json
 import os
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any, cast
 
 REPOS = {"ejmlabs/" + name for name in (".github", "ejmlabs", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui")}
-CONTEXTS = ("Human readiness", "Maintainer approval", "Quality", "Repository standards")
-COMMAND = re.compile(r"^/(ready|approve|revoke) ([0-9a-f]{40})$")
-
-
-def command(text: str) -> tuple[str, ...]:
-    match = COMMAND.fullmatch(text.strip())
-    if not match:
-        raise ValueError("Use /ready, /approve, or /revoke followed by the full 40-character head SHA")
-    return match.groups()
+REQUIRED_CONTEXTS = ("Quality", "Repository standards")
+APPROVE_LABEL = "gate:approve"
+REVOKE_LABEL = "gate:revoke"
+GATE_LABELS = (APPROVE_LABEL, REVOKE_LABEL)
 
 
 def human(user: dict[str, Any], permission: str) -> bool:
@@ -26,7 +22,8 @@ def human(user: dict[str, Any], permission: str) -> bool:
 
 
 def same_repository(pr: dict[str, Any]) -> bool:
-    return bool((pr["head"].get("repo") or {}).get("full_name") == pr["base"]["repo"]["full_name"])
+    head_repo = pr["head"].get("repo") or {}
+    return bool(head_repo.get("full_name") == pr["base"]["repo"]["full_name"])
 
 
 def current_head(pr: dict[str, Any], sha: str) -> bool:
@@ -90,31 +87,16 @@ def outputs(**items: str | int) -> None:
 
 def first_attempt() -> None:
     if os.environ.get("GITHUB_RUN_ATTEMPT", "1") != "1":
-        raise ValueError("Workflow reruns cannot replay admission; use a fresh human command after revocation")
+        raise ValueError("Workflow reruns cannot replay admission; convert to draft and Ready again, or push a new commit")
 
 
-def live_decision(api: GitHub, number: int | str, sha: str, comment_id: int | str, kind: str) -> dict[str, Any]:
-    comment = api.request(f"/issues/comments/{int(comment_id)}")
-    if comment["issue_url"] != f"https://api.github.com/repos/{api.repo}/issues/{int(number)}":
-        raise ValueError("Human decision belongs to another PR")
-    if command(comment["body"]) != (kind, sha) or not human(comment["user"], api.permission(comment["user"]["login"])):
-        raise ValueError("Human decision is no longer a current human maintainer command")
-    if comment["created_at"] != comment["updated_at"]:
-        raise ValueError("Human decision was edited; use a fresh comment")
-    return comment
+def author_login(pr: dict[str, Any]) -> str:
+    return cast("str", (pr.get("user") or {}).get("login") or "")
 
 
-def live_ready(api: GitHub, number: int | str, sha: str, comment_id: int | str) -> dict[str, Any]:
-    first_attempt()
-    pr = api.request(f"/pulls/{number}")
-    if not current_pr(pr, sha):
-        raise ValueError("PR head changed, PR is a draft, PR no longer targets main, or PR is not a same-repository branch")
-    live_decision(api, number, sha, comment_id, "ready")
-    status = api.statuses(sha).get("Human readiness", {})
-    marker = f"[ready:{comment_id}]"
-    if status.get("state") != "success" or marker not in status.get("description", ""):
-        raise ValueError("Readiness was revoked or superseded")
-    return pr
+def is_maintainer(api: GitHub, user: dict[str, Any]) -> bool:
+    login = user.get("login") or ""
+    return human(user, api.permission(login))
 
 
 def dismiss_bot_approvals(api: GitHub, number: int | str, sha: str, reason: str) -> None:
@@ -128,92 +110,135 @@ def dismiss_bot_approvals(api: GitHub, number: int | str, sha: str, reason: str)
                     raise
 
 
-def invalidate(api: GitHub, number: int | str, sha: str, reason: str) -> None:
-    statuses = api.statuses(sha)
-    ready = statuses.get("Human readiness", {})
-    for context in ("Human readiness", "Maintainer approval"):
-        api.status(sha, context, "failure", reason)
-    dismiss_bot_approvals(api, number, sha, reason)
-    run = re.search(r"\[run:(\d+)\]", ready.get("description", ""))
-    if run and run[1] != os.environ["GITHUB_RUN_ID"]:
+def remove_label(api: GitHub, number: int | str, name: str) -> None:
+    try:
+        api.request(f"/issues/{int(number)}/labels/{urllib.parse.quote(name)}", "DELETE")
+    except urllib.error.HTTPError as error:
+        if error.code not in (404, 422):
+            raise
+
+
+def cancel_runs_for_head(api: GitHub, sha: str) -> None:
+    """Cancel in-progress gate runs for this head using the Actions API."""
+    path = f"/actions/runs?status=in_progress&per_page=20&head_sha={sha}"
+    try:
+        payload = api.request(path)
+    except urllib.error.HTTPError:
+        return
+    for run in payload.get("workflow_runs") or []:
+        if str(run.get("id")) == os.environ["GITHUB_RUN_ID"]:
+            continue
         try:
-            api.request(f"/actions/runs/{run[1]}/cancel", "POST")
+            api.request(f"/actions/runs/{run['id']}/cancel", "POST")
         except urllib.error.HTTPError as error:
             if error.code not in (409, 422):
                 raise
 
 
+def queue_checks(api: GitHub, sha: str) -> None:
+    for context in REQUIRED_CONTEXTS:
+        api.status(sha, context, "pending", "Admitted checks queued")
+
+
+def publish_admission(api: GitHub, pr: dict[str, Any], number: int, sha: str) -> None:
+    if pr["changed_files"] > 200 or pr["additions"] + pr["deletions"] > 12000:
+        raise ValueError("PR exceeds review limits; split it before admission")
+    pending = all(api.statuses(sha).get(context, {}).get("state") == "pending" for context in REQUIRED_CONTEXTS)
+    success = all(api.statuses(sha).get(context, {}).get("state") == "success" for context in REQUIRED_CONTEXTS)
+    if pending or success:
+        # Already admitted or finished for this head in a live run; do not start a duplicate.
+        if pending:
+            raise ValueError("This commit is already admitted; revoke or wait for the current run")
+        raise ValueError("This commit already has successful checks; push a new commit to re-run")
+    queue_checks(api, sha)
+    outputs(run="true", pr=number, head=sha, base=pr["base"]["sha"], admission=os.environ["GITHUB_RUN_ID"],
+            profile=api.repo.split("/")[1])
+
+
+def require_live_head(api: GitHub, number: int | str, sha: str) -> dict[str, Any]:
+    pr = api.request(f"/pulls/{number}")
+    if not current_head(pr, sha):
+        raise ValueError("PR head changed, PR is a draft, or PR no longer targets main")
+    return pr
+
+
+def live_ready(api: GitHub, number: int | str, sha: str, admission: str) -> dict[str, Any]:
+    """Re-validate the admitted head from the Pull Request API and job outputs."""
+    first_attempt()
+    if not admission or admission != os.environ["GITHUB_RUN_ID"]:
+        # finish/verify run in the same workflow as admission; the output must be this run.
+        raise ValueError("Admission output does not match this workflow run")
+    return require_live_head(api, number, sha)
+
+
+def handle_label(api: GitHub, event: dict[str, Any]) -> None:
+    label = (event.get("label") or {}).get("name")
+    if label not in GATE_LABELS:
+        return
+    pr_meta = event.get("pull_request") or {}
+    number = int(pr_meta.get("number") or event.get("number") or 0)
+    if number <= 0:
+        return
+    pr = api.request(f"/pulls/{number}")
+    sha = pr["head"]["sha"]
+    sender = event.get("sender") or {}
+    remove_label(api, number, label)
+    if not is_maintainer(api, sender):
+        raise ValueError("Only a current human maintainer may apply gate labels")
+    if not current_head(pr, sha):
+        raise ValueError("Gate labels require the current non-draft PR head targeting main")
+    if label == REVOKE_LABEL:
+        dismiss_bot_approvals(api, number, sha, "Revoked by a current human maintainer")
+        cancel_runs_for_head(api, sha)
+        for context in REQUIRED_CONTEXTS:
+            api.status(sha, context, "failure", "Revoked by a current human maintainer")
+        return
+    # Record a bot approval for the current head.
+    api.request(f"/pulls/{number}/reviews", "POST", {
+        "commit_id": sha, "event": "APPROVE",
+        "body": f"Maintainer self-approve by @{sender.get('login')} via label `{APPROVE_LABEL}` for `{sha}`. Required checks still apply.",
+    })
+
+
+def handle_pull_request(api: GitHub, event: dict[str, Any]) -> None:
+    action = event.get("action")
+    number = int((event.get("pull_request") or {}).get("number") or event.get("number") or 0)
+    if number <= 0:
+        return
+    live = api.request(f"/pulls/{number}")
+    sha = live["head"]["sha"]
+    sender = event.get("sender") or {}
+    if action == "converted_to_draft":
+        dismiss_bot_approvals(api, number, sha, "PR converted to draft")
+        cancel_runs_for_head(api, sha)
+        for context in REQUIRED_CONTEXTS:
+            if api.statuses(sha).get(context, {}).get("state") == "pending":
+                api.status(sha, context, "failure", "PR converted to draft; mark Ready to admit again")
+        return
+    if action == "labeled":
+        handle_label(api, event)
+        return
+    if action not in {"opened", "reopened", "synchronize", "ready_for_review"}:
+        return
+    if live.get("draft"):
+        return
+    if not current_head(live, sha):
+        return
+    author = {"type": "User", "login": author_login(live)}
+    maintainer_author = same_repository(live) and is_maintainer(api, author)
+    maintainer_actor = is_maintainer(api, sender)
+    if maintainer_author:
+        publish_admission(api, live, number, sha)
+        return
+    if action == "ready_for_review" and maintainer_actor:
+        publish_admission(api, live, number, sha)
+        return
+
+
 def admit(api: GitHub, event: dict[str, Any]) -> None:
     outputs(run="false")
     first_attempt()
-    issue = event.get("issue", {})
-    comment = event.get("comment", {})
-    if not issue.get("pull_request"):
-        return
-    number, comment_id = int(issue["number"]), int(comment["id"])
-    pr = api.request(f"/pulls/{number}")
-    sha = pr["head"]["sha"]
-    if event["action"] in {"edited", "deleted"}:
-        statuses = api.statuses(sha)
-        if any(f"[{kind}:{comment_id}]" in statuses.get(context, {}).get("description", "")
-               for kind, context in (("ready", "Human readiness"), ("approve", "Maintainer approval"))):
-            invalidate(api, number, sha, "Human decision edited or deleted; fresh commands required")
-        return
-    if event["action"] != "created":
-        raise ValueError("Unsupported human decision event")
-    user = comment["user"]
-    sender = event["sender"]
-    if not human(sender, api.permission(sender["login"])):
-        raise ValueError("Only a current human maintainer may admit or approve a PR")
-    if sender["login"] != user["login"] or not human(user, api.permission(user["login"])):
-        raise ValueError("A command must be posted by the human maintainer who authorizes it")
-    action, requested = command(comment["body"])
-    if action == "revoke":
-        if not current_head(pr, requested):
-            raise ValueError("Command must name the current non-draft PR head targeting main")
-        invalidate(api, number, sha, "Revoked by a current human maintainer")
-        return
-    if not same_repository(pr):
-        raise ValueError("Fork PRs require manual review instead of automated admission")
-    if not current_head(pr, requested):
-        raise ValueError("Command must name the current non-draft PR head targeting main")
-    if action == "approve":
-        ready = api.statuses(sha).get("Human readiness", {})
-        ready_id = re.search(r"\[ready:(\d+)\]", ready.get("description", ""))
-        if not ready_id:
-            raise ValueError("The current commit must be admitted before approval")
-        live_ready(api, number, sha, ready_id[1])
-        approval = live_decision(api, number, sha, comment_id, "approve")
-        if approval["body"] != comment["body"] or any(approval["user"][key] != user[key] for key in ("id", "login", "type")):
-            raise ValueError("Approval no longer matches the human event author and body")
-        api.status(sha, "Maintainer approval", "pending", f"[approve:{comment_id}] Recording current human approval")
-        try:
-            api.request(f"/pulls/{number}/reviews", "POST", {
-                "commit_id": sha, "event": "APPROVE",
-                "body": f"Explicit human maintainer approval by @{user['login']} in comment {comment['html_url']} for `{sha}`. Required checks still apply.",
-            })
-            live_ready(api, number, sha, ready_id[1])
-            if live_decision(api, number, sha, comment_id, "approve")["body"] != comment["body"]:
-                raise ValueError("Approval changed while its native review was recorded")  # noqa: TRY301 - the except below records the failure, then re-raises
-            api.status(sha, "Maintainer approval", "success", f"[approve:{comment_id}] Human maintainer approved this commit")
-        except (ValueError, KeyError, urllib.error.URLError):
-            api.status(sha, "Maintainer approval", "failure", "Human approval could not be recorded; fresh command required")
-            dismiss_bot_approvals(api, number, sha, "Human approval could not be recorded")
-            raise
-        return
-    history = api.pages(f"/commits/{sha}/statuses")
-    if any(f"[ready:{comment_id}]" in status.get("description", "") for status in history):
-        raise ValueError("This admission has already been consumed")
-    if api.statuses(sha).get("Human readiness", {}).get("state") == "success":
-        raise ValueError("This commit is already admitted; revoke before an explicit fresh run")
-    if pr["changed_files"] > 200 or pr["additions"] + pr["deletions"] > 12000:
-        raise ValueError("PR exceeds review limits; split it before admission")
-    # Clear old successes even when a readmitted run never reaches finish.
-    for context in CONTEXTS[1:]:
-        api.status(sha, context, "pending", "Waiting for current human approval" if context == "Maintainer approval" else "Admitted checks queued")
-    api.status(sha, "Human readiness", "success", f"[ready:{comment_id}] [run:{os.environ['GITHUB_RUN_ID']}] Human admitted this commit")
-    outputs(run="true", pr=number, head=sha, base=pr["base"]["sha"], admission=comment_id,
-            profile=api.repo.split("/")[1])
+    handle_pull_request(api, event)
 
 
 def finish(api: GitHub) -> None:
@@ -222,23 +247,10 @@ def finish(api: GitHub) -> None:
     try:
         live_ready(api, number, sha, admission)
     except (ValueError, KeyError, urllib.error.URLError):
-        ready = api.statuses(sha).get("Human readiness", {})
-        if f"[ready:{admission}]" in ready.get("description", ""):
-            for context in ("Human readiness", "Maintainer approval"):
-                api.status(sha, context, "failure", "Human readiness no longer valid; fresh commands required")
-            dismiss_bot_approvals(api, number, sha, "Human readiness no longer valid")
+        for context in REQUIRED_CONTEXTS:
+            api.status(sha, context, "failure", "Admission no longer valid for this head")
+        dismiss_bot_approvals(api, number, sha, "Admission no longer valid")
         raise
-    approval = api.statuses(sha).get("Maintainer approval", {})
-    if approval.get("state") == "success":
-        try:
-            marker = re.search(r"\[approve:(\d+)\]", approval.get("description", ""))
-            if not marker:
-                raise ValueError("Successful approval is missing its human decision")  # noqa: TRY301 - the except below records the failure, then re-raises
-            live_decision(api, number, sha, marker[1], "approve")
-        except (ValueError, KeyError, urllib.error.URLError):
-            api.status(sha, "Maintainer approval", "failure", "Human approval no longer valid; fresh command required")
-            dismiss_bot_approvals(api, number, sha, "Human approval no longer valid")
-            raise
     results = json.loads(os.environ["JOB_RESULTS"])
     quality = all(results.get(job, {}).get("result") == "success" for job in ("quality", "registry"))
     standards = results.get("standards", {}).get("result") == "success"
@@ -263,6 +275,6 @@ if __name__ == "__main__":
     try:
         main()
     except (ValueError, KeyError, urllib.error.URLError) as error:
-        # Do not print untrusted response bodies, comment text, or credentials.
+        # Do not print untrusted response bodies, label text beyond names we compare, or credentials.
         print(f"Governance stopped: {type(error).__name__}: {error}", file=sys.stderr)
         sys.exit(1)

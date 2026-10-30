@@ -46,17 +46,11 @@ python3 scripts/build_workflows.py --check
 ## Usage
 
 Install the consumer PR and draft-release templates described in
-[operations](docs/operations.md). After inspecting the exact PR commit, a human
-maintainer posts these as separate, unedited comments:
-
-```text
-/ready FULL_HEAD_SHA
-/approve FULL_HEAD_SHA
-```
-
-Readiness admits bounded CI. Approval records human review;
-maintainers may approve their own changes. `/revoke FULL_HEAD_SHA` blocks merge
-and cancels active admitted work. New commits require new decisions.
+[operations](docs/operations.md). Maintainer same-repo non-draft PRs admit
+automatically. Outsiders and forks need a maintainer Ready-for-review action.
+Solo maintainers self-approve with the `gate:approve` label; `gate:revoke`
+cancels admission. Required merge checks are Quality and Repository standards
+plus one approving GitHub review.
 
 ## Development
 
