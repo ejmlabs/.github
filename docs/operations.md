@@ -332,10 +332,11 @@ alone does not prove the hold was active.
 
 ## Credentials
 
-No job receives a model key. The shared workflow no longer declares
-`XAI_API_KEY`. After every caller is on a pin that omits the secret, the owner
-removes the stored model key secret
-and closes or empties the prepaid provider account.
+No job receives a model key. The shared workflow still declares an optional,
+unused `XAI_API_KEY` secret so the live pin's reusable scaffold check accepts
+this revision; the next shared revision removes the declaration. After every
+caller is on a pin that omits the secret, the owner removes the stored model
+key secret and closes or empties the prepaid provider account.
 
 Public harness source needs no private checkout token. Pin its exact revision
 in `.github/harness-revision`; trusted preparation archives it for the

@@ -259,16 +259,18 @@ class WorkflowTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         workflows(self.root, ".github")
 
-    def test_shared_scaffold_declares_only_the_harness_token(self) -> None:
+    def test_shared_scaffold_still_declares_the_previous_model_key_for_one_generation(self) -> None:
         self.write_callers(consumer_workflows(self.revision))
         original = self.reusable()
-        harness = '      "EJM_HARNESS_TOKEN":\n        "required": false\n'
-        extra = '      "XAI_API_KEY":\n        "required": false\n'
+        declaration = '      "XAI_API_KEY":\n        "required": false\n'
+        extra = '      "' + self.old_model_key + '":\n        "required": false\n'
         mutations = {
-            "retired model key added": original.replace(harness, extra + harness),
-            "unknown model key": original.replace("EJM_HARNESS_TOKEN", "MODEL_API_KEY"),
-            "required harness token": original.replace(harness, harness.replace("false", "true")),
-            "missing harness token": original.replace(harness, ""),
+            "both model keys": original.replace(declaration, declaration + extra),
+            "old model key": original.replace("XAI_API_KEY", self.old_model_key),
+            "unknown model key": original.replace("XAI_API_KEY", "MODEL_API_KEY"),
+            "missing model key": original.replace(declaration, ""),
+            "required model key": original.replace(declaration, declaration.replace("false", "true")),
+            "missing harness token": original.replace('      "EJM_HARNESS_TOKEN":\n        "required": false\n', ""),
         }
         for case, text in mutations.items():
             with self.subTest(case=case):

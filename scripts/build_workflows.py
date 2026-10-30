@@ -216,7 +216,9 @@ def governance() -> dict[str, Any]:
               "permissions": {"contents": "read", "pull-requests": "write", "statuses": "write"},
               "env": {**ENV, "JOB_RESULTS": "${{ toJSON(needs) }}"},
               "steps": [run("Publish required results only after live admission validation", python(source("governance.py"), "finish"))]}
-    secrets = {"EJM_HARNESS_TOKEN": {"required": False}}
+    # Keep XAI_API_KEY declared optional and unused so the live pin's standards
+    # scaffold check still passes; the next shared revision drops it.
+    secrets = {"XAI_API_KEY": {"required": False}, "EJM_HARNESS_TOKEN": {"required": False}}
     return {"name": "Human-admitted PR checks", "on": {"workflow_call": {"secrets": secrets}}, "permissions": {}, "jobs": {"admission": admission, "prepare": prepare, "quality": quality, "registry": registry, "standards": standards, "finish": finish}}
 
 

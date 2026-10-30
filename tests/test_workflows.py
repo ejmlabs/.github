@@ -525,7 +525,9 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertNotRegex(text, r"secrets\.XAI_API_KEY")
         self.assertNotIn("OPENAI" + "_API_KEY", text)
         self.assertEqual(set(self.governance["jobs"]), {"admission", "prepare", "quality", "registry", "standards", "finish"})
-        self.assertEqual(self.governance["on"]["workflow_call"]["secrets"], {"EJM_HARNESS_TOKEN": {"required": False}})
+        # Optional unused key kept for one generation so older pins' scaffold checks pass.
+        self.assertEqual(self.governance["on"]["workflow_call"]["secrets"]["XAI_API_KEY"], {"required": False})
+        self.assertEqual(self.governance["on"]["workflow_call"]["secrets"]["EJM_HARNESS_TOKEN"], {"required": False})
         for job in self.governance["jobs"].values():
             self.assertNotIn("pull_request_target", job.get("if", ""))
 
