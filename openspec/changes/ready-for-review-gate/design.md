@@ -2,87 +2,94 @@
 
 ## Context
 
-Today `scripts/governance.py` and the generated `governance.yml` admit work only from `issue_comment` `/ready|/approve|/revoke` with a full head SHA, `sender.type == User`, and maintain/admin permission. Branch protection requires four contexts including **Human readiness** and **Maintainer approval**. The bot records a native APPROVE on `/approve` so a solo maintainer can merge under `enforce_admins` and `required_approving_review_count: 1`. See proposal.md for why that ritual is being replaced.
+Today `scripts/governance.py` admits work by regex-matching `/ready|/approve|/revoke` comment bodies and by stuffing opaque tokens into commit-status descriptions. That is brittle. See proposal.md for why the SHA comment ritual is being replaced.
 
-`remove-ai-review` already removed the AI job from the shared gate tip; four consumer mains still pin the pre-removal revision. This change assumes those re-pins land first (or in the same rollout window) so no caller still invokes the old AI job.
+`remove-ai-review` consumer re-pins are on main. This change is the next shared gate revision.
 
 ## Goals / Non-Goals
 
 **Goals:**
 
-- Stop paid checks on drafts and on outsider Ready actions.
-- Auto-run checks for maintainer-authored same-repo non-draft PRs on each head.
-- Replace the two custom human statuses with GitHub draft/Ready + required reviews.
-- Preserve solo-maintainer merge via a simple `/approve`.
-- Update agent guidance so explicit maintainer requests can mark Ready or `/approve`.
+- Admit from GitHub PR lifecycle fields and collaborator permissions only.
+- Use labels (not slash commands) for maintainer self-approve and explicit revoke.
+- Verify later jobs by re-reading the live Pull Request API and job outputs, not by parsing status text.
+- Auto-run checks for maintainer-authored same-repo non-draft PRs.
+- Require a maintainer Ready-for-review action for outsiders and forks.
 
 **Non-Goals:**
 
-- Enabling or requiring Cursor Bugbot (follow-on).
-- Changing Quality/Repository standards job contents.
-- Admitting fork PRs without a maintainer Ready action.
-- Letting agents admit or approve without an explicit human request in-session.
+- Comment-body command protocols.
+- Regex or substring matching on comment text or status descriptions for control flow.
+- Enabling Bugbot (follow-on).
+- Changing Quality / Repository standards job contents.
 
 ## Decisions
 
-### 1. Trigger on `pull_request` / `pull_request_target` carefully
+### 1. Admission is event + API state
 
-**Choice:** Drive admission from PR lifecycle events (`opened`, `synchronize`, `ready_for_review`, `converted_to_draft`, `reopened`) in addition to `/approve` and `/revoke` comments. Prefer the trusted caller pattern already used: thin consumer `pr.yml` calling the shared reusable workflow with minimal permissions.
+**Choice:** Drive admission from `pull_request` actions `opened`, `reopened`, `synchronize`, `ready_for_review`, `converted_to_draft`.
 
-**Why:** Ready-for-review is the native cost-control switch. Comment-only admission cannot see draft transitions.
+Admit head `H` when:
 
-**Alternatives:** Label `ok-to-test` only — familiar in OSS, but an extra custom concept when draft/Ready already exists. Keep `/ready` forever — rejected for friction.
-
-**Security note:** Do not run untrusted PR code with write tokens. Keep prepare/quality isolation as today. For fork PRs, evaluate admission from event actor + collaborator permission API, never from PR head code. Prefer `pull_request` for same-repo and a narrow trusted path for forks if the current caller model cannot see fork events safely; if fork support stays comment/`workflow_dispatch`-only until a trusted path exists, document that explicitly in tasks and ops.
-
-### 2. Admission predicate
-
-Admit head `H` when all hold:
-
-1. PR open, targets `main`, not draft, same-repository branch (forks: only after maintainer Ready — see below).
+1. PR is open, targets `main`, not draft.
 2. Either:
-   - **Maintainer-authored same-repo:** author has maintain/admin, or
-   - **Maintainer Ready:** event is `ready_for_review` and `sender` is a User with maintain/admin (author Ready is ignored when author lacks that role).
-3. Size limits still apply (files/lines) before starting paid work.
-4. First attempt only; no Actions rerun replay of admission.
+   - same-repository and author has maintain/admin, or
+   - event is `ready_for_review` and `sender` is a User with maintain/admin.
+3. Size limits still apply before starting paid work.
+4. First workflow attempt only.
 
-On `synchronize` for an already-Ready maintainer-authored PR, re-admit the new head automatically. On `synchronize` for an outsider PR, do **not** auto-admit; require a maintainer to mark Ready again (convert to draft and back, or an explicit maintainer `/ready` retained only as an escape hatch — prefer draft toggle to avoid two admission APIs). **Decision:** outsider re-admission = maintainer converts to draft then Ready again, or posts `/ready` without SHA (current head) as a rare escape hatch. Prefer documenting the draft toggle as the primary path; keep `/ready` (no SHA, current head) as optional escape for one release if tests need it, then drop.
+On `converted_to_draft`, cancel any in-flight admitted run for that head and publish failure for orchestration statuses if present.
 
-### 3. Status publishing
+**Why:** Draft / Ready and actor permission are first-class GitHub fields. No comment parsing.
 
-**Choice:** Stop publishing **Maintainer approval** as a required context. Optionally keep an informational **Human readiness** / **CI admitted** status for UI clarity, but remove it from required checks so merge depends on Quality, Repository standards, and GitHub reviews only.
+### 2. Labels for approve and revoke
 
-**Why:** Missing Quality/standards already block merge under strict checks. Two extra contexts force the SHA ritual.
+**Choice:** Reserved labels, applied only by maintainers (enforced in the workflow by permission check, not by GitHub label ACLs):
 
-**Self-approve:** `/approve` or `/approve FULL_SHA` → validate maintainer → create `github-actions[bot]` APPROVE review on that commit (existing mechanism). `dismiss_stale_reviews` already clears it on new pushes.
+| Label | Effect |
+| --- | --- |
+| `gate:approve` | If actor is maintain/admin, record `github-actions[bot]` APPROVE on the current head, then remove the label so it can be re-applied after a new push. |
+| `gate:revoke` | If actor is maintain/admin, dismiss bot approvals for the head, cancel the admitted run, fail orchestration, remove the label. |
 
-### 4. Branch protection updates
+Exact full-string label name equality only (`== "gate:approve"`), no patterns.
 
-**Choice:** `configure_repositories.py` sets required contexts to `Quality` and `Repository standards` only; keep `required_approving_review_count: 1`, `dismiss_stale_reviews: true`, `enforce_admins: true`.
+**Why:** Labels are structured event payloads (`github.event.label.name`). Equality beats regex. Solo maintainers still get a self-approve path under `enforce_admins`.
 
-**Rollout:** Change protection in each repo only when that repo's caller pin runs the new gate (or immediately after, if the new gate no longer publishes the old statuses — never require a status the gate stopped publishing).
+**Alternatives rejected:** Slash commands (brittle text), status-description tokens, requiring a second human always.
+
+### 3. No control-plane data in status descriptions
+
+**Choice:** Commit statuses for **Quality** and **Repository standards** carry only human-readable pass/fail text. Job outputs (`run`, `pr`, `head`, `base`, `profile`) carry admission through the workflow. `finish` / `verify` re-fetch the PR and require: same head SHA, non-draft, targets main. They do not parse status descriptions for tokens.
+
+**Human readiness** and **Maintainer approval** statuses are removed from publishing and from branch protection.
+
+### 4. Required merge controls
+
+**Choice:** Branch protection requires `Quality` and `Repository standards` plus one approving GitHub review (`dismiss_stale_reviews`, `enforce_admins`). Self-approve is the bot review from `gate:approve`.
 
 ### 5. Agent policy
 
-**Choice:** Update `ejmlabs-workflow` skill and `pr-gate.md`: when the user explicitly asks to admit/approve/merge, the agent MAY run `gh pr ready`, `gh pr comment ... /approve`, and merge after green checks, using the user's `gh` auth. Agents MUST NOT do those steps unprompted.
+**Choice:** When the user explicitly asks, agents may `gh pr ready`, `gh pr edit --add-label gate:approve`, and merge after green checks. Agents must not do those unprompted.
+
+### 6. Caller rollout
+
+**Choice:** Shared `governance.yml` gains `pull_request` + `pull_request` labeled triggers via the reusable workflow's caller. `standards.py` dual-accepts the previous comment-only caller and the new lifecycle caller for one generation. This implementation PR keeps `.github`'s own `pr.yml` on the previous form so the live pin's standards still pass; a follow-up pin adopts the new caller.
 
 ## Risks / Trade-offs
 
-- **[Risk] Fork Ready by author starts CI if we only key off `ready_for_review`** → Mitigation: require maintain/admin on the event actor for non-maintainer-authored PRs.
-- **[Risk] `pull_request_target` misuse** → Mitigation: no checkout of PR head for privileged jobs; reuse existing trusted prepare path; prefer same-repo `pull_request` where sufficient.
-- **[Risk] Solo maintainer forgets `/approve`** → Mitigation: docs and agent skill prompt for `/approve` after green when no other review exists.
-- **[Risk] Overlap with open remove-ai-review pins** → Mitigation: land consumer re-pins to `5b7c983` first; then ship this as the next shared revision.
-- **[Trade-off] Outsider new commits need another maintainer Ready** → Acceptable cost-control trade; document draft toggle.
+- **[Risk] Anyone with write can add labels** → Mitigation: workflow checks maintain/admin on the label event actor before approving or revoking.
+- **[Risk] Outsider marks their own PR Ready** → Mitigation: admit only when the Ready actor is maintain/admin for non-maintainer authors.
+- **[Risk] Label left on after approve** → Mitigation: remove `gate:approve` / `gate:revoke` after handling.
+- **[Trade-off] Outsider pushes need another maintainer Ready** → Acceptable cost control; document draft toggle.
 
 ## Migration Plan
 
-1. Finish `remove-ai-review` re-pins on the six gate repos (drop `XAI_API_KEY` / unlabeled).
-2. Implement and merge the new gate in `ejmlabs/.github`; retain under `workflow-pins/FULL_SHA`.
-3. Owner updates branch protection to the two contexts (script or UI) as each repo adopts, never requiring removed statuses.
-4. Pin-only then docs/template sync PRs per consumer (staged if standards still dual-accept).
-5. Delete obsolete `/ready FULL_SHA` docs; teach Ready + `/approve`.
-6. Rollback: re-pin callers to the previous retained pin and restore the four contexts if needed.
+1. Land shared revision (scripts + generated workflows + docs/skills/templates).
+2. Retain `workflow-pins/FULL_SHA`.
+3. Pin consumers; switch callers to the lifecycle form; set protection to the two contexts.
+4. Create the two labels in each gate repo (script or API).
+5. Rollback: re-pin previous retained revision.
 
 ## Open Questions
 
-- Whether to keep a no-SHA `/ready` escape hatch for outsider re-admission after synchronize, or rely only on draft→Ready toggles (default: draft toggle only unless implementation proves awkward).
+None.

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Control when paid PR checks run and how a pull request becomes mergeable on protected main, without a SHA comment ritual.
+Control when paid PR checks run and how a pull request becomes mergeable on protected main, using GitHub PR state and labels instead of comment-text commands.
 
 ## ADDED Requirements
 
@@ -24,11 +24,6 @@ A non-draft, same-repository pull request whose author is a current human mainta
 - **WHEN** a current maintainer or admin who authors a same-repository non-draft PR targeting main pushes a new commit
 - **THEN** the gate admits that head once and starts the bounded paid checks
 
-#### Scenario: A maintainer opens a non-draft PR
-
-- **WHEN** a current maintainer or admin opens a same-repository non-draft PR targeting main
-- **THEN** the gate admits the head and starts the bounded paid checks
-
 ### Requirement: Outsider and fork PRs need a maintainer Ready action
 
 A pull request from a fork, or whose author is not a current maintainer or admin, SHALL be admitted only when a current human maintainer or admin marks that PR Ready for review. The author's own Ready action SHALL NOT admit paid checks.
@@ -45,7 +40,7 @@ A pull request from a fork, or whose author is not a current maintainer or admin
 
 ### Requirement: New commits need a fresh admission
 
-An admission SHALL bind to one head SHA. A new commit SHALL require a new admission under the rules above. Converting a PR back to draft SHALL stop further auto-admission until it is Ready again under those rules.
+An admission SHALL bind to one head SHA via workflow outputs. A new commit SHALL require a new admission under the rules above. Converting a PR back to draft SHALL cancel admitted work and stop further auto-admission until it is Ready again under those rules.
 
 #### Scenario: A new commit lands after admission
 
@@ -61,37 +56,46 @@ Protected main SHALL require **Quality** and **Repository standards** and SHALL 
 - **WHEN** a maintainer merges to main
 - **THEN** Quality and Repository standards must be successful for that head, and at least one current approving GitHub review must apply to that head
 
-### Requirement: One-click maintainer self-approve
+### Requirement: Label-based maintainer self-approve
 
-A current human maintainer or admin SHALL be able to approve the current head of a same-repository non-draft PR by posting `/approve` or `/approve FULL_SHA`. Trusted automation SHALL record a GitHub approval for that head so a solo maintainer can satisfy the required review. Agents SHALL post this only when the maintainer explicitly asks.
+A current human maintainer or admin SHALL be able to approve the current head by adding the label `gate:approve`. Trusted automation SHALL record a GitHub approval for that head, then remove the label. Control flow SHALL use exact label name equality from the labeled event, not comment text. Agents SHALL add this label only when the maintainer explicitly asks.
 
 #### Scenario: Solo maintainer self-approves
 
-- **WHEN** a current maintainer posts `/approve` for the current head after review
-- **THEN** automation records an approving review for that head and the required review gate can pass
+- **WHEN** a current maintainer adds `gate:approve` on the current non-draft head
+- **THEN** automation records an approving review for that head and removes the label
 
-#### Scenario: An agent posts approve without being asked
+#### Scenario: A non-maintainer adds the approve label
 
-- **WHEN** an agent would admit or approve on its own initiative
-- **THEN** it does not post Ready, `/approve`, or `/revoke`
+- **WHEN** an account without maintain or admin permission adds `gate:approve`
+- **THEN** automation does not record an approval
 
-### Requirement: Maintainer revoke
+### Requirement: Label-based revoke
 
-A current human maintainer or admin SHALL be able to post `/revoke` or `/revoke FULL_SHA` to cancel an admitted run and fail merge authorization for that head until a fresh admission.
+A current human maintainer or admin SHALL be able to add the label `gate:revoke` to cancel an admitted run and dismiss bot approvals for that head. Automation SHALL remove the label after handling.
 
 #### Scenario: Maintainer revokes an admitted head
 
-- **WHEN** a current maintainer posts `/revoke` for the admitted head
-- **THEN** active admitted work for that head is cancelled and that head is not mergeable under a stale admission
+- **WHEN** a current maintainer adds `gate:revoke` for the current head
+- **THEN** active admitted work for that head is cancelled and bot approvals for that head are dismissed
+
+### Requirement: No comment-text or status-token control plane
+
+Admission, approval, and revoke SHALL NOT depend on matching slash-command regexes in comment bodies or on parsing opaque tokens out of commit status descriptions. Later jobs SHALL re-validate live PR API state and workflow outputs.
+
+#### Scenario: A comment contains /ready or /approve text
+
+- **WHEN** someone comments `/ready` or `/approve` on a PR
+- **THEN** the gate does not treat that comment as an admission or approval signal
 
 ## REMOVED Requirements
 
-### Requirement: SHA-bound /ready comment admission
+### Requirement: SHA-bound /ready and /approve comment admission
 
-**Reason**: Replaced by Ready-for-review and maintainer auto-admission.
-**Migration**: Callers and docs stop instructing `/ready FULL_SHA` for ordinary admission.
+**Reason**: Replaced by Ready-for-review, maintainer auto-admission, and `gate:approve` / `gate:revoke` labels.
+**Migration**: Docs and agent skills stop instructing slash commands.
 
 ### Requirement: Required Human readiness and Maintainer approval statuses
 
-**Reason**: Admission is expressed by draft/Ready plus who triggered it; merge approval uses GitHub reviews plus optional `/approve`.
-**Migration**: Branch protection drops those two contexts before or as callers adopt the new gate.
+**Reason**: Merge authorization uses Quality, Repository standards, and GitHub reviews.
+**Migration**: Branch protection drops those two contexts when each repo adopts this pin.

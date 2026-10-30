@@ -166,13 +166,21 @@ def restore(job: str) -> list[dict[str, Any]]:
 def governance() -> dict[str, Any]:
     templates = {path.name: path.read_text() for path in sorted((ROOT / "templates/community").glob("*.md"))}
     standards_check = source("standards.py", library=True) + "\nstandards(Path(sys.argv[1]), sys.argv[2], " + repr(templates) + ")\n"
+    pull_if = (
+        "github.event_name == 'pull_request' && "
+        "contains(fromJSON('[\"opened\",\"reopened\",\"synchronize\",\"ready_for_review\",\"converted_to_draft\",\"labeled\"]'), github.event.action) && "
+        "(github.event.action != 'labeled' || github.event.label.name == 'gate:approve' || github.event.label.name == 'gate:revoke')"
+    )
     admission = {
-        "if": "${{ github.run_attempt == 1 && github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.comment.author_association) && ((github.event.action == 'created' && github.event.sender.type == 'User' && (startsWith(github.event.comment.body, '/ready ') || startsWith(github.event.comment.body, '/approve ') || startsWith(github.event.comment.body, '/revoke '))) || (github.event.action != 'created' && (startsWith(github.event.comment.body, '/ready ') || startsWith(github.event.comment.body, '/approve ') || startsWith(github.event.changes.body.from, '/ready ') || startsWith(github.event.changes.body.from, '/approve ')))) }}",
+        "if": "${{ github.run_attempt == 1 && (" + pull_if + ") }}",
         "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
         "permissions": {"contents": "read", "pull-requests": "write", "statuses": "write", "actions": "write"},
-        "concurrency": {"group": "human-command-${{ github.repository }}-${{ github.event.issue.number }}", "cancel-in-progress": False},
+        "concurrency": {
+            "group": "gate-${{ github.repository }}-${{ github.event.pull_request.number }}",
+            "cancel-in-progress": True,
+        },
         "outputs": {key: "${{ steps.admit.outputs." + key + " }}" for key in ("run", "pr", "head", "base", "admission", "profile")},
-        "steps": [run("Validate live maintainer and commit; consume once", python(source("governance.py"), "admit"), id="admit", env={"GH_TOKEN": "${{ github.token }}"})],
+        "steps": [run("Admit from PR state or handle gate labels", python(source("governance.py"), "admit"), id="admit", env={"GH_TOKEN": "${{ github.token }}"})],
     }
     prepare = {
         "needs": "admission", "if": "${{ github.run_attempt == 1 && needs.admission.outputs.run == 'true' }}",
@@ -208,8 +216,7 @@ def governance() -> dict[str, Any]:
               "permissions": {"contents": "read", "pull-requests": "write", "statuses": "write"},
               "env": {**ENV, "JOB_RESULTS": "${{ toJSON(needs) }}"},
               "steps": [run("Publish required results only after live admission validation", python(source("governance.py"), "finish"))]}
-    # XAI_API_KEY is declared but unused so callers in the previous form can still pass it; the next revision drops it.
-    secrets = {"XAI_API_KEY": {"required": False}, "EJM_HARNESS_TOKEN": {"required": False}}
+    secrets = {"EJM_HARNESS_TOKEN": {"required": False}}
     return {"name": "Human-admitted PR checks", "on": {"workflow_call": {"secrets": secrets}}, "permissions": {}, "jobs": {"admission": admission, "prepare": prepare, "quality": quality, "registry": registry, "standards": standards, "finish": finish}}
 
 

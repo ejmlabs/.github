@@ -11,9 +11,10 @@ The `/ready FULL_SHA` and `/approve FULL_SHA` comment ritual blocks the maintain
 - For fork PRs and non-maintainer authors, admit only when a current maintainer or admin marks the PR Ready for review (the actor who leaves draft must be a maintainer). Draft PRs never run paid checks.
 - **BREAKING**: Drop the required **Human readiness** and **Maintainer approval** commit statuses from branch protection. Required checks become **Quality** and **Repository standards**.
 - Keep GitHub's required approving review (already configured). Other people approve with a normal GitHub review.
-- Keep a one-click maintainer self-approve: a maintainer posts `/approve` (optional SHA; default current head) and trusted automation records a bot approval for that head so a solo maintainer can still merge under `enforce_admins`.
-- Keep `/revoke` to cancel an admitted run and block merge for that head; converting back to draft also stops further auto-admission until Ready again.
-- Update shared agent skills and community docs: agents may mark Ready for review or post `/approve` when the maintainer explicitly asks; they must not admit or approve on their own.
+- Keep a one-click maintainer self-approve via label `gate:approve` (exact name); trusted automation records a bot approval for the current head and removes the label.
+- Revoke via label `gate:revoke` or by converting the PR back to draft.
+- Do not use slash-command comment protocols or status-description tokens for control flow.
+- Update shared agent skills and community docs: agents may mark Ready for review or add `gate:approve` when the maintainer explicitly asks; they must not admit or approve on their own.
 - Sequence after (or with) finishing `remove-ai-review` consumer re-pins so callers are not still on the old AI-review pin while this ships.
 
 ## Capabilities

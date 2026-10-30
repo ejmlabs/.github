@@ -222,53 +222,53 @@ class WorkflowTests(unittest.TestCase):
                         with self.assertRaises(ValueError):
                             workflows(self.root, "ejm-cli")
 
-    def test_new_form_drops_the_model_key_and_the_label_trigger(self) -> None:
-        new, current = consumer_workflows(self.revision)["pr.yml"], consumer_workflows(self.revision, current=True)["pr.yml"]
-        self.assertNotIn("XAI_API_KEY", new)
+    def test_new_form_uses_pull_request_lifecycle_and_previous_stays_comment_only(self) -> None:
+        new, previous = consumer_workflows(self.revision)["pr.yml"], consumer_workflows(self.revision, current=True)["pr.yml"]
+        self.assertIn("  pull_request:\n    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, labeled]\n", new)
+        self.assertNotIn("issue_comment", new)
         self.assertNotIn("pull_request_target", new)
-        self.assertIn("XAI_API_KEY: ${{ secrets.XAI_API_KEY }}", current)
-        self.assertIn("  pull_request_target:\n    types: [unlabeled]\n", current)
+        self.assertNotIn("XAI_API_KEY", new)
+        self.assertIn("  issue_comment:\n    types: [created, edited, deleted]\n", previous)
+        self.assertNotIn("pull_request:", previous)
+        self.assertNotIn("XAI_API_KEY", previous)
 
     def test_a_third_caller_form_is_rejected(self) -> None:
         for caller in (consumer_workflows, missing_model_key_workflows):
-            new, current = (caller(self.revision, current=value)["pr.yml"] for value in (False, True))
+            new, previous = (caller(self.revision, current=value)["pr.yml"] for value in (False, True))
             key = "      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}\n"
-            trigger = "  pull_request_target:\n    types: [unlabeled]\n"
-            condition = "github.event.issue.pull_request"
-            old_condition = condition + " || github.event_name == 'pull_request_target'"
+            target = "  pull_request_target:\n    types: [unlabeled]\n"
+            comment = "  issue_comment:\n    types: [created, edited, deleted]\n"
             mutations = {
-                "new form with the label trigger": new.replace("permissions: {}\njobs:", trigger + "permissions: {}\njobs:", 1),
-                "new form with the label condition": new.replace(condition, old_condition),
-                "new form with the key": new.replace("    secrets:\n", "    secrets:\n" + key) if "    secrets:\n" in new else new + "    secrets:\n" + key,
-                "current form without the key": current.replace(key, ""),
-                "current form without the label trigger": current.replace(trigger, ""),
-                "current form without the label condition": current.replace(old_condition, condition),
-                "current form with a second key": current.replace(key, key + "      " + self.old_model_key + ": ${{ secrets." + self.old_model_key + " }}\n"),
-                "current form with another key": current.replace("XAI_API_KEY", "MODEL_API_KEY"),
-                "current form with a fallback key": current.replace("secrets.XAI_API_KEY", "secrets.XAI_API_KEY || secrets." + self.old_model_key),
+                "new form with comment trigger": new.replace("on:\n", "on:\n" + comment, 1),
+                "new form with pull_request_target": new.replace("on:\n", "on:\n" + target, 1),
+                "new form with the retired key": new.replace("    secrets:\n", "    secrets:\n" + key),
+                "previous form with pull_request_target": previous.replace("on:\n", "on:\n" + target, 1),
+                "previous form with the retired key": previous.replace("    secrets:\n", "    secrets:\n" + key),
+                "previous form with a second key": previous.replace(
+                    "      EJM_HARNESS_TOKEN: ${{ secrets.EJM_HARNESS_TOKEN }}\n",
+                    "      EJM_HARNESS_TOKEN: ${{ secrets.EJM_HARNESS_TOKEN }}\n      " + self.old_model_key + ": ${{ secrets." + self.old_model_key + " }}\n",
+                ),
                 "missing harness token": new.replace("      EJM_HARNESS_TOKEN: ${{ secrets.EJM_HARNESS_TOKEN }}\n", ""),
                 "inherited secrets": new.replace("    secrets:\n      EJM_HARNESS_TOKEN: ${{ secrets.EJM_HARNESS_TOKEN }}\n", "    secrets: inherit\n"),
             }
             for case, text in mutations.items():
-                if text in (new, current):
+                if text in (new, previous):
                     continue
                 with self.subTest(caller=caller.__name__, case=case):
                     (self.directory / "pr.yml").write_text(text)
                     with self.assertRaises(ValueError):
                         workflows(self.root, ".github")
 
-    def test_shared_scaffold_still_declares_the_previous_model_key_for_one_generation(self) -> None:
+    def test_shared_scaffold_declares_only_the_harness_token(self) -> None:
         self.write_callers(consumer_workflows(self.revision))
         original = self.reusable()
-        declaration = '      "XAI_API_KEY":\n        "required": false\n'
-        extra = '      "' + self.old_model_key + '":\n        "required": false\n'
+        harness = '      "EJM_HARNESS_TOKEN":\n        "required": false\n'
+        extra = '      "XAI_API_KEY":\n        "required": false\n'
         mutations = {
-            "both model keys": original.replace(declaration, declaration + extra),
-            "old model key": original.replace("XAI_API_KEY", self.old_model_key),
-            "unknown model key": original.replace("XAI_API_KEY", "MODEL_API_KEY"),
-            "missing model key": original.replace(declaration, ""),
-            "required model key": original.replace(declaration, declaration.replace("false", "true")),
-            "missing harness token": original.replace('      "EJM_HARNESS_TOKEN":\n        "required": false\n', ""),
+            "retired model key added": original.replace(harness, extra + harness),
+            "unknown model key": original.replace("EJM_HARNESS_TOKEN", "MODEL_API_KEY"),
+            "required harness token": original.replace(harness, harness.replace("false", "true")),
+            "missing harness token": original.replace(harness, ""),
         }
         for case, text in mutations.items():
             with self.subTest(case=case):
@@ -289,7 +289,8 @@ class WorkflowTests(unittest.TestCase):
 
     def test_missing_model_key_routes_keep_admission_and_omit_fixture_secrets(self) -> None:
         for current in (False, True):
-            event = "(github.event.issue.pull_request || github.event_name == 'pull_request_target')" if current else "github.event.issue.pull_request"
+            event = "github.event.issue.pull_request" if current else "github.event_name == 'pull_request'"
+            labels = "github.event.issue.labels.*.name" if current else "github.event.pull_request.labels.*.name"
             with self.subTest(current=current):
                 normal = consumer_workflows(self.revision, current=current)
                 fixture = missing_model_key_workflows(self.revision, current=current)
@@ -298,9 +299,9 @@ class WorkflowTests(unittest.TestCase):
                 header, jobs = fixture["pr.yml"].split("  governance:\n", 1)
                 normal_job, missing_job = jobs.split("  missing_model_key:\n", 1)
                 self.assertEqual(header, normal_header)
-                original = "    if: ${{ " + event.strip("()") + " }}\n"
-                normal_condition = "    if: ${{ " + event + " && github.repository == 'ejmlabs/.github' && !contains(github.event.issue.labels.*.name, 'acceptance:missing-model-key') }}\n"
-                missing_condition = "    if: ${{ " + event + " && github.repository == 'ejmlabs/.github' && contains(github.event.issue.labels.*.name, 'acceptance:missing-model-key') }}\n"
+                original = "    if: ${{ " + event + " }}\n"
+                normal_condition = "    if: ${{ " + event + " && github.repository == 'ejmlabs/.github' && !contains(" + labels + ", 'acceptance:missing-model-key') }}\n"
+                missing_condition = "    if: ${{ " + event + " && github.repository == 'ejmlabs/.github' && contains(" + labels + ", 'acceptance:missing-model-key') }}\n"
                 self.assertTrue(normal_job.startswith(normal_condition))
                 self.assertTrue(missing_job.startswith(missing_condition))
                 self.assertEqual(normal_job.replace(normal_condition, original), original_job)
@@ -339,7 +340,10 @@ class WorkflowTests(unittest.TestCase):
     def test_consumer_trigger_and_yaml_bypasses_are_rejected(self) -> None:
         original = consumer_workflows(self.revision)["pr.yml"]
         mutations = {
-            "inline automatic trigger": original.replace("on:\n  issue_comment:\n    types: [created, edited, deleted]", "on: [push]"),
+            "inline automatic trigger": original.replace(
+                "on:\n  pull_request:\n    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, labeled]",
+                "on: [push]",
+            ),
             "duplicate trigger": original + "on: [push]\n",
             "extra automatic trigger": original.replace("on:\n", "on:\n  push:\n"),
             "quoted mutable uses and fake pin": original.replace("    uses: ejmlabs/.github/.github/workflows/governance.yml@" + self.revision,

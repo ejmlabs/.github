@@ -11,8 +11,8 @@ there. A rule below or a repository skill may add to them, never relax them.
   reporting.
 - Finish through ship: when a requested change is built and checked, carry it through commit,
   PR, merge, deploy and a live check without asking at each step. Stop only for a gate only a
-  human can pass, a failing check, or an ambiguous product decision. Agents never post the
-  `/ready` or `/approve` gate comments; hand the user the exact commands.
+  human can pass, a failing check, or an ambiguous product decision. Agents may mark a PR Ready
+  or add `gate:approve` / `gate:revoke` only when the user explicitly asks.
 - Other agents may be working here. Check `git status` first, change only your paths, never
   revert work you did not make, and never use bare `git stash`.
 - Follow an existing pattern, or define one and record it before you use it. Prefer trusted,

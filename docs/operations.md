@@ -2,25 +2,25 @@
 
 ## Permissions and required settings
 
-Protect main with PRs, one native approval recorded from an explicit human
-maintainer decision, and four strict required statuses bound to GitHub Actions:
-Human readiness, Maintainer approval, Quality and Repository standards. They
-are enforced for administrators too: `scripts/configure_repositories.py` sets
+Protect main with PRs, one approving GitHub review, and two strict required
+statuses bound to GitHub Actions: Quality and Repository standards. They are
+enforced for administrators too: `scripts/configure_repositories.py` sets
 `enforce_admins`, and there is no administrator bypass. Require resolved
 conversations, linear history and stale approval dismissal. Block force pushes
 and branch deletion. Use squash merges and delete merged branches. Allow
-auto-merge: a maintainer may post `/approve` right after `/ready` and arm
-auto-merge, and the PR merges itself once every required status passes.
-Strict statuses still hold it until it is up to date with main.
+auto-merge: after checks are admitted, a maintainer may add the `gate:approve`
+label for self-approve under `enforce_admins`, arm auto-merge, and let the PR
+merge once every required status passes. Strict statuses still hold it until
+it is up to date with main.
 
 No automated model review runs or is required. Maintainers review every change
-themselves before `/approve`. Turning any model review back on, as a status, a
+themselves before approving. Turning any model review back on, as a status, a
 label or an advisory comment, needs the security review's sign-off first.
 
 Default workflow tokens are read-only. Allow only full-SHA actions from the
 selected core and dependency setup sources and this shared repository. Enable
-bot review recording so an explicit human approval can be represented as a
-native review, including self approval.
+bot review recording so an explicit human self-approve can be represented as a
+native review via the `gate:approve` label.
 
 Every account with write access must be a human with maintain or admin
 permission. The settings tool rejects ordinary writers and bots. GitHub
@@ -29,26 +29,30 @@ writer can add a branch workflow with that identity. Before granting ordinary
 write access, move required result publication to a dedicated GitHub App with
 credentials confined to a protected environment.
 
-Revoke open PR decisions before removing or demoting a maintainer. Commands,
-finalization and releases check current roles, but GitHub sends no continuous
+Revoke open PR decisions before removing or demoting a maintainer. Admission,
+labels and releases check current roles, but GitHub sends no continuous
 role-change event to this pipeline. Organization administrators remain trusted
 because they can change repository policy.
 
 ## Admission and budget controls
 
-Trusted main handles issue-comment events. Bot and unrelated comments are
-filtered before a runner starts. Admission checks the human's current
-maintain/admin role, full current head, non-draft PR, main target and original
-command. Decisions must be separate, unedited comments. New commits require
-new decisions. Wait for Human readiness to turn green before posting
-`/approve`, and never post `/ready` and `/approve` together or on the same head
-within seconds.
-The head repository must match the base repository. Fork PRs and deleted-fork
-heads require manual review instead of automated admission.
+Admission is driven by pull request lifecycle fields and collaborator
+permissions, not by comment text. Draft PRs spend nothing. A same-repository
+non-draft PR whose author is a current human maintainer or admin is admitted
+on open, synchronize and ready_for_review. Outsiders and forks are admitted
+only when a current human maintainer marks the PR Ready for review. Comment
+bodies that contain `/ready` or `/approve` are ignored as control signals.
 
-Admission is serialized per PR. Replayed events and Actions reruns are
-rejected; each command is consumed once. A commit can be readmitted only after
-explicit revocation and a new human command.
+Solo maintainers self-approve by adding the `gate:approve` label. Trusted
+automation records a bot APPROVE for the current head and removes the label.
+`gate:revoke` cancels admitted work and dismisses bot approvals for that head.
+Label handling uses exact name equality from the labeled event. Later jobs
+re-check live PR API state and workflow outputs; they do not parse status
+description tokens.
+
+Admission is serialized per PR with cancel-in-progress concurrency. Actions
+reruns are rejected. A new commit needs a new admission under the rules above.
+Converting back to draft cancels admitted work until Ready again.
 
 | Limit | Bound |
 | --- | --- |
@@ -61,8 +65,8 @@ explicit revocation and a new human command.
 
 There is no automated model review. The gate has no model job, no review
 status, no review label and no label override, and no job receives a model key.
-Maintainer approval, which covers every file in the diff including lockfiles,
-generated files, images and other assets, is the only review.
+A GitHub approving review covers every file in the diff including lockfiles,
+generated files, images and other assets.
 
 A failed required check blocks merge. These checks cannot prove correctness,
 so human review and the other gates remain necessary. Metadata-only PRs remain
@@ -320,19 +324,17 @@ label, the fixture forwards no secrets; without it, the normal route forwards
 its declared secrets. Neither uses `secrets: inherit`. Changing the label
 starts no workflow. Product callers do not accept this fixture form.
 
-For active revocation, put a bounded hold in credential-free Quality and
-require a flushed log marker before the exact-head revoke comment. Verify
-cancellation of the original step, job and run, failed human statuses, native
-approval dismissal and no later successful human status from finalization.
+For active revocation, add the `gate:revoke` label. Verify cancellation of the
+original step, job and run, failed Quality and Repository standards statuses,
+native approval dismissal and no later successful status from finalization.
 The revoke event must skip source preparation and builds. In-progress metadata
 alone does not prove the hold was active.
 
 ## Credentials
 
-No job receives a model key. The shared workflow still declares an optional,
-unused `XAI_API_KEY` secret so callers in the previous form can pass it for one
-generation; the next shared revision removes the declaration. After every
-caller is on the new revision, the owner removes the stored model key secret
+No job receives a model key. The shared workflow no longer declares
+`XAI_API_KEY`. After every caller is on a pin that omits the secret, the owner
+removes the stored model key secret
 and closes or empties the prepaid provider account.
 
 Public harness source needs no private checkout token. Pin its exact revision
@@ -560,16 +562,39 @@ the formatter, owns those copies.
 1. Test the shared implementation and retain its exact commit under
    `workflow-pins/FULL_SHA`. Protect `workflow-pins/*` against updates and
    deletion with no bypass actors. Callers still pin the commit, not the ref.
-2. Add callers pinned to that retained revision. A main comment workflow must
-   exist before GitHub can deliver PR comment events to it.
+2. Add callers pinned to that retained revision. A main `pull_request` workflow
+   must exist before GitHub can deliver lifecycle and label events to it.
 3. Pause existing automatic workflows during initial adoption. Obtain explicit
    acceptance of the exact bootstrap source; do not silently weaken active
    protection. Review consumer updates without overwriting concurrent work.
 4. Read back main protection, Actions policy, ref rules, dependency alerts and
    security controls. Test the installed caller through a fresh admitted PR.
-5. Test human readiness, stale pushes, self approval, revocation, missing keys,
-   failed checks and duplicate release tags in GitHub before claiming those
-   paths verified. Local policy tests do not establish event delivery.
+5. Test maintainer auto-admit, outsider Ready ignored, `gate:approve`,
+   `gate:revoke`, stale pushes, failed checks and duplicate release tags in
+   GitHub before claiming those paths verified. Local policy tests do not
+   establish event delivery.
+
+### Ready-for-review admission
+
+Each repository's required **Repository standards** check runs the standards
+embedded at the pin on its main, so a change is checked by the previous pin's
+standards. Roll out in this order, each step through an ordinary admitted PR
+with no administrator bypass:
+
+1. Merge this shared revision here while this repository's own `pr.yml` stays
+   on the previous comment-only caller form pinned to the live review-free
+   revision. Retain the merged commit under `workflow-pins/FULL_SHA`.
+2. In every caller, including this repository's own `pr.yml`, change only the
+   governance and release pins to the new revision, keeping the previous
+   comment-only caller form. Create the `gate:approve` and `gate:revoke`
+   labels (the settings script does this).
+3. Once main runs the new pin, change each caller to the Ready-for-review
+   form (`pull_request` lifecycle + labeled). A pin change and a form change
+   in one PR fail the previous standards, so they are separate PRs.
+4. The owner sets required checks to Quality and Repository standards only,
+   keeps `enforce_admins` and one approving review, and reads that back.
+5. The next shared revision removes the previous comment-only caller form
+   from the standards check.
 
 ### Removing the AI review
 
@@ -602,10 +627,6 @@ with no administrator bypass:
    account.
 7. The next shared revision removes the previous caller form, the optional
    secret declaration and the fixture form from the standards check.
-
-`CONTRIBUTING.md` still names the removed status. It is compared byte for byte
-with the shared template, so changing it needs its own two-step adoption and
-is left for a later revision.
 
 ## Public visibility checklist
 

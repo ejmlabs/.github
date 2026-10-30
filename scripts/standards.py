@@ -281,7 +281,26 @@ jobs:
       version: ${{ inputs.version }}
       standards-ref: "STANDARDS_REVISION"
 """
+# Ready-for-review lifecycle caller. Control plane is PR actions and labels, not comments.
 PR_CALLER = """name: Human-admitted PR checks
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, labeled]
+permissions: {}
+jobs:
+  governance:
+    if: ${{ github.event_name == 'pull_request' }}
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+      actions: write
+    uses: ejmlabs/.github/.github/workflows/governance.yml@STANDARDS_REVISION
+    secrets:
+      EJM_HARNESS_TOKEN: ${{ secrets.EJM_HARNESS_TOKEN }}
+"""
+# Comment-only caller after AI review removal; accepted for one generation with the Ready-for-review caller.
+PREVIOUS_PR_CALLER = """name: Human-admitted PR checks
 on:
   issue_comment:
     types: [created, edited, deleted]
@@ -298,31 +317,14 @@ jobs:
     secrets:
       EJM_HARNESS_TOKEN: ${{ secrets.EJM_HARNESS_TOKEN }}
 """
-# The caller form before the review was removed. It is accepted for one generation
-# so every repository can adopt the new pin before it adopts the new form.
-CURRENT_PR_CALLER = """name: Human-admitted PR checks
-on:
-  issue_comment:
-    types: [created, edited, deleted]
-  pull_request_target:
-    types: [unlabeled]
-permissions: {}
-jobs:
-  governance:
-    if: ${{ github.event.issue.pull_request || github.event_name == 'pull_request_target' }}
-    permissions:
-      contents: read
-      pull-requests: write
-      statuses: write
-      actions: write
-    uses: ejmlabs/.github/.github/workflows/governance.yml@STANDARDS_REVISION
-    secrets:
-      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
-      EJM_HARNESS_TOKEN: ${{ secrets.EJM_HARNESS_TOKEN }}
-"""
 
 
-PR_EVENT = {False: "github.event.issue.pull_request", True: "github.event.issue.pull_request || github.event_name == 'pull_request_target'"}
+# False = Ready-for-review caller; True = previous comment-only caller.
+PR_EVENT = {False: "github.event_name == 'pull_request'", True: "github.event.issue.pull_request"}
+PR_LABELS = {
+    False: "github.event.pull_request.labels.*.name",
+    True: "github.event.issue.labels.*.name",
+}
 
 
 # Build output is verified before the tag exists and attached after the draft, from the same main commit.
@@ -437,20 +439,26 @@ def native_build(text: str) -> None:
 
 
 def consumer_workflows(revision: str, *, current: bool = False, native: bool = False) -> dict[str, str]:
-    """Return the normal consumer workflows for one reviewed revision."""
+    """Return the normal consumer workflows for one reviewed revision.
+
+    current=False is the Ready-for-review caller. current=True is the previous
+    comment-only caller, accepted for one generation while consumers re-pin.
+    """
     if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
         raise ValueError("Standards revision must be a full lowercase commit SHA")
+    caller = PREVIOUS_PR_CALLER if current else PR_CALLER
     return {name: text.replace("STANDARDS_REVISION", revision) for name, text in
-            (("pr.yml", CURRENT_PR_CALLER if current else PR_CALLER), ("release.yml", NATIVE_RELEASE_CALLER if native else RELEASE_CALLER))}
+            (("pr.yml", caller), ("release.yml", NATIVE_RELEASE_CALLER if native else RELEASE_CALLER))}
 
 
 def missing_model_key_workflows(revision: str, *, current: bool = False) -> dict[str, str]:
     """Return the exact shared-only caller for staged missing-key acceptance."""
     documents = consumer_workflows(revision, current=current)
     header, job = documents["pr.yml"].split("  governance:\n", 1)
-    original = "    if: ${{ " + PR_EVENT[current] + " }}\n"
-    scope = ("(" + PR_EVENT[current] + ")" if current else PR_EVENT[current]) + " && github.repository == 'ejmlabs/.github'"
-    label = "contains(github.event.issue.labels.*.name, 'acceptance:missing-model-key')"
+    event = PR_EVENT[current]
+    original = "    if: ${{ " + event + " }}\n"
+    scope = event + " && github.repository == 'ejmlabs/.github'"
+    label = "contains(" + PR_LABELS[current] + ", 'acceptance:missing-model-key')"
     normal = job.replace(original, "    if: ${{ " + scope + " && !" + label + " }}\n")
     missing = job.split("    secrets:\n", 1)[0].replace(original, "    if: ${{ " + scope + " && " + label + " }}\n")
     documents["pr.yml"] = header + "  governance:\n" + normal + "  missing_model_key:\n" + missing
@@ -465,8 +473,6 @@ def _reusable_workflow(text: str, name: str) -> None:
 "on":
   "workflow_call":
     "secrets":
-      "XAI_API_KEY":
-        "required": false
       "EJM_HARNESS_TOKEN":
         "required": false
 "permissions": {}

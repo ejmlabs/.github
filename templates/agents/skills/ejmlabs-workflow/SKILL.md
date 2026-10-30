@@ -46,22 +46,22 @@ repository deploys, checked live, and reported honestly.
 
 ## The human gate
 
-Repositories on the shared `ejmlabs/.github` gate need two comments from a human maintainer on
-the exact head commit: `/ready FULL_SHA` (admits CI and AI review) and, after review,
-`/approve FULL_SHA`. Agents never post these. As soon as the PR is open, give the user both
-commands in one message, with the full 40-character head SHA, and continue the moment they say
-done. When the repository's AGENTS.md describes a different gate, follow it. Details, limits and
-recovery are in [references/pr-gate.md](references/pr-gate.md).
+Repositories on the shared `ejmlabs/.github` gate admit maintainer same-repo non-draft PRs
+automatically. Outsiders and forks need a maintainer Ready-for-review action. Solo maintainers
+self-approve with the `gate:approve` label; `gate:revoke` cancels admission. Agents may mark
+Ready or add those labels only when the user explicitly asks. When the repository's AGENTS.md
+describes a different gate, follow it. Details, limits and recovery are in
+[references/pr-gate.md](references/pr-gate.md).
 
 ## Ship
 
 - When the work is built and checked, carry it through without asking at each step: commit,
-  push, PR, gate commands, merge, deploy, live check. Stop only for a gate only a human can pass,
-  a failing check, or an ambiguous product decision.
+  push, PR, merge, deploy, live check. Stop only for a gate only a human can pass, a failing
+  check, or an ambiguous product decision.
 - Merge only when every check is green, including ones GitHub does not require. Never merge on a
   pending or failed check. Use `gh pr merge N --squash --match-head-commit FULL_SHA`.
 - Never rerun failed Actions jobs to get green. Find the cause, fix it in a new commit, and get
-  fresh gate comments.
+  a fresh admission (Ready again or a new push).
 - Deploy only from merged `main`, the way the repository's deploy skill says. Releases (tags,
   package publishing, signed installers) and approval-gated production deploys need the user's
   explicit request. See [references/releases.md](references/releases.md).
@@ -78,8 +78,8 @@ recovery are in [references/pr-gate.md](references/pr-gate.md).
 
 ## Read next
 
-- [references/pr-gate.md](references/pr-gate.md): admission, approval, revocation, required
-  statuses, AI review labels, limits.
+- [references/pr-gate.md](references/pr-gate.md): admission, `gate:approve` / `gate:revoke`,
+  required statuses, limits.
 - [references/parallel-work.md](references/parallel-work.md): fanning work out to several agents
   and coordinating with sibling repositories.
 - [references/releases.md](references/releases.md): versions, changelogs, draft releases, tags.
