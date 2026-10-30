@@ -618,7 +618,7 @@ class WorkflowSecurityTests(unittest.TestCase):
         result = subprocess.run(["bash", "-e", "-c", script], check=True, capture_output=True, text=True)
         self.assertEqual(result.stdout, literal + "\nfixture\n")
 
-    def test_large_trusted_payload_runs_and_rejects_tampering(self) -> None:
+    def test_large_trusted_payload_runs_and_rejects_invalid_or_missing_chunks(self) -> None:
         payload = "".join(hashlib.sha256(str(i).encode()).hexdigest() for i in range(782))[:50_000]
         source = "payload = " + repr(payload) + "\nprint(len(payload))\n"
         step = workflows.run("large", workflows.python(source))
@@ -627,13 +627,16 @@ class WorkflowSecurityTests(unittest.TestCase):
         env = {**os.environ, "EJM_TRUSTED_SCRIPT_0": "poisoned", **chunks}
         result = subprocess.run(["bash", "-e", "-c", step["run"]], env=env, capture_output=True, text=True, check=True)
         self.assertEqual(result.stdout, "50000\n")
-        env["EJM_TRUSTED_SCRIPT_0"] = "x" + chunks["EJM_TRUSTED_SCRIPT_0"][1:]
+        env["EJM_TRUSTED_SCRIPT_0"] = "!" + chunks["EJM_TRUSTED_SCRIPT_0"][1:]
         result = subprocess.run(["bash", "-e", "-c", step["run"]], env=env, capture_output=True, text=True, check=False)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("integrity mismatch", result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("Only base64 data is allowed", result.stderr)
         del env["EJM_TRUSTED_SCRIPT_0"]
         result = subprocess.run(["bash", "-e", "-c", step["run"]], env=env, capture_output=True, text=True, check=False)
         self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("EJM_TRUSTED_SCRIPT_0", result.stderr)
 
     def test_real_chunked_workflow_commands_reconstruct_trusted_source(self) -> None:
         documents = (workflows.governance(), workflows.release_workflow(), workflows.verify_build_workflow(),

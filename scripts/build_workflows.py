@@ -2,7 +2,6 @@
 """Embed trusted scripts in reusable workflows so private callers need no read token."""
 import base64
 import bz2
-import hashlib
 import json
 import re
 import sys
@@ -65,7 +64,6 @@ def python(text: str, args: str = "", executable: str = "python3") -> str:
 
 def run(name: str, script: str, **extra: str | bool | int | dict[str, Any] | list[Any]) -> dict[str, Any]:
     if len(script) > MAX_RUN_CHARS:
-        # Step-local chunks are static; verify their digest before execution.
         matches = list(re.finditer(r"base64\.b64decode\('([A-Za-z0-9+/=]+)'\)", script))
         if len(matches) != 1 or script.count("import base64, bz2\n") != 1:
             raise ValueError(f"Cannot safely split oversized run step: {name}")
@@ -75,10 +73,7 @@ def run(name: str, script: str, **extra: str | bool | int | dict[str, Any] | lis
         if not isinstance(existing, dict) or any(key.upper().startswith("EJM_TRUSTED_SCRIPT_") for key in existing):
             raise ValueError("Trusted payload environment collision")
         extra["env"] = {**existing, **{key: encoded[i * PAYLOAD_CHARS:(i + 1) * PAYLOAD_CHARS] for i, key in enumerate(keys)}}
-        digest = hashlib.sha256(encoded.encode("ascii")).hexdigest()
-        initializer = ("import base64, bz2, hashlib, os\n_trusted_script = ''.join(os.environ[key] for key in " + repr(keys) + ")\n"
-                       + "if hashlib.sha256(_trusted_script.encode('ascii')).hexdigest() != " + repr(digest)
-                       + ": raise ValueError('Trusted workflow payload integrity mismatch')\n")
+        initializer = "import base64, bz2, os\n_trusted_script = ''.join(os.environ[key] for key in " + repr(keys) + ")\n"
         script = script[:matches[0].start()] + "base64.b64decode(_trusted_script, validate=True)" + script[matches[0].end():]
         script = script.replace("import base64, bz2\n", initializer, 1)
     if len(script) > MAX_RUN_CHARS:

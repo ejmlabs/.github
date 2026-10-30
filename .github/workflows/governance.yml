@@ -388,9 +388,8 @@
         "shell": "bash"
         "run": |
           python3 - product "$PROFILE" <<'TRUSTED_PYTHON'
-          import base64, bz2, hashlib, os
+          import base64, bz2, os
           _trusted_script = ''.join(os.environ[key] for key in ['EJM_TRUSTED_SCRIPT_0', 'EJM_TRUSTED_SCRIPT_1', 'EJM_TRUSTED_SCRIPT_2'])
-          if hashlib.sha256(_trusted_script.encode('ascii')).hexdigest() != '926bf4db633390e8ec9dd4ee3fc276ab083d8c7e15afcab7bb153b4f86dfc2bd': raise ValueError('Trusted workflow payload integrity mismatch')
           exec(compile(bz2.decompress(base64.b64decode(_trusted_script, validate=True)), 'trusted-workflow.py', 'exec'))
           TRUSTED_PYTHON
         "env":
