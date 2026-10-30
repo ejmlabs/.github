@@ -387,7 +387,10 @@ remain separate tasks; this shared implementation enables none by itself.
 
 Site repositories (`ejmlabs`, `ejm-cli`, `ejm-harness`, `ejm-ide`, `ejm-ui`)
 adopt continuous deploys by adding the canonical `deploy.yml` caller. Each push
-to main runs the shared `deploy-site.yml`:
+to main runs the shared `deploy-site.yml`. The caller passes `secrets: inherit`,
+because a called workflow sees an environment's secrets only when its caller
+passes them; without it the token is empty and the deploy step stops. Only the
+deploy steps reference a secret, `CLOUDFLARE_API_TOKEN`:
 
 1. `build` checks out that main commit and main's pinned `ejm-ui`, runs the
    site's build commands from `scripts/deploy.py` with `contents: read` and no

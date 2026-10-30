@@ -62,6 +62,8 @@ WARM_CACHE = ("ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui")
 # Repositories that serve a Cloudflare site. One adopts staging and approved production deploys by adding deploy.yml.
 SITE_DEPLOY = ("ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui", "ejmlabs")
 # Each push to main deploys to staging; production waits for a required reviewer on the production environment.
+# A called workflow sees an environment's secrets only when its caller passes them. Inherit passes the Cloudflare
+# token without a workflow_call declaration; deploy-site.yml references no other secret.
 SITE_DEPLOY_CALLER = """name: Deploy site
 on:
   push:
@@ -73,7 +75,11 @@ jobs:
       contents: read
       actions: read
     uses: ejmlabs/.github/.github/workflows/deploy-site.yml@STANDARDS_REVISION
+    secrets: inherit
 """
+# The caller form that passed no secrets, so its deploys got an empty token. It is accepted for one
+# generation so every site can adopt the new pin before it adopts the new form.
+CURRENT_SITE_DEPLOY_CALLER = SITE_DEPLOY_CALLER.replace("    secrets: inherit\n", "")
 # The only writer of gate caches: a push to main builds the reviewed commit and saves it.
 WARM_CACHE_CALLER = """name: Warm trusted gate build caches
 on:
@@ -472,6 +478,9 @@ def _reusable_workflow(text: str, name: str) -> None:
 "permissions": {}
 """
         roots = ['"jobs":']
+        # The review model key declaration is accepted for one generation while it is removed.
+        if not text.startswith(header):
+            header = header.replace('      "XAI_API_KEY":\n        "required": false\n', "")
     elif name == "verify-build.yml":
         header += """"name": "Verified build run"
 "on":
@@ -672,7 +681,8 @@ def workflows(root: Path, profile: str) -> None:
     if "cache.yml" in allowed:
         consumers["cache.yml"] = WARM_CACHE_CALLER.replace("STANDARDS_REVISION", pin[1])
     if "deploy.yml" in allowed:
-        consumers["deploy.yml"] = SITE_DEPLOY_CALLER.replace("STANDARDS_REVISION", pin[1])
+        forms = [form.replace("STANDARDS_REVISION", pin[1]) for form in (SITE_DEPLOY_CALLER, CURRENT_SITE_DEPLOY_CALLER)]
+        consumers["deploy.yml"] = next((form for form in forms if read(root, ".github/workflows/deploy.yml") == form), forms[0])
     for name, expected in consumers.items():
         if read(root, ".github/workflows/" + name) != expected:
             raise ValueError("Workflow differs from the canonical consumer: " + name)

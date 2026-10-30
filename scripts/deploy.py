@@ -73,6 +73,9 @@ def main() -> None:
     environment, profile = sys.argv[1], os.environ["PROFILE"]
     if profile not in SITES:
         raise ValueError("No site deploy for this repository")
+    # A caller that does not pass secrets leaves the environment's token empty, and Wrangler then fails obscurely.
+    if not os.environ.get("CLOUDFLARE_API_TOKEN"):
+        raise ValueError("CLOUDFLARE_API_TOKEN is empty: set it on the " + environment + " environment, and deploy.yml must pass secrets: inherit")
     if environment == "production":
         require_approval()
     with tarfile.open("artifact/site.tar") as archive:

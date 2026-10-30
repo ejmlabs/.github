@@ -47,6 +47,7 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ### Fixed
 
+- Site deploys got an empty `CLOUDFLARE_API_TOKEN`: a called workflow sees an environment's secrets only when its caller passes them. The canonical `deploy.yml` now passes `secrets: inherit`, and `scripts/deploy.py` stops with a clear error when the token is empty. The standards accept the previous caller form for one generation, and a shared `governance.yml` with or without the review model key declaration, so the declaration can be removed next.
 - Treat ejmlabs/.github build-generated workflow paths and deleted SVG files
   as not model-reviewed so reviews complete when the remaining text is covered.
 - Confine the review model key to a protected environment restricted to main.

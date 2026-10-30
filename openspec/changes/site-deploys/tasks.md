@@ -2,6 +2,8 @@
 
 - [x] 1.1 Add `deploy_workflow` to `scripts/build_workflows.py`, `scripts/deploy.py` and the `deploy/` lockfile.
 - [x] 1.2 Accept `deploy-site.yml` and the canonical `deploy.yml` caller in `scripts/standards.py` and `scripts/configure_repositories.py`.
+- [x] 1.3 Pass the environment token: the canonical caller adds `secrets: inherit`, the previous form is accepted for one generation, and `scripts/deploy.py` refuses an empty token.
+- [ ] 1.4 Re-pin each site to this revision, then switch its `deploy.yml` to the inheriting form.
 
 ## 2. Verification
 
