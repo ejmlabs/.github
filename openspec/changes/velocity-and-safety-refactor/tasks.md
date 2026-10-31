@@ -18,7 +18,7 @@
   - [x] Maintainer PRs admitted on 863bd13 and merged with a `gate:approve` bot approval: ejmlabs/ejm-ui#52, ejmlabs/ejmlabs#52, ejmlabs/ejm-ide#54, ejmlabs/ejm-harness#66 (Linux, macOS and Windows Quality) and ejmlabs/.github#74; ejmlabs/ejm-ide#55 admitted a 501-file, 84,000-line deletion with no size cap
   - [x] A Dependabot PR admitted by `gate:approve`: ejmlabs/.github#71 got the bot approval and an admitted run on its head, then merged
   - [ ] A fork PR prints the notice (needs an outside account)
-  - [ ] `gate:revoke` and conversion to draft stop a head
+  - [x] `gate:revoke` and conversion to draft stop a head: on ejmlabs/.github#75 at 863bd13, `gate:revoke` (run 41230746207) failed both statuses twice, as the first and last write, and the label came off after the stop. A draft conversion (run 41230790635) failed both again, and Ready (run 41230822005) admitted the head and passed. Neither stop run started a check job
   - [ ] A rerun of failed jobs keeps the admission
 - [x] 2.2 A Dependabot actions PR passes `python3 scripts/build_workflows.py --check`: ejmlabs/.github#71 changed `action.yml` and the generated `attach-assets.yml` together, and its admitted Quality and Repository standards passed
 - [ ] 2.3 First staging and production deploy for each adopting site, with its environments configured
@@ -34,6 +34,7 @@
   - [x] Fix the community text (3.3)
 - [ ] 3.2 One PR per consumer (`ejm-cli`, `ejm-harness`, `ejm-ide`, `ejm-ui`, `ejmlabs`) that moves every pin, switches `deploy.yml` to `secrets: inherit` where present, and resyncs community files and other templates
   - [x] ejm-harness#66, ejm-ide#54, ejm-ui#52 and ejmlabs#52 on 863bd13
+  - [ ] The b342040 revision (ejmlabs/.github#75): ejm-ui#57, ejmlabs#55, ejm-ide#60 and ejm-harness#76, which also adopt deploy-on-merge where it is new
   - [ ] ejm-cli, which needs push access for the agent
 - [x] 3.3 Fix stale community text in `templates/community/` and the root files: SECURITY.md ("before checks or AI run"), CODE_OF_CONDUCT.md ("AI review"), CONTRIBUTING.md ("Address findings", forks admitted by Ready, "Do not use Actions rerun to replay an admission")
 - [ ] 3.4 Archive this change, skipping the `pr-gate` sync (already done here), and sync `repository-standards` into `openspec/specs/`
