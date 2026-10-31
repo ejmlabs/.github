@@ -121,6 +121,14 @@ The net change since 0.1.0:
 
 - The standards job reads `job.workflow_sha` in each step's env. Revision 9f7421b read it in the job's own env, where GitHub does not offer the job context, so no caller can start a run at that revision; never pin it. A test now holds every job-level key of the generated workflows to the contexts GitHub allows there.
 
+### Site builds that link ejm-ui
+
+#### Changed
+
+- The `ejm-harness` site fallback build runs `npm --prefix ../ejm-ui ci --ignore-scripts`, `npm --prefix site ci --ignore-scripts` and `npm --prefix site run build`, and the deploy packs `site/wrangler.jsonc` and `site/dist`. It used to run no build and pack `site/public`, which would publish an empty site once the site is built with ejm-ssg.
+- The `ejm-ide` site fallback build installs ejm-ui's dependencies first (`npm --prefix ../ejm-ui ci --ignore-scripts`), then runs `npm ci --ignore-scripts` and `npm run site:build`, because its `website/` workspace links `@ejm/*` from `../ejm-ui`.
+- Both take effect in a repository when its PR moves its pins. A product's own `.github/site-build` still replaces them.
+
 ## [0.1.0] - 2026-10-18
 
 - Initial development baseline. This entry documents source version metadata; it does not assert a published release or production readiness.

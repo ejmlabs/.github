@@ -20,14 +20,17 @@ ACCOUNT_ID = "478a0db3a110d8503c16abbc1db27af4"
 # executable .github/site-build, Wrangler config, paths the deploy needs). The path that contains the config is
 # source: it is committed, so the deploy takes it from the reviewed commit and requires the build's copy to match
 # byte for byte (the config file alone for most sites; ejm-ide's whole distribution directory, which holds its
-# Worker). Every other path is build output. Sites that link ../ejm-ui get it at main's pinned revision.
+# Worker). Every other path is build output. Sites that link ../ejm-ui get it at main's pinned revision and install
+# its own dependencies first (npm --prefix ../ejm-ui ci), because the file: links resolve into its packages.
 SITES = {
     "ejmlabs": ("npm --prefix ../ejm-ui ci --ignore-scripts\nnpm --prefix site ci --ignore-scripts\nnpm --prefix site run build\n",
                 "site/wrangler.jsonc", ("site/wrangler.jsonc", "site/dist")),
     "ejm-cli": ("npm --prefix ../ejm-ui ci --ignore-scripts\nnpm --prefix site ci --ignore-scripts\nnpm --prefix site run build\n",
                 "site/wrangler.jsonc", ("site/wrangler.jsonc", "site/dist")),
-    "ejm-harness": ("", "site/wrangler.jsonc", ("site/wrangler.jsonc", "site/public")),
-    "ejm-ide": ("npm ci --ignore-scripts\nnpm run site:build\n", "distribution/wrangler.jsonc", ("distribution", "website/dist")),
+    "ejm-harness": ("npm --prefix ../ejm-ui ci --ignore-scripts\nnpm --prefix site ci --ignore-scripts\nnpm --prefix site run build\n",
+                    "site/wrangler.jsonc", ("site/wrangler.jsonc", "site/dist")),
+    "ejm-ide": ("npm --prefix ../ejm-ui ci --ignore-scripts\nnpm ci --ignore-scripts\nnpm run site:build\n",
+                "distribution/wrangler.jsonc", ("distribution", "website/dist")),
     "ejm-ui": ("npm ci --ignore-scripts\nnpm run build -w @ejm/gallery\n", "apps/gallery/wrangler.jsonc", ("apps/gallery/wrangler.jsonc", "apps/gallery/dist")),
     "ejm-calm": ("npm ci --ignore-scripts\nnpm run build\n", "wrangler.jsonc", ("wrangler.jsonc", "dist")),
 }
