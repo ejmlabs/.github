@@ -161,10 +161,31 @@ class RoutingBlockTests(unittest.TestCase):
             self.assertEqual(sync(root).returncode, 0)
             text = (root / "AGENTS.md").read_text()
             self.assertEqual(text.count("<!-- ejmlabs:skills:start -->"), 1)
+            self.assertEqual(text.count("## Skills"), 1)
             self.assertLess(text.index("ejmlabs:house-rules:end"), text.index("ejmlabs:skills:start"))
             self.assertEqual(sync(root, "--check").returncode, 0)
             self.assertEqual(sync(root).returncode, 0)
             self.assertEqual((root / "AGENTS.md").read_text(), text)
+
+    def test_first_sync_puts_the_block_inside_an_existing_skills_section(self) -> None:
+        intro = "Load the skill whose trigger matches the work before you start it.\n"
+        table = "| Work | Skill |\n| --- | --- |\n| Repository work | [repo-own](.agents/skills/repo-own/SKILL.md) |\n"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            own = root / ".agents/skills/repo-own"
+            own.mkdir(parents=True)
+            (own / "SKILL.md").write_text("---\nname: repo-own\ndescription: Test.\n---\n")
+            agents = root / "AGENTS.md"
+            agents.write_text("# repo\n\n" + RULES_MARKERS + "\n## Skills\n\n" + intro + "\n" + table + "\n## Done means\n\nShipped.\n")
+            self.assertEqual(sync(root).returncode, 0)
+            text = agents.read_text()
+            self.assertEqual(text.count("## Skills"), 1)
+            self.assertLess(text.index(intro), text.index("<!-- ejmlabs:skills:start -->"))
+            self.assertLess(text.index("<!-- ejmlabs:skills:end -->"), text.index(table))
+            self.assertTrue(text.endswith(table + "\n## Done means\n\nShipped.\n"))
+            self.assertEqual(sync(root, "--check").returncode, 0)
+            self.assertEqual(sync(root).returncode, 0)
+            self.assertEqual(agents.read_text(), text)
 
     def test_stale_block_is_named_and_repaired_without_touching_the_rest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

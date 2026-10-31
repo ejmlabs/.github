@@ -89,6 +89,30 @@ def put(text: str, found: re.Match[str], block: str) -> str:
     return text[: found.start()] + new + text[found.end() :]
 
 
+def insert_routing(text: str, block: str) -> str:
+    """Add the skills block to a file that has none, inside an existing Skills section when there is one.
+
+    The block goes after the section's opening paragraph, so the repository's own rows stay below it and no second
+    Skills heading appears. A file without a Skills section gets one right after the house rules.
+    """
+    heading = re.search(r"^## Skills[ \t]*\n", text, re.MULTILINE)
+    if heading is None:
+        after = RULES.search(text)
+        end = after.end() if after else len(text)
+        head = text[:end] if text[:end].endswith("\n") else text[:end] + "\n"
+        return head + "\n" + SKILLS_HEADING + block + text[end:]
+    lines = text[heading.end():].splitlines(keepends=True)
+    index = 0
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+    # The opening paragraph is prose: it stops at a blank line, a table, a list, a comment or the next heading.
+    while index < len(lines) and lines[index].strip() and not lines[index].lstrip().startswith(("|", "-", "*", "<", "#")):
+        index += 1
+    cut = heading.end() + sum(len(line) for line in lines[:index])
+    before, rest = text[:cut].rstrip("\n") + "\n\n", text[cut:].lstrip("\n")
+    return before + block + ("\n" + rest if rest else "")
+
+
 def update_agents(text: str, selected: list[str]) -> tuple[str, list[str], list[str]]:
     """Return AGENTS.md text with both marked blocks current, what stops a sync, and what changed."""
     rules = list(RULES.finditer(text))
@@ -106,10 +130,7 @@ def update_agents(text: str, selected: list[str]) -> tuple[str, list[str], list[
     found = ROUTING.search(text)
     if found is None:
         changes.append("skills routing block is missing")
-        after = RULES.search(text)
-        end = after.end() if after else len(text)
-        head = text[:end] if text[:end].endswith("\n") else text[:end] + "\n"
-        return head + "\n" + SKILLS_HEADING + block + text[end:], [], changes
+        return insert_routing(text, block), [], changes
     if found.group().rstrip("\n") != block.rstrip("\n"):
         changes.append("skills routing differs from the shared skills")
         text = put(text, found, block)
