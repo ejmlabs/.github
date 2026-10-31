@@ -187,8 +187,7 @@ def restore(job: str) -> list[dict[str, Any]]:
 
 
 def governance() -> dict[str, Any]:
-    templates = {path.name: path.read_text() for path in sorted((ROOT / "templates/community").glob("*.md"))}
-    standards_check = source("standards.py", library=True) + "\nstandards(Path(sys.argv[1]), sys.argv[2], " + repr(templates) + ")\n"
+    standards_check = source("standards.py", library=True) + "\nsys.exit(standards_main(sys.argv[1:]))\n"
     pull_if = (
         "github.event_name == 'pull_request' && "
         "contains(fromJSON('[\"opened\",\"reopened\",\"synchronize\",\"ready_for_review\",\"converted_to_draft\",\"labeled\"]'), github.event.action) && "

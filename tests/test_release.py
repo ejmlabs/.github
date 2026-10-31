@@ -259,7 +259,8 @@ class ReleaseTests(unittest.TestCase):
 
     def test_ui_release_requires_package_metadata_and_exact_font_notice_bytes(self) -> None:
         paths = set(namespace["DOCS"]) | {"VERSION", "package.json", "package-lock.json", "crates/ejm-tui/Cargo.toml", "crates/ejm-tui/Cargo.lock", *namespace["UI_FONT_NOTICES"]}
-        paths.update(path + "/" + name for path in namespace["UI_PACKAGES"] for name in ("package.json", "LICENSE", "THIRD_PARTY_NOTICES.md"))
+        # Packages come from the commit tree, so one added after the last review is still required.
+        paths.update(path + "/" + name for path in ("packages/core", "packages/tokens", "packages/added-later") for name in ("package.json", "LICENSE", "THIRD_PARTY_NOTICES.md"))
         for name in paths:
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)

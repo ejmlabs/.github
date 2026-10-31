@@ -811,10 +811,6 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertEqual(re.findall(r"(?m)^  (\w+):", triggers), ["pull_request"])
         self.assertIn("types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, labeled]", caller)
         self.assertNotIn("issue_comment", caller)
-        # The previous comment-only form stays accepted for one generation.
-        previous = consumer_workflows("a" * 40, current=True)["pr.yml"]
-        self.assertIn("  issue_comment:\n    types: [created, edited, deleted]\n", previous)
-        self.assertNotIn("pull_request:", previous)
         admission = self.governance["jobs"]["admission"]["if"]
         self.assertIn("github.event_name == 'pull_request'", admission)
         self.assertIn("gate:approve", admission)

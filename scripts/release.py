@@ -15,7 +15,7 @@ from typing import IO, TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from governance import REQUIRED_CONTEXTS, GitHub, human
     from prepare import source_archive
-    from standards import DOCS, UI_FONT_NOTICES, UI_PACKAGES, read, semver, versions
+    from standards import DOCS, UI_FONT_NOTICES, read, semver, versions
 
 # The workflow generator embeds governance.py, standards.py, and prepare.py first.
 
@@ -44,7 +44,9 @@ def archive_requirements(root: Path, sha: str, profile: str) -> dict[str, bytes]
         required.update(("sdk/python/LICENSE", "sdk/typescript/LICENSE", "sdk/python/pyproject.toml", "sdk/typescript/package.json"))
     if profile == "ejm-ui":
         required.update(("package.json", "package-lock.json", "crates/ejm-tui/Cargo.toml", "crates/ejm-tui/Cargo.lock", *UI_FONT_NOTICES))
-        required.update(path + "/" + name for path in UI_PACKAGES for name in ("package.json", "LICENSE", "THIRD_PARTY_NOTICES.md"))
+        # Every package directory in the commit, as the standards check finds them, not a fixed list.
+        packages = {name.removesuffix("/package.json") for name in names if re.fullmatch(r"packages/[^/]+/package\.json", name)}
+        required.update(path + "/" + name for path in sorted(packages) for name in ("package.json", "LICENSE", "THIRD_PARTY_NOTICES.md"))
     if profile in ("ejm-cli", "ejm-ide"):
         required.add(".github/harness-revision")
     return {path: read(root, path, preserve_newlines=True).encode("utf-8") for path in required}
