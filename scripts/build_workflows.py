@@ -2,21 +2,29 @@
 """Embed trusted scripts in reusable workflows so private callers need no read token."""
 import base64
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
 
-from deploy import SITES
+from deploy import SITES, source_path
 
 ROOT = Path(__file__).resolve().parent.parent
-CHECKOUT = "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
-NODE = "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020"
-UV = "astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884"
-ATTEST = "actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be"
-UPLOAD = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
-DOWNLOAD = "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
-CACHE_RESTORE = "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
-CACHE_SAVE = "actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
+
+
+def action_pins(manifest: Path) -> dict[str, str]:
+    """Read the action pins from action.yml, the manifest Dependabot updates beside the generated workflows."""
+    text = manifest.read_text()
+    found = re.findall(r"(?m)^ +(?:- )?uses: ([A-Za-z0-9][A-Za-z0-9._/-]*)@([0-9a-f]{40})(?: +#.*)?$", text)
+    names = [name for name, _ in found]
+    if len(found) != text.count("uses:") or len(set(names)) != len(names):
+        raise ValueError("action.yml must list each action once, pinned to a full commit SHA")
+    return {name: name + "@" + sha for name, sha in found}
+
+
+PINS = action_pins(ROOT / "action.yml")
+CHECKOUT, NODE, UV, ATTEST = PINS["actions/checkout"], PINS["actions/setup-node"], PINS["astral-sh/setup-uv"], PINS["actions/attest-build-provenance"]
+UPLOAD, DOWNLOAD, CACHE_RESTORE, CACHE_SAVE = PINS["actions/upload-artifact"], PINS["actions/download-artifact"], PINS["actions/cache/restore"], PINS["actions/cache/save"]
 # Runner images for each profile's quality job; every other profile uses Linux. The cache warm job builds the same set.
 QUALITY_OS = {"ejm-harness": ["ubuntu-24.04", "macos-15", "windows-2025"], "ejm-cli": ["ubuntu-24.04", "macos-15"], "ejm-ide": ["macos-15"]}
 # Cargo target directory each gate job builds, per profile. Only these profiles get a trusted build cache.
@@ -287,23 +295,36 @@ def deploy_workflow() -> dict[str, Any]:
     """Build a site once without credentials, deploy it to staging, then deploy the same files to production after a human approves."""
     profile = "github.event.repository.name"
     push = "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}"
-    build = 'cd product\ncase "$PROFILE" in\n' + "".join(
-        "  " + name + ")\n" + "".join("    " + line + "\n" for line in commands.splitlines()) + '    tar -cf "$RUNNER_TEMP/site.tar" ' + " ".join(files) + "\n    ;;\n"
-        for name, (commands, _, files) in SITES.items()) + "  *) exit 1 ;;\nesac\n"
+    # A product that owns .github/site-build builds with it; the profile's commands are the fallback. The files to pack stay in SITES.
+    product_build = "[[ ! -L .github && ! -L .github/site-build && -f .github/site-build && -x .github/site-build ]]"
+    commands = "".join("    " + name + ")\n" + "".join("      " + line + "\n" for line in build.splitlines()) + "      ;;\n" for name, (build, _, _) in SITES.items())
+    packs = "".join("  " + name + ') tar -cf "$RUNNER_TEMP/site.tar" ' + " ".join(files) + " ;;\n" for name, (_, _, files) in SITES.items())
+    build = ("cd product\nif " + product_build + "; then\n  export npm_config_ignore_scripts=true\n  ./.github/site-build\nelse\n"
+             '  case "$PROFILE" in\n' + commands + "    *) exit 1 ;;\n  esac\nfi\n" + 'case "$PROFILE" in\n' + packs + "  *) exit 1 ;;\nesac\n")
     manifest, lock = ((ROOT / "deploy" / name).read_text() for name in ("package.json", "package-lock.json"))
     install = 'mkdir -p "$RUNNER_TEMP/deployer"\ncd "$RUNNER_TEMP/deployer"\n' + python(
         "from pathlib import Path\nPath('package.json').write_text(" + repr(manifest) + ")\nPath('package-lock.json').write_text(" + repr(lock) + ")\n"
     ) + "npm ci --ignore-scripts --no-audit --no-fund\n"
+    # Each repository has one of these paths; the deploy compares the build's copy with the reviewed commit's, so only these are fetched.
+    sparse: dict[str, str | bool] = {"sparse-checkout": "\n".join(sorted({"/" + source_path(name) for name in SITES})), "sparse-checkout-cone-mode": False}
 
-    def deploy(environment: str, needs: str, permissions: dict[str, str], env: dict[str, str]) -> dict[str, Any]:
-        return {"needs": needs, "if": push, "runs-on": "ubuntu-24.04", "timeout-minutes": 10, "environment": environment, "permissions": permissions,
+    def deploy(environment: str, needs: str) -> dict[str, Any]:
+        trusted = python(source("deploy.py"), "{mode} " + environment, "python3 -I")
+        return {"needs": needs, "if": push, "runs-on": "ubuntu-24.04", "timeout-minutes": 10, "environment": environment,
+                # contents reads the reviewed config; actions reads the environment's rules. Both fit within the caller's grant.
+                "permissions": {"contents": "read", "actions": "read"},
                 # A newer main commit replaces a production deploy still waiting for approval; staging deploys run in order.
                 "concurrency": {"group": "deploy-" + environment + "-${{ github.repository }}", "cancel-in-progress": environment == "production"},
                 "env": {"PROFILE": "${{ " + profile + " }}"},
-                "steps": [{"uses": DOWNLOAD, "with": {"name": "site", "path": "artifact"}}, {"uses": NODE, "with": {"node-version": "24"}},
+                "steps": [{"uses": DOWNLOAD, "with": {"name": "site", "path": "artifact"}},
+                          # The Wrangler config and any Worker source come from this reviewed commit, as data. Nothing from it runs.
+                          checkout("reviewed", "${{ github.sha }}", **sparse),
+                          {"uses": NODE, "with": {"node-version": "24"}},
                           run("Install the pinned deployer", install, env={"GH_TOKEN": "", "GITHUB_TOKEN": "", "NPM_CONFIG_USERCONFIG": "/dev/null"}),
-                          run("Deploy the built site to " + environment, python(source("deploy.py"), environment, "python3 -I"),
-                              env={"CLOUDFLARE_API_TOKEN": "${{ secrets.CLOUDFLARE_API_TOKEN }}", **env})]}
+                          # GitHub creates a missing environment without rules, so read them before the deploy token is in play.
+                          run("Require the " + environment + " environment's protections", trusted.replace("{mode}", "protection"), env={"GH_TOKEN": "${{ github.token }}"}),
+                          run("Deploy the built site to " + environment, trusted.replace("{mode}", "deploy"),
+                              env={"CLOUDFLARE_API_TOKEN": "${{ secrets.CLOUDFLARE_API_TOKEN }}"})]}
 
     jobs = {
         "build": {"if": push, "runs-on": "ubuntu-24.04", "timeout-minutes": 20, "permissions": {"contents": "read"}, "env": {"PROFILE": "${{ " + profile + " }}"},
@@ -314,9 +335,8 @@ def deploy_workflow() -> dict[str, Any]:
                             {"uses": NODE, "with": {"node-version": "24"}},
                             run("Build the site without credentials", build),
                             {"uses": UPLOAD, "with": {"name": "site", "path": "${{ runner.temp }}/site.tar", "retention-days": 7, "if-no-files-found": "error"}}]},
-        "staging": deploy("staging", "build", {}, {}),
-        # Reads the environment's rules so a missing or unprotected production environment fails instead of deploying.
-        "production": deploy("production", "staging", {"actions": "read"}, {"GH_TOKEN": "${{ github.token }}"}),
+        "staging": deploy("staging", "build"),
+        "production": deploy("production", "staging"),
     }
     return {"name": "Deploy site", "on": {"workflow_call": {}}, "permissions": {}, "jobs": jobs}
 

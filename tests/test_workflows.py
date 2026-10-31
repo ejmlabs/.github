@@ -8,12 +8,15 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import build_workflows as workflows
-from standards import consumer_workflows
+from standards import SHARED_WORKFLOWS, SITE_DEPLOY_CALLER, consumer_workflows
+
+from deploy import SITES, source_path
 
 
 def embedded_source(script: str) -> str | None:
@@ -202,21 +205,190 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertNotIn("secrets.", json.dumps(build))
         self.assertEqual((jobs["staging"]["needs"], jobs["production"]["needs"]), ("build", "staging"))
         self.assertEqual((jobs["staging"]["environment"], jobs["production"]["environment"]), ("staging", "production"))
+        granted = dict(re.findall(r"(?m)^      (\w+): (\w+)$", SITE_DEPLOY_CALLER))
+        self.assertEqual(granted, {"contents": "read", "actions": "read"})
+        # Each repository has exactly one of these source paths, so the sparse checkout fetches only the reviewed config (and ejm-ide's Worker directory).
+        reviewed = "".join(line + "\n" for line in sorted({"/" + source_path(name) for name in SITES}))
         for name in ("staging", "production"):
             with self.subTest(job=name):
-                steps = jobs[name]["steps"]
-                # The deploy job checks out and runs no product code: only the built files, the pinned deployer and trusted scripts.
-                self.assertEqual([step["uses"].split("@")[0] for step in steps if "uses" in step], ["actions/download-artifact", "actions/setup-node"])
+                job = jobs[name]
+                steps = job["steps"]
+                # Within what the canonical caller grants: the reviewed config is read as data, and the environment's rules are read through the API.
+                self.assertEqual(job["permissions"], {"contents": "read", "actions": "read"})
+                self.assertLessEqual(job["permissions"].items(), granted.items())
+                self.assertEqual(job["env"], {"PROFILE": "${{ github.event.repository.name }}"})
+                self.assertEqual([step["uses"].split("@")[0] for step in steps if "uses" in step], ["actions/download-artifact", "actions/checkout", "actions/setup-node"])
+                self.assertEqual(steps[1]["uses"], workflows.CHECKOUT)
+                self.assertEqual(steps[1]["with"], {"path": "reviewed", "ref": "${{ github.sha }}", "persist-credentials": False, "fetch-depth": 1, "submodules": False,
+                                                    "sparse-checkout": reviewed, "sparse-checkout-cone-mode": False})
+                # The checkout is data: no step runs anything from it. The only trusted steps are the pinned deployer install and deploy.py.
+                protection, deploy = steps[-2], steps[-1]
                 self.assertTrue(all("secrets." not in json.dumps(step) for step in steps[:-1]))
-                self.assertEqual(steps[-1]["env"]["CLOUDFLARE_API_TOKEN"], "${{ secrets.CLOUDFLARE_API_TOKEN }}")
-                self.assertEqual(embedded_source(steps[-1]["run"]), workflows.source("deploy.py"))
-                install = steps[-2]["run"]
+                self.assertEqual(protection["env"], {"GH_TOKEN": "${{ github.token }}"})
+                self.assertEqual(deploy["env"], {"CLOUDFLARE_API_TOKEN": "${{ secrets.CLOUDFLARE_API_TOKEN }}"})
+                self.assertNotIn("GH_TOKEN", json.dumps(deploy))
+                for step, mode in ((protection, "protection"), (deploy, "deploy")):
+                    self.assertEqual(embedded_source(step["run"]), workflows.source("deploy.py"))
+                    self.assertEqual(step["run"].splitlines()[0], f"python3 -I - {mode} {name} <<'TRUSTED_PYTHON'")
+                install = steps[-3]["run"]
                 self.assertIn("npm ci --ignore-scripts", install)
                 lock = (workflows.ROOT / "deploy/package-lock.json").read_text()
                 self.assertIn(repr(lock), embedded_source(install) or "")
-        self.assertEqual(jobs["production"]["permissions"], {"actions": "read"})
         self.assertTrue(jobs["production"]["concurrency"]["cancel-in-progress"])
         self.assertFalse(jobs["staging"]["concurrency"]["cancel-in-progress"])
+
+    def build_site(self, profile: str, prepare: Callable[[Path], None] | None = None, *, stub_npm: bool = True) -> tuple[subprocess.CompletedProcess[str], Path]:
+        """Run the generated build step for a profile in a scratch workspace with a recording npm. Returns the result and the workspace."""
+        script = next(step["run"] for step in workflows.deploy_workflow()["jobs"]["build"]["steps"] if step.get("name") == "Build the site without credentials")
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        root = Path(directory.name)
+        (root / "temp").mkdir()
+        (root / "bin").mkdir()
+        product = root / "product"
+        for name in ("distribution", "website/dist", "site/dist", "site/public"):
+            (product / name).mkdir(parents=True)
+        for name in ("distribution/wrangler.jsonc", "website/dist/index.html", "site/wrangler.jsonc", "site/dist/index.html", "site/public/index.html"):
+            (product / name).write_text(name)
+        if stub_npm:
+            stub = root / "bin/npm"
+            stub.write_text("#!" + sys.executable + "\nimport json, os, sys\nwith open(os.environ['COMMAND_LOG'], 'a') as log:\n    log.write(json.dumps({'command': ['npm', *sys.argv[1:]], 'ignore_scripts': os.environ.get('npm_config_ignore_scripts')}) + '\\n')\n")
+            stub.chmod(0o755)
+        if prepare is not None:
+            prepare(product)
+        env = {**os.environ, "PROFILE": profile, "RUNNER_TEMP": str(root / "temp"), "COMMAND_LOG": str(root / "commands.jsonl"), "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"]}
+        env.pop("npm_config_ignore_scripts", None)
+        return subprocess.run(["bash", "-e", "-o", "pipefail", "-c", script], cwd=root, env=env, capture_output=True, text=True, check=False), root
+
+    def commands(self, root: Path) -> list[dict[str, Any]]:
+        log = root / "commands.jsonl"
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+    def packed(self, root: Path) -> set[str]:
+        return {name.rstrip("/") for name in subprocess.run(["tar", "-tf", str(root / "temp/site.tar")], check=True, capture_output=True, text=True).stdout.splitlines()}
+
+    def test_site_build_runs_the_profile_commands_when_the_product_has_no_build_script(self) -> None:
+        result, root = self.build_site("ejm-ide")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([call["command"] for call in self.commands(root)], [["npm", "ci", "--ignore-scripts"], ["npm", "run", "site:build"]])
+        self.assertEqual(self.packed(root), {"distribution", "distribution/wrangler.jsonc", "website/dist", "website/dist/index.html"})
+
+    def test_a_product_owned_site_build_replaces_the_profile_commands(self) -> None:
+        def script(product: Path) -> None:
+            build = product / ".github/site-build"
+            build.parent.mkdir(parents=True)
+            build.write_text('#!/usr/bin/env bash\nset -euo pipefail\npwd > "$RUNNER_TEMP/site-build-cwd"\necho "$npm_config_ignore_scripts" > "$RUNNER_TEMP/site-build-ignore"\n'
+                             "mkdir -p website/dist\necho built > website/dist/index.html\n")
+            build.chmod(0o755)
+        result, root = self.build_site("ejm-ide", script)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.commands(root), [])
+        self.assertEqual((root / "temp/site-build-cwd").read_text().strip(), str(root / "product"))
+        self.assertEqual((root / "temp/site-build-ignore").read_text().strip(), "true")
+        self.assertEqual(self.packed(root), {"distribution", "distribution/wrangler.jsonc", "website/dist", "website/dist/index.html"})
+
+    def test_a_site_build_that_fails_or_is_not_a_plain_executable_file_never_replaces_the_fallback_silently(self) -> None:
+        def failing(product: Path) -> None:
+            build = product / ".github/site-build"
+            build.parent.mkdir(parents=True)
+            build.write_text("#!/usr/bin/env bash\nexit 7\n")
+            build.chmod(0o755)
+        result, root = self.build_site("ejm-ide", failing)
+        self.assertEqual(result.returncode, 7)
+        self.assertEqual(self.commands(root), [])
+        self.assertFalse((root / "temp/site.tar").exists())
+
+        def not_executable(product: Path) -> None:
+            (product / ".github").mkdir()
+            (product / ".github/site-build").write_text("#!/usr/bin/env bash\nexit 7\n")
+
+        def linked_script(product: Path) -> None:
+            (product / ".github").mkdir()
+            elsewhere = product.parent / "elsewhere"
+            elsewhere.write_text("#!/usr/bin/env bash\nexit 7\n")
+            elsewhere.chmod(0o755)
+            (product / ".github/site-build").symlink_to(elsewhere)
+
+        def linked_directory(product: Path) -> None:
+            elsewhere = product.parent / "elsewhere"
+            elsewhere.mkdir()
+            (elsewhere / "site-build").write_text("#!/usr/bin/env bash\nexit 7\n")
+            (elsewhere / "site-build").chmod(0o755)
+            (product / ".github").symlink_to(elsewhere)
+
+        def directory(product: Path) -> None:
+            (product / ".github/site-build").mkdir(parents=True)
+
+        for name, prepare in (("not executable", not_executable), ("symlinked script", linked_script), ("symlinked .github", linked_directory), ("a directory", directory)):
+            with self.subTest(name):
+                result, root = self.build_site("ejm-ide", prepare)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual([call["command"] for call in self.commands(root)], [["npm", "ci", "--ignore-scripts"], ["npm", "run", "site:build"]])
+
+    def test_every_site_profile_packs_its_declared_paths_and_unknown_profiles_fail(self) -> None:
+        for profile in ("ejm-harness", "ejmlabs"):
+            with self.subTest(profile=profile):
+                result, root = self.build_site(profile)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                _, _, files = SITES[profile]
+                self.assertTrue(all(any(name == path or name.startswith(path + "/") for name in self.packed(root)) for path in files))
+        result, root = self.build_site("ejm-unknown")
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse((root / "temp/site.tar").exists())
+
+    def test_action_pins_come_from_the_manifest_dependabot_updates(self) -> None:
+        pins = workflows.action_pins(workflows.ROOT / "action.yml")
+        self.assertEqual(set(pins), {"actions/checkout", "actions/setup-node", "astral-sh/setup-uv", "actions/attest-build-provenance",
+                                     "actions/upload-artifact", "actions/download-artifact", "actions/cache/restore", "actions/cache/save"})
+        constants = {workflows.CHECKOUT, workflows.NODE, workflows.UV, workflows.ATTEST, workflows.UPLOAD, workflows.DOWNLOAD, workflows.CACHE_RESTORE, workflows.CACHE_SAVE}
+        self.assertEqual(constants, set(pins.values()))
+        # Dependabot bumps every cache action to one revision, so the two must agree.
+        self.assertEqual(workflows.CACHE_RESTORE.split("@")[1], workflows.CACHE_SAVE.split("@")[1])
+        used = set()
+        for name in SHARED_WORKFLOWS:
+            used.update(re.findall(r'(?m)^ +"uses": "((?!\./)[^"]+)"$', (workflows.ROOT / ".github/workflows" / name).read_text()))
+        self.assertEqual(used, constants)
+        manifest = (workflows.ROOT / "action.yml").read_text()
+        # Every step of the manifest is disabled, so the file can never run an action.
+        self.assertEqual(re.findall(r"(?m)^\s+- if: (.+)$", manifest), ["${{ false }}"] * len(pins))
+        self.assertIn("using: composite", manifest)
+
+    def test_the_pin_reader_accepts_only_full_commit_pins_listed_once(self) -> None:
+        sha = "a" * 40
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "action.yml"
+            for text in (f"steps:\n  - uses: actions/checkout@{sha}\n", f"steps:\n  - uses: actions/checkout@{sha} # v6.0.1\n    if: false\n"):
+                path.write_text(text)
+                self.assertEqual(workflows.action_pins(path), {"actions/checkout": "actions/checkout@" + sha})
+            for text in ("steps:\n  - uses: actions/checkout@v6\n", f"steps:\n  - uses: actions/checkout@{sha[:39]}\n", f"steps:\n  - uses: ./local@{sha}\n",
+                         f"steps:\n  - uses: actions/checkout@{sha}\n  - uses: actions/checkout@{'b' * 40}\n", f"steps:\n  - uses: 'actions/checkout@{sha}'\n"):
+                path.write_text(text)
+                with self.subTest(text=text), self.assertRaisesRegex(ValueError, "pinned to a full commit SHA"):
+                    workflows.action_pins(path)
+
+    def test_dependabot_waits_two_weeks_like_the_dependency_age_rule(self) -> None:
+        text = (workflows.ROOT / ".github/dependabot.yml").read_text()
+        self.assertEqual(re.findall(r"(?m)^\s+default-days: (\d+)$", text), ["14"])
+        self.assertEqual(re.findall(r'(?m)^  - package-ecosystem: "([^"]+)"$', text), ["github-actions"])
+        # The shared workflows' own pins are bumped with their manifest in one pull request; the caller pin of this repository moves only by hand.
+        self.assertIn('dependency-name: "ejmlabs/.github"', text)
+
+    def test_attach_is_the_only_release_writer_and_attests_the_files_it_attached(self) -> None:
+        attach = generated_yaml(workflows.yaml(workflows.attach_workflow()))["jobs"]["attach"]
+        self.assertEqual(attach["permissions"], {"contents": "write", "actions": "read", "id-token": "write", "attestations": "write"})
+        check, download, attached, attest = attach["steps"]
+        self.assertEqual([step.get("uses", "").split("@")[0] for step in attach["steps"]], ["", "actions/download-artifact", "", "actions/attest-build-provenance"])
+        library = "\n".join([workflows.source("governance.py", library=True), workflows.source("standards.py", library=True), workflows.source("attach.py")])
+        for step, mode in ((check, "check"), (attached, "attach")):
+            self.assertEqual(step["run"], workflows.python(library, mode, "python3 -I"))
+        self.assertEqual(download["with"], {"name": "release-files", "run-id": "${{ inputs.build-run-id }}", "github-token": "${{ github.token }}", "path": "built"})
+        # Attestation runs after the digests were recomputed and the files uploaded, over the files in built/.
+        self.assertEqual(attest["if"], "${{ inputs.attest }}")
+        self.assertEqual(attest["with"], {"subject-path": "built/*", "show-summary": False})
+        verify = generated_yaml(workflows.yaml(workflows.verify_build_workflow()))["jobs"]["verify"]
+        self.assertEqual(verify["permissions"], {"actions": "read"})
+        self.assertEqual(len(verify["steps"]), 1)
+        self.assertNotIn("uses", verify["steps"][0])
 
     def test_harness_dbus_setup_is_linux_only_and_before_the_required_gate(self) -> None:
         installers = [(name, index, step) for name, job in self.governance["jobs"].items()
