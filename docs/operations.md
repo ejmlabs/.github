@@ -132,6 +132,9 @@ aggregate spending.
   deploy jobs through `secrets: inherit` in the canonical `deploy.yml`, and only the final deploy
   step of each job reads it. Scope it to Workers scripts, routes and custom domains on
   `ejmlabs.com`, plus R2 read for sites that bind a bucket. The build job gets no secret.
+  `python3 scripts/set_deploy_token.py` asks for the token once, checks it with Cloudflare, creates
+  or repairs both environments with the main-only policy in every site repository, and stores the
+  token in each through `gh secret set` on standard input. Rerun it to rotate the token.
 
 ## Quality profiles
 
