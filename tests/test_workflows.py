@@ -455,22 +455,81 @@ class WorkflowSecurityTests(unittest.TestCase):
         # The shared workflows' own pins are bumped with their manifest in one pull request; the caller pin of this repository moves only by hand.
         self.assertIn('dependency-name: "ejmlabs/.github"', text)
 
-    def test_attach_is_the_only_release_writer_and_attests_the_files_it_attached(self) -> None:
-        attach = generated_yaml(workflows.yaml(workflows.attach_workflow()))["jobs"]["attach"]
-        self.assertEqual(attach["permissions"], {"contents": "write", "actions": "read", "id-token": "write", "attestations": "write"})
-        check, download, attached, attest = attach["steps"]
-        self.assertEqual([step.get("uses", "").split("@")[0] for step in attach["steps"]], ["", "actions/download-artifact", "", "actions/attest-build-provenance"])
-        library = "\n".join([workflows.source("governance.py", library=True), workflows.source("standards.py", library=True), workflows.source("attach.py")])
+    def test_attach_alone_holds_the_release_write_token_and_attestation_is_its_own_job(self) -> None:
+        document = generated_yaml(workflows.yaml(workflows.attach_workflow()))
+        self.assertEqual(set(document["jobs"]), {"attach", "attest"})
+        attach, attest = document["jobs"]["attach"], document["jobs"]["attest"]
+        # The job that writes the release holds neither OIDC nor attestation permissions, whether or not `attest` is set.
+        self.assertEqual(attach["permissions"], {"contents": "write", "actions": "read"})
+        self.assertNotIn("if", attach)
+        check, download, attached = attach["steps"]
+        self.assertEqual([step.get("uses", "").split("@")[0] for step in attach["steps"]], ["", "actions/download-artifact", ""])
+        library = workflows.libraries("governance.py", "versioning.py") + "\n" + workflows.source("attach.py")
         for step, mode in ((check, "check"), (attached, "attach")):
             self.assertEqual(step["run"], workflows.python(library, mode, "python3 -I"))
         self.assertEqual(download["with"], {"name": "release-files", "run-id": "${{ inputs.build-run-id }}", "github-token": "${{ github.token }}", "path": "built"})
-        # Attestation runs after the digests were recomputed and the files uploaded, over the files in built/.
+        # The verified digests, the manifest's included, leave the attach job as one output.
+        self.assertEqual(attached["id"], "attached")
+        self.assertEqual(attach["outputs"], {"digests": "${{ steps.attached.outputs.digests }}"})
+        # The attestation job runs only on request, after attach, and cannot write contents or releases.
+        self.assertEqual(attest["needs"], "attach")
         self.assertEqual(attest["if"], "${{ inputs.attest }}")
-        self.assertEqual(attest["with"], {"subject-path": "built/*", "show-summary": False})
+        self.assertEqual(attest["permissions"], {"contents": "read", "actions": "read", "id-token": "write", "attestations": "write"})
+        again, confirm, action = attest["steps"]
+        self.assertEqual(again, download)
+        self.assertEqual(confirm["run"], workflows.python(library, "confirm", "python3 -I"))
+        self.assertEqual(attest["env"]["ATTACHED_DIGESTS"], "${{ needs.attach.outputs.digests }}")
+        self.assertNotIn("RELEASE_VERSION", attest["env"])
+        # Attestation comes last: a changed or swapped file fails the confirm step first. Its subjects are the files confirmed.
+        self.assertEqual(action["uses"].split("@")[0], "actions/attest-build-provenance")
+        self.assertEqual(action["with"], {"subject-path": "built/*", "show-summary": False})
+        self.assertEqual([step.get("uses", "").split("@")[0] for step in attest["steps"]], ["actions/download-artifact", "", "actions/attest-build-provenance"])
+        # No job holds the release write token together with the permissions to sign.
+        for job in (attach, attest):
+            self.assertFalse(job["permissions"].get("contents") == "write" and ({"id-token", "attestations"} & set(job["permissions"])))
         verify = generated_yaml(workflows.yaml(workflows.verify_build_workflow()))["jobs"]["verify"]
         self.assertEqual(verify["permissions"], {"actions": "read"})
         self.assertEqual(len(verify["steps"]), 1)
         self.assertNotIn("uses", verify["steps"][0])
+
+    def test_a_caller_job_grants_what_its_called_workflow_needs_and_no_more(self) -> None:
+        """A called job cannot exceed its caller job's grant, so the grant must cover every job and should equal the union of them."""
+        called = {"governance.yml": workflows.governance(), "draft-release.yml": workflows.release_workflow(), "verify-build.yml": workflows.verify_build_workflow(),
+                  "attach-assets.yml": workflows.attach_workflow(), "warm-cache.yml": workflows.warm_workflow(), "deploy-site.yml": workflows.deploy_workflow()}
+        rank = {"read": 1, "write": 2}
+        seen: set[str] = set()
+        for native in (False, True):
+            for filename, text in consumer_workflows("a" * 40, native=native, cache=True, deploy=True).items():
+                for name, job in re.findall(r"(?ms)^  ([\w-]+):\n(.*?)(?=^  \S|\Z)", text.split("\njobs:\n", 1)[1]):
+                    reference = re.search(r"(?m)^    uses: ejmlabs/\.github/\.github/workflows/([\w-]+\.yml)@", job)
+                    assert reference is not None
+                    section = re.search(r"(?ms)^    permissions:\n(.*?)(?=^    \S|\Z)", job)
+                    granted = dict(line.strip().split(": ") for line in section[1].splitlines()) if section else {}
+                    needed: dict[str, str] = {}
+                    for callee in called[reference[1]]["jobs"].values():
+                        for key, level in callee["permissions"].items():
+                            needed[key] = max(needed.get(key, level), level, key=rank.__getitem__)
+                    with self.subTest(caller=filename, job=name, workflow=reference[1]):
+                        self.assertEqual(granted, needed)
+                    seen.add(reference[1])
+        self.assertEqual(seen, set(called))
+
+    def test_each_workflow_embeds_only_the_libraries_it_uses_and_defines_semver_before_it_is_called(self) -> None:
+        for name in ("governance.yml", "draft-release.yml", "verify-build.yml", "attach-assets.yml"):
+            text = (workflows.ROOT / ".github/workflows" / name).read_text()
+            sources = {base64.b64decode(match, validate=True).decode() for match in re.findall(r"b64decode\('([A-Za-z0-9+/=]+)'\)", text)}
+            self.assertTrue(sources, name)
+            for source in sources:
+                with self.subTest(workflow=name):
+                    self.assertLessEqual(source.count("def semver("), 1)
+                    # Every use of semver, and the standards file's own import guard, comes after the versioning library.
+                    for use in re.finditer(r'(?<!def )\bsemver\(|"semver" not in globals\(\)', source):
+                        self.assertIn("def semver(", source[: use.start()])
+                    if name in ("verify-build.yml", "attach-assets.yml"):
+                        # The two small helpers are all these need: no standards check is embedded.
+                        self.assertNotIn("def standards_main", source)
+                        self.assertNotIn("def workflow_problems", source)
+        self.assertLess(len((workflows.ROOT / ".github/workflows/verify-build.yml").read_text()), 60_000)
 
     def test_harness_dbus_setup_is_linux_only_and_before_the_required_gate(self) -> None:
         installers = [(name, index, step) for name, job in self.governance["jobs"].items()
@@ -719,10 +778,7 @@ class WorkflowSecurityTests(unittest.TestCase):
 
     def test_privileged_jobs_run_only_trusted_scripts_and_actions(self) -> None:
         trusted_sources: set[str | None] = {workflows.source(name) for name in ("governance.py", "prepare.py")}
-        trusted_sources.add("\n".join([
-            workflows.source("governance.py", library=True), workflows.source("standards.py", library=True),
-            workflows.source("prepare.py", library=True), workflows.source("release.py"),
-        ]))
+        trusted_sources.add(workflows.libraries("governance.py", "versioning.py", "standards.py", "prepare.py") + "\n" + workflows.source("release.py"))
         trusted_actions = {"actions/checkout", "actions/download-artifact", "actions/upload-artifact"}
         for document in (self.governance, self.release):
             self.assertNotIn("defaults", document)
@@ -837,9 +893,10 @@ class WorkflowSecurityTests(unittest.TestCase):
     def test_the_gate_has_no_review_job_and_reads_only_the_harness_secret(self) -> None:
         self.assertEqual(set(self.governance["jobs"]), {"admission", "prepare", "quality", "registry", "standards", "finish"})
         self.assertEqual(set(re.findall(r"secrets\.(\w+)", json.dumps(self.governance["jobs"]))), {"EJM_HARNESS_TOKEN"})
-        # XAI_API_KEY is declared only because the standards check of every pin through 8230ef8 requires it. Nothing reads it.
+        # The retired model key is no longer declared, because no caller passes it and nothing reads it.
         declared = self.governance["on"]["workflow_call"]["secrets"]
-        self.assertEqual(declared, {"XAI_API_KEY": {"required": False}, "EJM_HARNESS_TOKEN": {"required": False}})
+        self.assertEqual(declared, {"EJM_HARNESS_TOKEN": {"required": False}})
+        self.assertNotIn("XAI_API_KEY", (workflows.ROOT / ".github/workflows/governance.yml").read_text())
         for job in self.governance["jobs"].values():
             self.assertNotIn("pull_request_target", job.get("if", ""))
 
@@ -883,9 +940,9 @@ class WorkflowSecurityTests(unittest.TestCase):
                 subprocess.run(["bash", "-e", "-c", script], cwd=root, env=env, check=True, capture_output=True, text=True)
                 commands = [json.loads(line) for line in log.read_text().splitlines()]
                 tag = "v" + version
+                # One call and no tag ref: the draft targets the commit, and the tag appears when a human publishes it.
                 self.assertEqual(commands, [
-                    ["api", "--method", "POST", "repos/ejmlabs/ejmlabs/git/refs", "-f", "ref=refs/tags/" + tag, "-f", "sha=" + "a" * 40],
-                    ["release", "create", tag, "--repo", "ejmlabs/ejmlabs", "--verify-tag", "--draft", "--title", tag,
+                    ["release", "create", tag, "--repo", "ejmlabs/ejmlabs", "--target", "a" * 40, "--draft", "--title", tag,
                      "--notes-file", "release-notes.md", *flags, "release-assets/provenance.json", "release-assets/source.zip"],
                 ])
 
@@ -898,8 +955,7 @@ class WorkflowSecurityTests(unittest.TestCase):
         })
         self.assertEqual(len(draft["steps"]), 3)
         self.assertEqual(draft["steps"][0], workflows.checkout("product", "${{ inputs.commit }}"))
-        library = "\n".join([workflows.source("governance.py", library=True), workflows.source("standards.py", library=True),
-                              workflows.source("prepare.py", library=True), workflows.source("release.py")])
+        library = workflows.libraries("governance.py", "versioning.py", "standards.py", "prepare.py") + "\n" + workflows.source("release.py")
         self.assertEqual(draft["steps"][1]["run"], workflows.python(library))
         self.assertNotIn("select-harness", draft["steps"][1]["run"].splitlines()[0])
 

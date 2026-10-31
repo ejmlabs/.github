@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 namespace: dict[str, Any] = {"__name__": "release_test_library"}
-for name in ("governance.py", "standards.py", "prepare.py", "release.py"):
+for name in ("governance.py", "versioning.py", "standards.py", "prepare.py", "release.py"):
     text = (ROOT / "scripts" / name).read_text().split('\nif __name__ == "__main__":')[0]
     exec(compile(text, name, "exec"), namespace)  # noqa: S102 - scripts run in one shared namespace, as embedded in the workflow
 release = namespace["release"]
@@ -39,6 +39,7 @@ class API:
         self.main, self.tree = SHA, "same-tree"
         self.relation, self.merge_base = "ahead", SHA
         self.existing: str | None = None
+        self.releases: list[dict[str, Any]] = []
         self.role, self.checks = "maintain", True
         self.reviews: list[dict[str, Any]] = [review("maintainer", "APPROVED", HEAD)]
         self.pulls: list[dict[str, Any]] = [pull(4, SHA)]
@@ -66,6 +67,9 @@ class API:
         raise AssertionError(path)
 
     def pages(self, path: str) -> list[dict[str, Any]]:
+        self.calls.append(path)
+        if path == "/releases":
+            return self.releases
         return self.reviews if "reviews" in path else self.pulls
 
     def statuses(self, _sha: str) -> dict[str, dict[str, str]]:
@@ -126,6 +130,28 @@ class ReleaseTests(unittest.TestCase):
             api = API()
             api.existing = existing
             self.refused(api, "already exists")
+
+    def test_a_draft_or_published_release_for_the_tag_refuses_the_release(self) -> None:
+        # The lookup by tag never returns a draft, so drafts are found by listing every release.
+        for name, releases in {
+            "a draft without a tag": [{"tag_name": "v0.1.0", "draft": True}],
+            "a published release": [{"tag_name": "v0.1.0", "draft": False}],
+            "a draft among others": [{"tag_name": "v0.0.9", "draft": False}, {"tag_name": "v0.1.0", "draft": True}, {"tag_name": "v0.2.0", "draft": True}],
+        }.items():
+            with self.subTest(name):
+                api = API()
+                api.releases = releases
+                self.refused(api, "already exists")
+        api = API()
+        api.releases = [{"tag_name": "v0.0.9", "draft": False}, {"tag_name": "v0.2.0", "draft": True}]
+        self.draft(api)
+
+    def test_an_existing_draft_stops_the_release_before_the_pull_request_lookup(self) -> None:
+        api = API()
+        api.releases = [{"tag_name": "v0.1.0", "draft": True}]
+        self.refused(api, "already exists")
+        self.assertIn("/releases", api.calls)
+        self.assertNotIn(f"/commits/{SHA}/pulls", api.calls)
 
     def test_failed_checks_different_tree_and_ordinary_writer_block(self) -> None:
         for field, value, pattern in (("checks", False, "required check"), ("tree", "different", "differs from the checked PR"), ("role", "write", "human maintainer")):

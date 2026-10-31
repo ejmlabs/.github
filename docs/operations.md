@@ -101,9 +101,12 @@ aggregate spending.
 
 ## Credentials
 
-- No job receives a model key. `governance.yml` still declares an optional, unused `XAI_API_KEY`
-  secret only because the standards at pin `8230ef8` require it; the next revision drops it. Then
-  the owner deletes the stored key and closes the prepaid provider account.
+- No job receives a model key. `governance.yml` declares no model key secret, and the standards
+  accept only the scaffold without one. Once every caller is on a pin that has this revision, the
+  owner deletes the stored key and closes the prepaid provider account.
+- The release jobs use only the workflow token. `attach` holds `contents: write` and never an
+  OIDC or attestation permission. The optional `attest` job holds `id-token: write` and
+  `attestations: write` and never `contents: write`.
 - `EJM_HARNESS_TOKEN` is optional. Preparation reads the pinned harness with
   `secrets.EJM_HARNESS_TOKEN || github.token`, using read-only calls. A public harness needs no
   token. For a private one use an expiring fine-grained token with Contents read on that repository
@@ -260,11 +263,17 @@ in Cloudflare, or by approving an earlier run's production job while it is still
 
 The shared workflow creates a draft source release from the main head or any earlier commit on
 main, with the repository's SemVer `VERSION` and dated notes. See [Releasing](../RELEASING.md) for
-the dispatch contract. Only a current human maintainer may run it, and only on the first attempt,
-because tag creation is not idempotent. `standards-ref` must equal every `ejmlabs/.github` pin in
-that commit's own `release.yml`. The commit must be the merge commit of exactly one merged PR with
-the same tree as the PR head, whose required statuses passed on that head and on which some
-reviewer's latest decision is an approval of it. Source archives hold the committed bytes.
+the dispatch contract. Only a current human maintainer may run it, and only on the first attempt:
+dispatch a new run instead of re-running one, because a failed run may have left a draft.
+`standards-ref` must equal every `ejmlabs/.github` pin in that commit's own `release.yml`. The
+commit must be the merge commit of exactly one merged PR with the same tree as the PR head, whose
+required statuses passed on that head and on which some reviewer's latest decision is an approval
+of it. Source archives hold the committed bytes.
+
+The draft targets the commit and no tag ref is written. GitHub creates the immutable `vVERSION` tag
+at that commit only when a human publishes the draft, so a failed run never uses up a version. The
+run refuses a version that already has a tag, a published release or a draft. The `v*` tag ruleset
+blocks update and deletion, not creation, so publishing can create the tag.
 
 `ejm-cli` and `ejm-harness` may ship native builds. A repository opts in by adding
 `.github/workflows/build.yml`, which the standards then require alongside the native `release.yml`.
@@ -273,27 +282,39 @@ It uploads exactly one artifact, `release-files`: the release files plus one `bu
 
 1. `verify-build.yml` (`actions: read`) before Draft release: a successful run of `build.yml` on
    this commit, from main in this repository, with a `release-files` artifact, so a failed smoke
-   check never burns the tag.
-2. `attach-assets.yml` after Draft release. It holds the release write token and runs no project
-   code. It re-verifies the run, the lightweight `vVERSION` tag and the single draft, recomputes
-   every SHA-256 against `build-sha256.txt`, and uploads the files, then an extended `SHA256SUMS`.
-   It refuses a changed digest, an extra, missing or linked file, and a file that would replace an
-   asset. With `attest`, it attests the attached files (`built/*`, including `build-sha256.txt`):
-   provenance for what it attached for that commit, not for the build run, and not code signing.
+   check never creates a draft.
+2. `attach-assets.yml` after Draft release, in two jobs. `attach` (`contents: write` and
+   `actions: read`) holds the release write token and runs no project code. It re-verifies the
+   run and the single draft for `vVERSION`, which must have that `tag_name`, target the release
+   commit and have no tag yet. It recomputes every SHA-256 against `build-sha256.txt`, reads the
+   draft again right before the first upload, and uploads the files, then an extended
+   `SHA256SUMS`. It refuses a changed digest, an extra, missing or linked file, two releases for
+   the tag, and a file that would replace an asset.
+3. With `attest`, the `attest` job of the same workflow runs after `attach`. It holds
+   `id-token: write`, `attestations: write`, `actions: read` and `contents: read`, and never a
+   write token for contents. It downloads the same `release-files` artifact, recomputes every
+   digest, requires them to equal the digests `attach` verified and attached (a job output, the
+   manifest's digest included), then attests the files (`built/*`, including `build-sha256.txt`):
+   provenance for what was attached for that commit, not for the build run, and not code signing.
+
+A called job cannot exceed its caller job's grant, so the `attach` job of the native `release.yml`
+caller grants the union of both jobs (`contents: write`, `actions: read`, `id-token: write`,
+`attestations: write`) and each job narrows it to its own list. A test holds every caller grant
+equal to the union of the jobs it calls.
 
 Prereleases such as `1.2.3-rc.1` have Latest disabled. Build metadata does not
 change classification: `1.2.3+build-alpha` is stable;
 `1.2.3-rc.1+build-2` is a prerelease. Stable drafts keep GitHub's default Latest
 behavior. Review drafts before explicit publication.
 
-Tag creation, draft creation and asset upload are separate writes. A failed
-or canceled run may leave a tag without a draft or an incomplete draft. Inspect
-the run, tag commit, draft state, assets, checksums and provenance. Record the
-repository, version, commit and proposed recovery; obtain explicit owner
-authorization before recovery writes. Do not move or delete tags, replace
-released assets, retry automatically or publish incomplete drafts. Existing
-versions remain blocked. If integrity is uncertain, prepare a new version
-through a checked PR.
+Draft creation and asset upload are separate writes, and no tag exists until a human publishes. A
+failed or canceled run may leave an incomplete draft and never a tag. A draft blocks its version,
+because the release step and attach refuse a second release for the tag. Inspect the run, draft
+state, assets, checksums and provenance. Record the repository, version, commit and proposed
+recovery; obtain explicit owner authorization before recovery writes, such as deleting an
+incomplete draft. Do not move or delete tags, replace released assets, retry automatically or
+publish incomplete drafts. A published version stays blocked because its tag exists. If integrity
+is uncertain, prepare a new version through a checked PR.
 
 ## Action pins and Dependabot
 
@@ -322,17 +343,18 @@ authoring rules. Edit a template, never a synced copy.
    protected against update and deletion with no bypass actors. Callers pin the commit, not the ref.
 2. This repository's own PR is checked by the pin its `pr.yml` already has, so a change to what the
    standards enforce must pass that older check. After the merge, one PR moves `pr.yml` and
-   `release.yml` to the new SHA and drops the `XAI_API_KEY` declaration.
+   `release.yml` to the new SHA.
 3. A `pull_request` run takes its workflow from the PR merge ref, so a consumer PR that moves its
    pin is checked by the new pin. Use one PR per consumer that moves every `ejmlabs/.github` pin,
    switches `deploy.yml` to the `secrets: inherit` form, and resyncs the community files and other
-   templates. The community templates still describe the previous gate in places: fix them first
-   (open follow-up in `openspec/changes/velocity-and-safety-refactor/tasks.md`).
+   templates. The native `release.yml` caller is unchanged, so a consumer needs only the new pin
+   for the split attestation job.
 4. After each merge, run `configure_repositories.py --check --repository NAME`.
 5. Before claiming a path verified, see it work in GitHub: maintainer auto-admit, a Dependabot PR
    with `gate:approve`, a fork PR notice, `gate:revoke`, conversion to draft, a push that replaces
-   the head, a rerun of failed jobs, a stale pending pair, a duplicate release tag, staging and
-   production deploys, and a Dependabot actions PR that passes `--check`.
+   the head, a rerun of failed jobs, a stale pending pair, a duplicate release version (tag,
+   release or draft), a draft that GitHub tags only when it is published, the attestation job,
+   staging and production deploys, and a Dependabot actions PR that passes `--check`.
 
 ## Public visibility checklist
 
@@ -361,8 +383,8 @@ reviewed plan that preserves human admission and spending controls.
 Inspect actual runs, immutable artifacts and source identities before claiming installed behavior.
 This repository's own PR runs the pin it already has, so its green check says nothing about the new
 caller; a consumer PR that moves its pin runs the new pin. Outside-contributor, fork and Dependabot
-events, first real draft releases, duplicate-tag refusal, installers, signing, registry
-publication and deployments each need their own GitHub evidence.
+events, first real draft releases, duplicate-version refusal, attestation, installers, signing,
+registry publication and deployments each need their own GitHub evidence.
 
 ## Recovery
 

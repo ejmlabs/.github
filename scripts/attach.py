@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Bind built release files to the tagged commit and attach them to the draft release."""
+"""Bind built release files to the draft release of the commit, attach them, and confirm them for attestation."""
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -13,9 +14,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from governance import GitHub
-    from standards import semver
+    from versioning import semver
 
-# The workflow generator embeds the governance.py (GitHub) and standards.py (semver) libraries first.
+# The workflow generator embeds the governance.py (GitHub) and versioning.py (semver) libraries first.
 ARTIFACT = "release-files"
 MANIFEST = "build-sha256.txt"
 SUMS = "SHA256SUMS"
@@ -51,13 +52,22 @@ def verify_run(api: "GitHub", workflow: str, run_id: str, sha: str) -> None:
 
 
 def verify_draft(api: "GitHub", tag: str, sha: str) -> dict[str, Any]:
-    """The tag must be a lightweight ref to the release commit and its release an unpublished draft."""
-    ref = api.request("/git/ref/tags/" + tag)
-    if ref.get("object", {}).get("type") != "commit" or ref["object"]["sha"] != sha:
-        raise ValueError("Tag does not point at the release commit")
+    """The tag names exactly one release, an unpublished draft that targets the release commit, and no tag exists yet.
+
+    GitHub creates the tag only when a human publishes the draft, so a tag ref now means something else made it.
+    """
     drafts = [release for release in api.pages("/releases") if release["tag_name"] == tag]
     if len(drafts) != 1 or not drafts[0]["draft"]:
         raise ValueError("Attach needs exactly one draft release for the tag")
+    if drafts[0].get("target_commitish") != sha:
+        raise ValueError("Draft release does not target the release commit")
+    try:
+        api.request("/git/ref/tags/" + tag)
+    except urllib.error.HTTPError as error:
+        if error.code != 404:
+            raise
+    else:
+        raise ValueError("The tag exists before the draft was published")
     return drafts[0]
 
 
@@ -90,6 +100,12 @@ def verify_files(directory: Path) -> dict[str, str]:
     return expected
 
 
+def digests(directory: Path) -> dict[str, str]:
+    """Verified SHA-256 of every file in the build output, the manifest included: exactly what attestation covers."""
+    verified = verify_files(directory)
+    return {**verified, MANIFEST: hashlib.sha256((directory / MANIFEST).read_bytes()).hexdigest()}
+
+
 def merge_sums(existing: str, built: dict[str, str]) -> str:
     lines = existing.splitlines()
     names = {line.split("  ", 1)[1] for line in lines if "  " in line}
@@ -102,8 +118,10 @@ def gh(*args: str) -> None:
     subprocess.run(["gh", *args], check=True)
 
 
-def attach(api: "GitHub", directory: Path, tag: str, release: dict[str, Any], run_gh: "Callable[..., None]") -> None:
-    built = verify_files(directory)
+def attach(api: "GitHub", directory: Path, tag: str, sha: str, release: dict[str, Any], run_gh: "Callable[..., None]") -> dict[str, str]:
+    """Upload the verified files, then the extended checksum list, and return the digests of everything in the build output."""
+    attested = digests(directory)
+    built = {name: digest for name, digest in attested.items() if name != MANIFEST}
     assets = {asset["name"] for asset in release["assets"]}
     if assets & set(built):
         raise ValueError("A built file would replace an existing release asset")
@@ -114,26 +132,46 @@ def attach(api: "GitHub", directory: Path, tag: str, release: dict[str, Any], ru
         existing = (scratch / SUMS).read_text()
     sums = directory.parent / SUMS
     sums.write_text(merge_sums(existing, built))
+    # Right before the first write: still the same unpublished draft for this commit, with the assets seen above.
+    again = verify_draft(api, tag, sha)
+    if again.get("id") != release.get("id") or {asset["name"] for asset in again["assets"]} != assets:
+        raise ValueError("The draft release changed while the files were checked")
     # Files first, so a failure never leaves a checksum list naming files that are absent.
     run_gh("release", "upload", tag, "--repo", api.repo, *[str(directory / name) for name in sorted(built)])
     run_gh("release", "upload", tag, "--repo", api.repo, "--clobber", str(sums))
+    return attested
+
+
+def confirm(directory: Path, attached: str) -> None:
+    """The files to attest must be exactly the files the attach job verified and attached: recompute every digest and compare."""
+    if digests(directory) != json.loads(attached):
+        raise ValueError("Build files differ from the files the attach job attached")
+
+
+def write_output(name: str, value: dict[str, str]) -> None:
+    """Pass a verified digest map to later jobs. JSON on one line, so a name or digest cannot add an output."""
+    with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+        output.write(name + "=" + json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n")
 
 
 def main() -> None:
     api = GitHub()
     sha, workflow, run_id = os.environ["RELEASE_COMMIT"], os.environ["BUILD_WORKFLOW"], os.environ["BUILD_RUN_ID"]
     mode = sys.argv[1]
-    if mode not in ("verify", "check", "attach"):
+    if mode not in ("verify", "check", "attach", "confirm"):
         raise ValueError("Unknown operation")
     verify_run(api, workflow, run_id, sha)
     if mode == "verify":
+        return
+    if mode == "confirm":
+        confirm(Path("built"), os.environ["ATTACHED_DIGESTS"])
         return
     if not semver(os.environ["RELEASE_VERSION"]):
         raise ValueError("Supply a SemVer version")
     tag = "v" + os.environ["RELEASE_VERSION"]
     release = verify_draft(api, tag, sha)
     if mode == "attach":
-        attach(api, Path("built"), tag, release, gh)
+        write_output("digests", attach(api, Path("built"), tag, sha, release, gh))
 
 
 if __name__ == "__main__":

@@ -21,8 +21,8 @@ from build_workflows import (
     attach_workflow,
     deploy_workflow,
     governance,
+    libraries,
     release_workflow,
-    source,
     verify_build_workflow,
     yaml,
 )
@@ -35,7 +35,6 @@ from standards import (
     lint_workflow,
     native_build,
     read,
-    semver,
     versions,
     workflows,
 )
@@ -46,12 +45,6 @@ SHA1, SHA2 = "1" * 40, "2" * 40
 
 
 class StandardTests(TreeCase):
-    def test_semver_boundaries(self) -> None:
-        for value in ("0.1.0", "1.0.0-rc.1", "1.2.3+build.04", "9.0.1-alpha.0"):
-            self.assertTrue(semver(value), value)
-        for value in ("v1.0.0", "01.0.0", "1.0", "1.0.0-01", "1.0.0-", "1.2.3\n"):
-            self.assertFalse(semver(value), value)
-
     def test_the_profile_table_drives_the_repository_lists(self) -> None:
         self.assertEqual(standards.NATIVE_RELEASE, ("ejm-cli", "ejm-harness"))
         self.assertEqual(standards.WARM_CACHE, ("ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui"))
@@ -350,7 +343,8 @@ class StandardTests(TreeCase):
         self.assertIsNotNone(match)
         assert match is not None
         embedded = base64.b64decode(match[1]).decode()
-        self.assertEqual(embedded, source("standards.py", library=True) + "\nsys.exit(standards_main(sys.argv[1:]))\n")
+        # SemVer comes from versioning.py, embedded first because a workflow has no module to import it from.
+        self.assertEqual(embedded, libraries("versioning.py", "standards.py") + "\nsys.exit(standards_main(sys.argv[1:]))\n")
         self.assertNotIn("templates", embedded.rsplit("\n", 3)[-2])
         tree = self.tree("ejm-cli")
         tree.write("SECURITY.md", "")
@@ -369,6 +363,12 @@ class StandardTests(TreeCase):
 
     def test_this_repository_passes_its_own_standards(self) -> None:
         self.assertRegex(standards.standards(ROOT, ".github"), r"^\d+\.\d+\.\d+")
+
+    def test_the_script_runs_isolated_beside_versioning_without_the_script_directory_on_the_path(self) -> None:
+        # python -I leaves the script's own directory off sys.path, and the library still finds its sibling.
+        result = subprocess.run([sys.executable, "-I", str(ROOT / "scripts/standards.py"), str(ROOT), ".github"], capture_output=True, text=True, check=False, cwd=tempfile.gettempdir())
+        self.assertEqual((result.returncode, result.stderr), (0, ""))
+        self.assertIn("passed for .github", result.stdout)
 
 
 CRATE_NAMED = '[package]\nname = "x"\nversion = "0.1.0"\nlicense = "MIT"\n'
@@ -808,24 +808,24 @@ class WorkflowTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "differs from the canonical consumer: pr.yml"):
                         workflows(self.root, profile)
 
-    def test_shared_scaffold_accepts_the_model_key_declaration_with_or_without_it(self) -> None:
+    def test_shared_scaffold_declares_only_the_optional_harness_token(self) -> None:
         workflows(self.root, ".github")
         original = self.reusable()
+        token = '      "EJM_HARNESS_TOKEN":\n        "required": false\n'
+        self.assertIn(token, original)
+        self.assertNotIn("XAI_API_KEY", original)
+        workflows(self.root, ".github")
         declaration = '      "XAI_API_KEY":\n        "required": false\n'
-        self.assertIn(declaration, original)
-        workflows(self.root, ".github")
-        (self.directory / "governance.yml").write_text(original.replace(declaration, ""))
-        workflows(self.root, ".github")
         extra = '      "' + self.old_model_key + '":\n        "required": false\n'
         mutations = {
-            "both model keys": original.replace(declaration, declaration + extra),
-            "old model key": original.replace("XAI_API_KEY", self.old_model_key),
-            "unknown model key": original.replace("XAI_API_KEY", "MODEL_API_KEY"),
-            "required model key": original.replace(declaration, declaration.replace("false", "true")),
-            "model key after the harness token": original.replace('      "EJM_HARNESS_TOKEN":\n        "required": false\n',
-                                                                  '      "EJM_HARNESS_TOKEN":\n        "required": false\n' + declaration),
-            "missing harness token": original.replace('      "EJM_HARNESS_TOKEN":\n        "required": false\n', ""),
-            "missing harness token and key": original.replace('      "EJM_HARNESS_TOKEN":\n        "required": false\n', "").replace(declaration, ""),
+            "the retired model key before the token": original.replace(token, declaration + token),
+            "the retired model key after the token": original.replace(token, token + declaration),
+            "the retired model key as the only secret": original.replace(token, declaration),
+            "both model keys": original.replace(token, declaration + extra + token),
+            "old model key": original.replace(token, extra + token),
+            "unknown secret": original.replace(token, '      "MODEL_API_KEY":\n        "required": false\n' + token),
+            "required model key": original.replace(token, declaration.replace("false", "true") + token),
+            "missing harness token": original.replace(token, ""),
             "required harness token": original.replace('"EJM_HARNESS_TOKEN":\n        "required": false', '"EJM_HARNESS_TOKEN":\n        "required": true'),
         }
         for case, text in mutations.items():

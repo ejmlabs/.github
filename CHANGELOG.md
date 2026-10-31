@@ -10,7 +10,7 @@ The net change since 0.1.0:
 - The `gate:approve` and `gate:revoke` labels, with two required statuses (Quality and Repository standards) plus one approving review, enforced for administrators. No model review runs.
 - Repository standards for versions, licenses, documents and workflow callers.
 - A settings tool, `scripts/configure_repositories.py`, that applies the repository controls and reads them back.
-- Draft source releases from checked main commits, and native release files that are verified before the tag and attached after the draft, with optional provenance attestation.
+- Draft source releases from checked main commits, and native release files that are verified before the draft and attached after it, with optional provenance attestation in its own job.
 - Continuous site deploys: staging on every push to main, production after a reviewer approves.
 - A faster Quality gate: every matrix entry starts at once, Cargo uses every core, and `cargo-deny` and `cargo-machete` come from prebuilt archives checked against SHA-256 digests.
 - A trusted Rust build cache written only by reviewed main.
@@ -54,7 +54,6 @@ The net change since 0.1.0:
 - Deploy jobs validate tar members before extraction and run Wrangler with a minimal environment that holds no GitHub token.
 - Draft releases accept any commit on main, not only its head, and require `standards-ref` to equal every pin in that commit's own `release.yml`. An approval counts only as a reviewer's latest decision on the merged head.
 - Repository standards require community files only to exist and be non-empty. `scripts/sync_community.py --check` reports drift on demand.
-- `governance.yml` is accepted with or without the unused `XAI_API_KEY` declaration, which this revision still emits because the standards at pin `8230ef8` require it.
 
 #### Fixed
 
@@ -85,6 +84,20 @@ The net change since 0.1.0:
 - The strict ruff layer ignores BLE001 and TRY400, which the house error-logging form trips, and S105 to S107 in tests. Formatting is not gated.
 - The strict ESLint layer reports `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `eval`, implied eval and `new Function`, and allows non-null assertions and unbound methods in tests.
 - The ShellCheck layer disables SC2310, SC2311 and SC2312.
+
+### Close the remaining gaps
+
+#### Changed
+
+- Attestation runs in its own `attest` job of `attach-assets.yml`, only when `attest` is set. It holds `id-token`, `attestations`, `actions: read` and `contents: read`, downloads the same artifact, recomputes every digest and requires them to equal the digests the `attach` job attached before it attests. The `attach` job no longer holds `id-token` or `attestations`. The native `release.yml` caller is unchanged.
+- A draft release is created with `--target <commit>` and no tag ref, so GitHub creates the tag only when a human publishes the draft and a failed run uses up no version. The run refuses a version that already has a tag, a published release or a draft.
+- Attach binds to the draft's `tag_name` and `target_commitish` instead of a tag ref. It refuses any existing tag ref, two releases for the tag and a replaced asset, and it reads the draft again right before the first upload.
+- SemVer checking moved to `scripts/versioning.py`. `verify-build.yml` and `attach-assets.yml` embed it and the API class instead of the whole standards check, which shrinks the generated files from 122,515 to 37,047 bytes (`verify-build.yml`) and from 245,200 to 111,398 bytes (`attach-assets.yml`, which gained a job).
+- The community templates and root files describe the current gate and release flow: no AI review, no fork admission, reruns allowed, no size cap, and a draft before the tag.
+
+#### Removed
+
+- The unused `XAI_API_KEY` declaration from `governance.yml`. The standards accept only the scaffold without it.
 
 ## [0.1.0] - 2026-10-18
 
