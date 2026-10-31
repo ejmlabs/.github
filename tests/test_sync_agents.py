@@ -1,4 +1,5 @@
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -136,6 +137,40 @@ class SyncAgentsTests(unittest.TestCase):
     def test_this_repository_is_in_sync(self) -> None:
         result = sync(ROOT, "--check")
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_templates_option_syncs_and_checks_against_another_revision(self) -> None:
+        # The shared gate passes the templates at the caller's pin, so the check follows the pin, not this checkout.
+        with tempfile.TemporaryDirectory() as directory:
+            templates = Path(directory) / "pinned"
+            shutil.copytree(TEMPLATES, templates)
+            rules = templates / "house-rules.md"
+            rules.write_text(rules.read_text().replace("## House rules\n", "## House rules\n\nA newer rule.\n", 1))
+            root = Path(directory) / "repo"
+            root.mkdir()
+            repository(str(root))
+            self.assertEqual(sync(root).returncode, 0)
+            stale = sync(root, "--check", "--templates", str(templates))
+            self.assertEqual(stale.returncode, 1)
+            self.assertIn("house rules differ from the shared block", stale.stderr)
+            self.assertEqual(sync(root, "--templates", str(templates)).returncode, 0)
+            self.assertIn("A newer rule.", (root / "AGENTS.md").read_text())
+            self.assertEqual(sync(root, "--check", "--templates", str(templates)).returncode, 0)
+            self.assertEqual(sync(root, "--check").returncode, 1)
+
+    def test_a_missing_or_linked_templates_directory_is_refused_and_nothing_is_written(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = repository(directory)
+            before = snapshot(root)
+            linked = Path(directory) / "linked"
+            linked.symlink_to(TEMPLATES)
+            for templates in (Path(directory) / "missing", linked):
+                with self.subTest(templates=templates.name):
+                    for args in ((), ("--check",)):
+                        result = sync(root, *args, "--templates", str(templates))
+                        self.assertEqual(result.returncode, 1)
+                        self.assertIn("not a shared templates directory", result.stderr)
+            linked.unlink()
+            self.assertEqual(snapshot(root), before)
 
 
 class RoutingBlockTests(unittest.TestCase):

@@ -6,8 +6,8 @@ import shutil
 import tempfile
 from pathlib import Path
 
+# The templates beside this script. The shared gate runs it embedded and passes --templates instead.
 TEMPLATES = Path(__file__).resolve().parents[1] / "templates/agents"
-SKILLS = TEMPLATES / "skills"
 FIRST = "ejmlabs-workflow"
 CORE = ("ejmlabs-engineering", "ejmlabs-security", "ejmlabs-testing", "ejmlabs-workflow", "ejmlabs-writing")
 RULES = re.compile(r"<!-- ejmlabs:house-rules:start -->\n.*?<!-- ejmlabs:house-rules:end -->(?:\n|\Z)", re.DOTALL)
@@ -66,20 +66,20 @@ def installed_skills(root: Path, selected: list[str]) -> list[str]:
     return sorted({*(path.parent.name for path in (root / ".agents/skills").glob("*/SKILL.md")), *selected})
 
 
-def trigger(name: str) -> str:
+def trigger(skills: Path, name: str) -> str:
     """The first sentence of a shared skill's description, which says when to load it."""
-    header = (SKILLS / name / "SKILL.md").read_text().removeprefix("---\n").partition("\n---\n")[0]
+    header = (skills / name / "SKILL.md").read_text().removeprefix("---\n").partition("\n---\n")[0]
     for line in header.splitlines():
         if line.startswith("description: "):
             return re.split(r"(?<=\.)\s", line.removeprefix("description: "), maxsplit=1)[0]
     raise SystemExit(f"{name}: the shared SKILL.md has no description")
 
 
-def routing(selected: list[str]) -> str:
+def routing(skills: Path, selected: list[str]) -> str:
     """The routing block: one line per shared skill, built from the frontmatter of the shared copies."""
-    known = {path.name for path in SKILLS.iterdir() if path.is_dir()}
+    known = {path.name for path in skills.iterdir() if path.is_dir()}
     shared = sorted((name for name in selected if name in known), key=lambda name: (name != FIRST, name))
-    lines = "".join(f"- [{name}](.agents/skills/{name}/SKILL.md): {trigger(name)}\n" for name in shared)
+    lines = "".join(f"- [{name}](.agents/skills/{name}/SKILL.md): {trigger(skills, name)}\n" for name in shared)
     return f"<!-- ejmlabs:skills:start -->\n\n{lines}\n<!-- ejmlabs:skills:end -->\n"
 
 
@@ -113,7 +113,7 @@ def insert_routing(text: str, block: str) -> str:
     return before + block + ("\n" + rest if rest else "")
 
 
-def update_agents(text: str, selected: list[str]) -> tuple[str, list[str], list[str]]:
+def update_agents(templates: Path, text: str, selected: list[str]) -> tuple[str, list[str], list[str]]:
     """Return AGENTS.md text with both marked blocks current, what stops a sync, and what changed."""
     rules = list(RULES.finditer(text))
     if len(rules) != 1:
@@ -122,11 +122,11 @@ def update_agents(text: str, selected: list[str]) -> tuple[str, list[str], list[
     if starts != ends or starts > 1 or len(ROUTING.findall(text)) != starts:
         return text, ["keep at most one block between the ejmlabs:skills start and end markers, start first"], []
     changes = []
-    block = (TEMPLATES / "house-rules.md").read_text()
+    block = (templates / "house-rules.md").read_text()
     if rules[0].group().rstrip("\n") != block.rstrip("\n"):
         changes.append("house rules differ from the shared block")
         text = put(text, rules[0], block)
-    block = routing(selected)
+    block = routing(templates / "skills", selected)
     found = ROUTING.search(text)
     if found is None:
         changes.append("skills routing block is missing")
@@ -156,20 +156,23 @@ def link_drift(root: Path, skills: list[str]) -> list[str]:
     return drift
 
 
-def run(root: Path, names: list[str], *, check: bool) -> list[str]:
+def run(root: Path, names: list[str], *, check: bool, templates: Path = TEMPLATES) -> list[str]:
     """Sync or check a checkout. Nothing is written when anything that a sync cannot fix is wrong."""
+    shared = templates / "skills"
+    if templates.is_symlink() or shared.is_symlink() or not shared.is_dir():
+        return [f"{templates}: not a shared templates directory"]
     selected = selection(root, names)
     skills = root / ".agents/skills"
     agents = root / "AGENTS.md"
-    known = {path.name for path in SKILLS.iterdir() if path.is_dir()}
+    known = {path.name for path in shared.iterdir() if path.is_dir()}
     problems = symlinks(skills.parent, skills, agents, *(skills / name for name in selected))
     problems += [f"{skills / name}: not a shared skill; remove it or add it to ejmlabs/.github" for name in selected if name not in known]
     text = agents.read_text() if agents.is_file() and not agents.is_symlink() else ""
-    planned, blocked, changes = update_agents(text, selected)
+    planned, blocked, changes = update_agents(templates, text, selected)
     problems += [f"{agents}: {message}" for message in blocked]
     present = installed_skills(root, selected)
     problems += link_problems(root, present)
-    stale = [name for name in selected if name in known and (not (skills / name).is_dir() or contents(skills / name) != contents(SKILLS / name))]
+    stale = [name for name in selected if name in known and (not (skills / name).is_dir() or contents(skills / name) != contents(shared / name))]
     drift = [f"{skills / name}: differs from the shared skill" for name in stale]
     drift += [f"{agents}: {message}" for message in changes] + link_drift(root, present)
     unrouted = [f"{agents}: route .agents/skills/{name}/SKILL.md" for name in present if f".agents/skills/{name}/SKILL.md" not in planned]
@@ -178,7 +181,7 @@ def run(root: Path, names: list[str], *, check: bool) -> list[str]:
     if problems:
         return problems
     for name in stale:
-        replace_directory(SKILLS / name, skills / name)
+        replace_directory(shared / name, skills / name)
     if planned != text:
         agents.write_text(planned)
     claude = root / ".claude/skills"
@@ -198,12 +201,13 @@ def main() -> None:
     parser.add_argument("root", type=Path)
     parser.add_argument("names", nargs="*", help="stack skills to add, such as ejmlabs-rust; core and installed skills always sync")
     parser.add_argument("--check", action="store_true")
+    parser.add_argument("--templates", type=Path, default=TEMPLATES, help="the templates/agents directory to sync from (default: beside this script)")
     args = parser.parse_args()
     if args.root.is_symlink():
         raise SystemExit("Refusing to use a symlink: " + str(args.root))
     if args.check and args.names:
         raise SystemExit("--check takes no skill names; it checks the installed set")
-    errors = run(args.root, args.names, check=args.check)
+    errors = run(args.root, args.names, check=args.check, templates=args.templates)
     if errors:
         raise SystemExit("\n".join(errors))
 
