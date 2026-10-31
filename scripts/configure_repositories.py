@@ -18,7 +18,7 @@ import standards
 
 OWNER = "ejmlabs"
 NAMES = (".github", "ejmlabs", "ejm-cli", "ejm-harness", "ejm-ide")
-SUPPORTED_NAMES = (*NAMES, "ejm-ui")
+SUPPORTED_NAMES = (*NAMES, "ejm-ui", "ejm-calm")
 CONTEXTS = ("Quality", "Repository standards")
 # GitHub Actions. Pinning the required checks to it keeps another app from publishing them.
 ACTIONS_APP_ID = 15368

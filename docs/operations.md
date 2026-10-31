@@ -41,8 +41,8 @@ python3 scripts/configure_repositories.py [--hold-actions | --protect-main] [--r
 python3 scripts/configure_repositories.py --check [--repository NAME ...] [--standards-revision SHA]
 ```
 
-The default scope is `.github`, `ejmlabs`, `ejm-cli`, `ejm-harness` and `ejm-ide`; `ejm-ui` needs
-`--repository ejm-ui`. Apply refuses to enable Actions until reviewed callers are on main
+The default scope is `.github`, `ejmlabs`, `ejm-cli`, `ejm-harness` and `ejm-ide`; `ejm-ui` and
+`ejm-calm` need `--repository NAME`. Apply refuses to enable Actions until reviewed callers are on main
 (`--hold-actions` keeps them off for bootstrap). `--protect-main` adds branch protection and the
 `v*` tag ruleset. For a repository with `deploy.yml` on main, apply also creates the `staging` and
 `production` environments, each allowing deployment from `main` only. It never sets reviewers: one is
@@ -171,6 +171,7 @@ check caps bundle bytes, download size or dependency count.
 | `ejm-harness` | ubuntu-24.04, macos-15, windows-2025 | `npm ci --ignore-scripts` (root, `registry`); `./scripts/check` | Keyring packages, registry gate |
 | `ejm-ide` | macos-15 | `npm ci --ignore-scripts`; `npm run verify`, `site:check`, `site:build` | Harness pin |
 | `ejm-ui` | ubuntu-24.04 | the owner commands below | |
+| `ejm-calm` | ubuntu-24.04 | none: the product's `.github/quality` | Its browser smoke uses the runner's Chrome |
 
 - Product-owned gate. An executable, regular (not symlinked) `.github/quality` replaces the
   built-in commands. It runs from the product root with `npm_config_ignore_scripts=true` and needs
@@ -265,7 +266,7 @@ secrets.
 
 ## Site deploys
 
-Site repositories (`ejmlabs`, `ejm-cli`, `ejm-harness`, `ejm-ide`, `ejm-ui`) adopt continuous deploys
+Site repositories (`ejmlabs`, `ejm-calm`, `ejm-cli`, `ejm-harness`, `ejm-ide`, `ejm-ui`) adopt continuous deploys
 with the canonical `deploy.yml` caller, which passes `secrets: inherit`. Each push to main runs the
 shared `deploy-site.yml`:
 
