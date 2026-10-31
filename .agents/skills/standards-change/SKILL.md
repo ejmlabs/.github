@@ -36,8 +36,9 @@ Never hand-edit `.github/workflows/*.yml`; they are generated with the trusted s
 - Widening permissions, secrets, triggers or the set of allowed actions needs a stated reason
   and the owner's review. Default tokens stay read-only. Actions stay pinned to full SHAs.
 - Shared agent skills follow the authoring rules that `tests/test_sync_agents.py` checks: a
-  description of at most 300 characters, a body of at most 100 lines, links only inside the
-  skill, no em dashes. Put task detail in `references/`.
+  description of at most 300 characters, a `SKILL.md` of at most 5,000 bytes, links only inside
+  the skill, no em dashes. Put task detail in `references/`. Edit the template, never the synced
+  copy under `.agents/skills/ejmlabs-*`.
 - After a template change merges, open one PR per consumer that resyncs it. Land them one at a
   time per repository.
 
