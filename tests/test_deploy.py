@@ -21,6 +21,47 @@ import deploy
 PRODUCTION: dict[str, Any] = {"name": "ejmlabs-cli", "routes": [{"pattern": "cli.ejmlabs.com", "custom_domain": True}], "assets": {"directory": "./dist"}}
 STAGING: dict[str, Any] = {"name": "ejmlabs-cli-staging", "routes": [{"pattern": "cli-staging.ejmlabs.com", "custom_domain": True}], "assets": {"directory": "./dist"}}
 CONFIG = json.dumps({**PRODUCTION, "env": {"staging": STAGING}}, indent=2) + "\n"
+# The ejmlabs studio's site/wrangler.jsonc as committed in ejmlabs/ejmlabs at 0289c47: a third `preview` environment beside staging.
+STUDIO = """{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "ejmlabs",
+  "account_id": "478a0db3a110d8503c16abbc1db27af4",
+  "compatibility_date": "2026-10-18",
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "404-page"
+  },
+  "routes": [
+    { "pattern": "ejmlabs.com", "custom_domain": true }
+  ],
+  "env": {
+    "preview": {
+      "name": "ejmlabs-preview",
+      "workers_dev": false,
+      "preview_urls": false,
+      "assets": {
+        "directory": "./dist",
+        "not_found_handling": "404-page"
+      },
+      "routes": []
+    },
+    "staging": {
+      "name": "ejmlabs-staging",
+      "workers_dev": false,
+      "preview_urls": false,
+      "assets": {
+        "directory": "./dist",
+        "not_found_handling": "404-page"
+      },
+      "routes": [
+        { "pattern": "staging.ejmlabs.com", "custom_domain": true }
+      ]
+    }
+  }
+}
+"""
 PROTECTED: dict[str, Any] = {"deployment_branch_policy": {"protected_branches": False, "custom_branch_policies": True}, "protection_rules": []}
 ONLY_MAIN: dict[str, Any] = {"total_count": 1, "branch_policies": [{"id": 1, "name": "main", "type": "branch"}]}
 
@@ -122,6 +163,46 @@ class ConfigTests(unittest.TestCase):
         self.paths({**PRODUCTION, "account_id": deploy.ACCOUNT_ID})
         with self.assertRaisesRegex(ValueError, "different Cloudflare account"):
             self.paths({**PRODUCTION, "account_id": "0" * 32})
+
+
+class StudioConfigTests(unittest.TestCase):
+    """The ejmlabs profile builds against a sibling ejm-ui and packs site/wrangler.jsonc and site/dist."""
+
+    def paths(self, config: dict[str, Any]) -> None:
+        _, config_path, files = deploy.SITES["ejmlabs"]
+        deploy.check_paths(config, config_path, deploy.source_path("ejmlabs"), files)
+
+    def test_the_studio_config_passes_every_check_and_preview_is_never_a_target(self) -> None:
+        config = deploy.site_config(STUDIO)
+        self.assertEqual(deploy.check(config, "production"), [])
+        self.assertEqual(deploy.check(config, "staging"), ["--env", "staging"])
+        self.paths(config)
+        self.assertEqual(deploy.SITES["ejmlabs"][1:], ("site/wrangler.jsonc", ("site/wrangler.jsonc", "site/dist")))
+        with self.assertRaisesRegex(ValueError, "Unknown deploy environment"):
+            deploy.check(config, "preview")
+
+    def test_the_preview_environment_gets_the_same_scrutiny_as_staging(self) -> None:
+        config = deploy.site_config(STUDIO)
+
+        def with_preview(**changes: Any) -> dict[str, Any]:
+            return {**config, "env": {**config["env"], "preview": {**config["env"]["preview"], **changes}}}
+
+        for environment in deploy.ENVIRONMENTS:
+            with self.subTest(environment=environment), self.assertRaisesRegex(ValueError, "build command"):
+                deploy.check(with_preview(build={"command": "npm run build"}), environment)
+        for directory in ("../src", "../../ejm-ui", "/etc", "./"):
+            with self.subTest(directory=directory), self.assertRaises(ValueError):
+                self.paths(with_preview(assets={"directory": directory}))
+        with self.assertRaisesRegex(ValueError, "committed source"):
+            self.paths(with_preview(main="worker.js"))
+
+    def test_staging_cannot_take_the_production_identity(self) -> None:
+        config = deploy.site_config(STUDIO)
+        staging = config["env"]["staging"]
+        variants: tuple[dict[str, Any], ...] = ({"name": "ejmlabs"}, {"name": None}, {"routes": config["routes"]}, {"routes": []})
+        for changes in variants:
+            with self.subTest(changes=changes), self.assertRaisesRegex(ValueError, "Staging needs"):
+                deploy.check({**config, "env": {**config["env"], "staging": {**staging, **changes}}}, "staging")
 
 
 class EnvironmentTests(unittest.TestCase):
