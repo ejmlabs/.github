@@ -405,7 +405,13 @@ def finish(api: GitHub) -> None:
         return
     for context, ok in (("Quality", quality), ("Repository standards", standards)):
         api.status(sha, context, "success" if ok else "failure", "Passed for admitted commit" if ok else "Failed, cancelled, missing, or incomplete")
-    if stopped_since(api, sha, owned):
+    try:
+        stopped = stopped_since(api, sha, owned)
+    except HANDLED:
+        # A result that cannot be confirmed fails closed. This run still owns the checks, so rerunning it publishes again.
+        fail_checks(api, sha, "Could not confirm the result; rerun the failed job")
+        raise
+    if stopped:
         fail_checks(api, sha, "Stopped by a maintainer while results were published")
 
 

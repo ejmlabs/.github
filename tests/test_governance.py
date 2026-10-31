@@ -646,6 +646,16 @@ class FinishTests(GateCase):
             self.assertEqual(states[-3:-1], ["success", "success"], "the retry stored a second success")
         self.assertEqual(self.states(), {"Quality": "failure", "Repository standards": "failure"})
 
+    def test_an_unreadable_history_after_the_write_fails_closed_and_a_rerun_publishes(self) -> None:
+        self.admit(self.event("opened"))
+        self.server.fail("GET", f"/commits/{SHA}/statuses", 503, times=3)
+        with self.finishing(), self.assertRaises(urllib.error.HTTPError):
+            self.finish()
+        self.assertEqual(self.states(), {"Quality": "failure", "Repository standards": "failure"})
+        with self.as_run(RUN, attempt="2"), self.finishing():
+            self.finish()
+        self.assertEqual(self.states(), {"Quality": "success", "Repository standards": "success"})
+
     def test_a_missing_owned_status_fails_closed(self) -> None:
         self.admit(self.event("opened"))
         with self.finishing():
