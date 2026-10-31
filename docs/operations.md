@@ -82,6 +82,8 @@ Comments such as `/ready` or `/approve` do nothing. Draft PRs spend nothing.
 - Reruns are allowed. Re-run failed jobs keeps the admission, and finish re-checks ownership and
   the live head. Re-running the admission job itself needs a current human maintainer as the
   actor. Rerun for infrastructure failures; fix code in a new commit.
+- A run holds its head from admission until it completes, whatever its statuses say, so a Ready
+  or `gate:approve` while it runs admits nothing beside it; `gate:revoke` stops it.
 - A no-op prints a notice and exits 0: a stale head, a head that already passed or is already
   admitted, a fork, a PR nobody has admitted. A pending pair whose run finished, or whose URL is
   not a run of this repository, is stale, and the next admission event admits the head again.

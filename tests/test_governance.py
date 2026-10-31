@@ -361,7 +361,7 @@ class AdmissionTests(GateCase):
             "foreign url": ({400: "in_progress"}, dict.fromkeys(both, "https://github.com/other/repo/actions/runs/400")),
             "no url": ({}, dict.fromkeys(both, "")),
             "trailing text": ({400: "in_progress"}, dict.fromkeys(both, run_url(400) + "/jobs/1")),
-            "one context only": ({400: "in_progress"}, {"Quality": run_url(400)}),
+            "one context of a completed run": ({400: "completed"}, {"Quality": run_url(400)}),
             "this run": ({}, dict.fromkeys(both, run_url(RUN))),
         }
         for name, (runs, urls) in cases.items():
@@ -383,6 +383,19 @@ class AdmissionTests(GateCase):
                 self.assertIn("already admitted", self.admit(self.event("opened")))
                 self.assertEqual(self.server.writes, [])
                 self.assertEqual(self.outputs(), {"run": "false"})
+
+    def test_a_live_run_holds_its_head_whatever_its_statuses_say(self) -> None:
+        # A run that wrote one admission status, or one result, still holds the head until it completes.
+        cases = {"one pending context": [("pending", "Quality")], "one result written": [("pending", "Quality"), ("pending", "Repository standards"),
+                                                                                      ("success", "Quality")]}
+        for name, statuses in cases.items():
+            with self.subTest(name):
+                self.setUp()
+                self.server.add_run(400, "in_progress")
+                for state, context in statuses:
+                    self.server.add_status(state, context, run_url(400))
+                self.assertIn("already admitted", self.admit(self.event("opened")))
+                self.assertEqual(self.server.writes, [])
 
     def test_passed_checks_are_not_run_again(self) -> None:
         self.seed_admission("success", 400, "completed")
@@ -713,6 +726,25 @@ class FinishTests(GateCase):
         with self.finishing():
             self.finish()
         self.assertEqual(self.states(), {"Quality": "failure", "Repository standards": "failure"})
+
+    def test_an_approval_while_finish_writes_its_results_admits_nothing_beside_it(self) -> None:
+        # After finish writes Quality, the head has one success and one pending; the run is still live and holds it.
+        self.admit(self.event("opened"))
+        writes = {"count": 0}
+
+        def approve_before_the_second_write() -> None:
+            writes["count"] += 1
+            if writes["count"] == 2:
+                self.server.add_run(501, "in_progress")
+                with self.as_run(501), contextlib.redirect_stdout(io.StringIO()) as out:
+                    governance.admit(self.api, self.event("labeled", label={"name": APPROVE_LABEL}))
+                self.assertIn("already admitted", out.getvalue())
+
+        self.server.on("POST", "/statuses/", approve_before_the_second_write, times=1000)
+        with self.finishing():
+            self.finish()
+        self.assertEqual(self.states(), {"Quality": "success", "Repository standards": "success"})
+        self.assertEqual({status["target_url"] for status in self.server.log}, {run_url(RUN)})
 
     def test_a_rerun_of_a_stopped_runs_admission_does_not_admit_again(self) -> None:
         self.admit(self.event("opened"))

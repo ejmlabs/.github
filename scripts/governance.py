@@ -240,31 +240,27 @@ def owns_checks(api: GitHub, sha: str) -> bool:
 
 
 def other_run_is_live(api: GitHub, found: dict[str, dict[str, Any]]) -> bool:
-    """True when every required context is pending under another run that has not completed.
+    """True when another run that has not completed wrote the newest status of any required context, in any state.
 
-    A pending pair whose run completed, is missing, or has no run URL for this repository is stale, as is one this
-    run wrote itself (a rerun of the admission job), so the head can be admitted again.
+    A run holds its head from admission until it completes, including while finish has written one result and not
+    the other, so a second admission cannot start beside it. Statuses of a completed or missing run, or with no run
+    URL for this repository, are stale, as are this run's own (a rerun of the admission job).
     """
-    if any(found.get(context, {}).get("state") != "pending" for context in REQUIRED_CONTEXTS):
-        return False
     prefix = re.escape(f"https://github.com/{api.repo}/actions/runs/")
     owners = set()
     for context in REQUIRED_CONTEXTS:
-        match = re.fullmatch(prefix + "([0-9]{1,20})", found[context].get("target_url") or "")
-        if match is None:
-            return False
-        owners.add(int(match[1]))
+        match = re.fullmatch(prefix + "([0-9]{1,20})", found.get(context, {}).get("target_url") or "")
+        if match is not None:
+            owners.add(int(match[1]))
+    owners.discard(int(os.environ["GITHUB_RUN_ID"]))
     for owner in owners:
-        if owner == int(os.environ["GITHUB_RUN_ID"]):
-            return False
         try:
-            if api.request(f"/actions/runs/{owner}")["status"] == "completed":
-                return False
+            if api.request(f"/actions/runs/{owner}")["status"] != "completed":
+                return True
         except urllib.error.HTTPError as error:
             if error.code != 404:
                 raise
-            return False
-    return True
+    return False
 
 
 def admit_head(api: GitHub, number: int, sha: str, base: str) -> None:
