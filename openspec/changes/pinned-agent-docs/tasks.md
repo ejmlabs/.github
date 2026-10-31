@@ -11,5 +11,5 @@
 
 ## 3. Rollout
 
-- [ ] 3.1 Merge, retain the pin and move this repository's callers to it.
+- [x] 3.1 Merge (#79, 9f7421b9cdf42f027828c5e481bebd880db20770), retain the pin under `workflow-pins/`, and move this repository's callers to it.
 - [ ] 3.2 One PR per site repository (`ejm-ui`, `ejm-ide`, `ejm-harness`, `ejmlabs`) moves the pins, resyncs, and replaces restated pipeline prose with site facts and a link; its Repository standards check passes at the new pin.
