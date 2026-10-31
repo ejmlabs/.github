@@ -196,7 +196,7 @@ class GhCase(unittest.TestCase):
 class ApplyTests(GhCase):
     def test_ui_is_explicitly_selectable_without_expanding_the_default_rollout(self) -> None:
         self.assertEqual(settings.NAMES, (".github", "ejmlabs", "ejm-cli", "ejm-harness", "ejm-ide"))
-        self.assertEqual(settings.SUPPORTED_NAMES, (*settings.NAMES, "ejm-ui"))
+        self.assertEqual(settings.SUPPORTED_NAMES, (*settings.NAMES, "ejm-ui", "ejm-calm"))
 
     def test_hold_never_enables_actions_or_sets_allowlist(self) -> None:
         gh = self.gh(healthy())

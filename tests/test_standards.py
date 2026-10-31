@@ -48,8 +48,8 @@ class StandardTests(TreeCase):
     def test_the_profile_table_drives_the_repository_lists(self) -> None:
         self.assertEqual(standards.NATIVE_RELEASE, ("ejm-cli", "ejm-harness"))
         self.assertEqual(standards.WARM_CACHE, ("ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui"))
-        self.assertEqual(sorted(standards.SITE_DEPLOY), ["ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui", "ejmlabs"])
-        self.assertEqual(sorted(PROFILES), [".github", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui", "ejmlabs"])
+        self.assertEqual(sorted(standards.SITE_DEPLOY), ["ejm-calm", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui", "ejmlabs"])
+        self.assertEqual(sorted(PROFILES), [".github", "ejm-calm", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui", "ejmlabs"])
         self.assertEqual({name: profile.harness_pin for name, profile in PROFILES.items()}["ejm-cli"], True)
         self.assertEqual([name for name, profile in PROFILES.items() if profile.harness_pin], ["ejm-cli", "ejm-ide"])
         self.assertEqual([name for name, profile in PROFILES.items() if profile.publish], ["ejm-ui"])
