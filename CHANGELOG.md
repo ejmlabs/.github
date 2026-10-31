@@ -116,6 +116,7 @@ The net change since 0.1.0:
 - `scripts/sync_agents.py --templates DIR` syncs or checks against another revision's templates.
 - `ejmlabs-cloudflare` has `references/ci-deploys.md`: the deploy on merge, what a deploy refuses, failures and what to do, the owner setup, staging names and rollback. Site repositories keep only their own site facts and link to it.
 - A house rule: shared behavior is described in the synced skills, which move with the pin, and repository docs do not restate it.
+- `ci-deploys.md` lets an agent approve a production deployment only when the user explicitly asks, and only after confirming, from the Worker's active version id, that production serves a build of main the deployment moves forward from. Matching assets is supporting evidence only. A deploy by hand from a branch otherwise gets rolled back by the next production job. The dry run names the Wrangler to use when a repository pins none.
 
 #### Fixed
 
