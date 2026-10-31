@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Continuous staging deploys and approved production deploys for the ejmlabs sites.
+Continuous staging and production deploys for the ejmlabs sites, decided by the merge.
 
 ## Requirements
 
@@ -15,14 +15,19 @@ A push to main in an adopting site repository SHALL build the site without crede
 - **WHEN** the Wrangler config has no `env.staging` with its own name and routes
 - **THEN** the staging deploy fails and production is not offered
 
-### Requirement: Production waits for a human
+### Requirement: Production follows staging after the merge
 
-Production SHALL deploy the files staging deployed, only after the `production` environment's required reviewer approves, and a newer main commit SHALL cancel an older production deploy still waiting.
+Production SHALL deploy the files staging deployed as soon as staging succeeds, with no approval in GitHub: the human decision is the merge. A required reviewer on the `production` environment SHALL be allowed and SHALL NOT be required. A deploy that has started SHALL never be cancelled; the build, staging and production jobs SHALL queue per repository in push order, and a newer main commit SHALL replace only an older run that has not started.
 
 #### Scenario: Unprotected environment
 
-- **WHEN** an environment lacks a custom deployment branch policy of exactly `main`, or production requires no reviewer
+- **WHEN** staging or production lacks a custom deployment branch policy of exactly `main`
 - **THEN** the deploy fails before calling Wrangler
+
+#### Scenario: A newer push while a deploy runs
+
+- **WHEN** a newer commit reaches main while a deploy job is running Wrangler
+- **THEN** that job finishes, and the newer commit's job waits behind it
 
 ### Requirement: Deploy trusts only the reviewed commit
 

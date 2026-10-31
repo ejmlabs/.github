@@ -70,12 +70,17 @@ A current human maintainer SHALL approve and admit the current head with `gate:a
 
 ### Requirement: Authoritative stop
 
-`gate:revoke` and conversion to draft SHALL fail both statuses, cancel this workflow's other runs for the head, dismiss bot approvals even when cancelling fails, and fail both statuses again as the last write. `gate:revoke` SHALL stay on the PR until its stop has completed: while it is there, verify and finish fail closed and admission and approval write nothing. Every admission event SHALL admit only when its sender is a current human maintainer.
+`gate:revoke` and conversion to draft SHALL fail both statuses, cancel this workflow's other runs for the head, dismiss bot approvals even when cancelling fails, wait at most 45 seconds for the runs it listed to complete, and fail both statuses again as the last write. A stop SHALL end within 120 seconds; if its last write fails, the job SHALL fail and say the head must not be merged. `gate:revoke` SHALL stay on the PR until its stop has completed: while it is there, verify and finish fail closed and admission and approval write nothing. Every admission event SHALL admit only when its sender is a current human maintainer.
 
 #### Scenario: A finishing job races a revoke
 
 - **WHEN** a finish job writes success while a stop runs
 - **THEN** the last status for each required context is a failure
+
+#### Scenario: A finish job running when its cancel lands
+
+- **WHEN** a stop cancels an older run whose finish job is still running and that job then writes success
+- **THEN** the stop's last write comes after that run has completed, so the newest statuses are failure
 
 ## REMOVED Requirements
 

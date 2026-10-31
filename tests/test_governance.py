@@ -16,6 +16,7 @@ from typing import Any, Self
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import build_workflows
 import governance
 from governance import APPROVE_LABEL, REQUIRED_CONTEXTS, REVOKE_LABEL, GitHub, human
 
@@ -66,6 +67,7 @@ class Server:
         self.runs: dict[int, dict[str, Any]] = {RUN: {"id": RUN, "status": "in_progress", "workflow_id": WORKFLOW, "head_sha": SHA}}
         self.calls: list[tuple[str, str]] = []
         self.writes: list[str] = []
+        self.timeouts: list[float] = []
         self.cancelled: list[int] = []
         self.faults: list[dict[str, Any]] = []
         self.hooks: list[dict[str, Any]] = []
@@ -99,7 +101,9 @@ class Server:
         return found
 
     def urlopen(self, req: urllib.request.Request, timeout: float | None = None) -> Response:
-        assert timeout == 30
+        assert timeout is not None
+        assert 0 < timeout <= 30
+        self.timeouts.append(timeout)
         assert req.get_header("Authorization") == "Bearer " + FAKE_AUTH
         url, method = req.full_url, req.get_method()
         path = url.removeprefix(ROOT) if url.startswith(ROOT) else url.removeprefix("https://api.github.com")
@@ -182,7 +186,8 @@ class Server:
                     return 409, None
                 self.writes.append("cancel:" + rid)
                 self.cancelled.append(int(rid))
-                self.runs[int(rid)]["status"] = "completed"
+                if not self.runs[int(rid)].get("lingers"):  # a lingering run has a job that is still ending when the cancel lands
+                    self.runs[int(rid)]["status"] = "completed"
                 return 202, {}
         raise AssertionError(f"Unexpected call {method} {path}")
 
@@ -593,6 +598,195 @@ class StopTests(GateCase):
         text = self.admit(self.event("synchronize", before=OLD))
         self.assertIn("::warning::", text)
         self.assertEqual(self.outputs()["run"], "true")
+
+
+class StopWaitTests(GateCase):
+    """A stop waits for the runs it cancelled, so a finish job already running cannot write after the last write."""
+
+    def lingering(self, *runs: int) -> None:
+        for run in runs:
+            self.server.add_run(run, "in_progress")
+            self.server.runs[run]["lingers"] = True
+
+    def late_finish(self, run: int) -> Callable[[], None]:
+        """The finish job of an older run: it writes success, then its run completes."""
+        def land() -> None:
+            if self.server.runs[run]["status"] != "completed":
+                for context in REQUIRED_CONTEXTS:
+                    self.server.add_status("success", context, run_url(run))
+                self.server.runs[run]["status"] = "completed"
+        return land
+
+    def test_a_finish_that_is_still_running_when_its_cancel_lands_cannot_write_after_the_stop(self) -> None:
+        self.admit(self.event("opened"))
+        self.lingering(400)
+        land = self.late_finish(400)
+
+        def sleep(seconds: float) -> None:
+            self.sleeps.append(seconds)
+            land()  # time passes while the stop waits, and the finish job's write lands
+
+        self.api.sleep = sleep
+        self.admit(self.labeled(REVOKE_LABEL))
+        land()  # a stop that did not wait returned before this write, which then comes last
+        self.assertEqual(self.states(), {"Quality": "failure", "Repository standards": "failure"})
+        self.assertEqual([status["state"] for status in self.server.log[2:]],
+                         ["failure", "failure", "success", "success", "failure", "failure"])
+        self.assertEqual(self.sleeps, [governance.RUN_POLL_SECONDS])
+
+    def test_a_run_that_never_completes_is_waited_for_only_so_long_and_the_last_write_still_goes_out(self) -> None:
+        self.admit(self.event("opened"))
+        self.lingering(400, 401)
+        self.server.writes.clear()
+        out = self.admit(self.labeled(REVOKE_LABEL))
+        self.assertEqual(self.sleeps, [governance.RUN_POLL_SECONDS] * governance.RUN_POLLS)
+        self.assertTrue(out.startswith("::warning::"), out)
+        self.assertTrue(out.strip().endswith("400, 401"), out)
+        self.assertEqual(self.server.writes[-3:], ["status:failure", "status:failure", "label:" + REVOKE_LABEL])
+        self.assertEqual(self.states(), {"Quality": "failure", "Repository standards": "failure"})
+
+    def test_the_current_run_is_never_waited_on(self) -> None:
+        self.admit(self.event("opened"))
+        self.server.add_run(600, "in_progress")  # a newer run is a later decision and is not cancelled or waited on either
+        self.assertEqual(self.server.runs[RUN]["status"], "in_progress")
+        self.assertEqual(self.admit(self.labeled(REVOKE_LABEL)), "")
+        self.assertEqual((self.sleeps, self.server.cancelled), ([], []))
+        self.assertEqual(self.server.calls.count(("GET", f"/actions/runs/{RUN}")), 1)  # the workflow lookup, not a poll
+
+    def test_a_run_that_cannot_be_read_does_not_stop_the_last_write_and_a_deleted_run_counts_as_done(self) -> None:
+        self.admit(self.event("opened"))
+        self.server.add_run(400, "in_progress")
+        self.server.add_run(401, "in_progress")
+        self.server.fail("GET", "/actions/runs/400", 503)
+        self.server.on("GET", "/actions/runs/401", lambda: self.server.runs.pop(401))
+        out = self.admit(self.labeled(REVOKE_LABEL))
+        self.assertTrue(out.strip().endswith("::warning::Runs not confirmed completed after the stop, so a finish job in one may still write a status: 400"), out)
+        self.assertEqual(self.states(), {"Quality": "failure", "Repository standards": "failure"})
+        self.assertEqual(self.server.pr["labels"], [])
+
+    def test_a_failed_cancel_still_waits_for_the_runs_it_listed(self) -> None:
+        self.admit(self.event("opened"))
+        self.lingering(400)
+        self.server.fail("POST", "/actions/runs/400/cancel", 403)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(urllib.error.HTTPError):
+            governance.admit(self.api, self.labeled(REVOKE_LABEL))
+        self.assertTrue(out.getvalue().strip().endswith("400"), out.getvalue())
+        self.assertEqual(self.states(), {"Quality": "failure", "Repository standards": "failure"})
+
+    def test_a_final_write_that_fails_says_the_head_may_still_read_success_and_fails_the_job(self) -> None:
+        self.admit(self.event("opened"))
+        self.server.add_run(400, "in_progress")
+
+        def late_success_then_outage() -> None:
+            # The older finish job wrote success after the stop's first writes, and then GitHub stops taking statuses.
+            self.late_finish(400)()
+            self.server.fail("POST", "/statuses/", 503)
+
+        self.server.on("POST", "/actions/runs/400/cancel", late_success_then_outage)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(urllib.error.HTTPError):
+            governance.admit(self.api, self.labeled(REVOKE_LABEL))
+        self.assertIn("::error::The final failure status could not be written, so this head may still read success. Do not merge it", out.getvalue())
+        self.assertEqual(self.states(), {"Quality": "success", "Repository standards": "success"})
+        self.assertEqual(self.sleeps, list(governance.STATUS_RETRY_DELAYS))
+        self.assertEqual(self.server.pr["labels"], [{"name": REVOKE_LABEL}])  # the label keeps finish and admission blocked
+
+    def test_a_final_write_that_succeeds_prints_no_error(self) -> None:
+        self.admit(self.event("opened"))
+        self.assertNotIn("::error::", self.admit(self.labeled(REVOKE_LABEL)))
+
+
+class StopTimingTests(GateCase):
+    """A stop must end inside the admission job's time limit, whatever GitHub does."""
+
+    def test_the_worst_case_of_a_stop_fits_the_admission_job_with_a_margin(self) -> None:
+        limit = build_workflows.governance()["jobs"]["admission"]["timeout-minutes"] * 60
+        worst = governance.STOP_STEPS_SECONDS + governance.FINAL_WRITE_SECONDS
+        # The rest of the job is the runner start, the reads before a stop and the label removal after it.
+        self.assertLessEqual(worst + 60, limit, f"a stop can take {worst} s of the job's {limit} s")
+        self.assertLess(governance.RUN_POLLS * governance.RUN_POLL_SECONDS, governance.STOP_STEPS_SECONDS)
+        self.assertGreaterEqual(governance.FINAL_WRITE_SECONDS, 2 * governance.STATUS_TIMEOUT, "the last write needs room for a retry")
+
+    def test_a_stop_ends_within_its_budget_when_every_call_after_the_first_writes_hangs(self) -> None:
+        self.admit(self.event("opened"))
+        now = [0.0]
+        attempts: list[tuple[float, str, str]] = []
+
+        def sleep(seconds: float) -> None:
+            now[0] += seconds
+
+        def hung(req: urllib.request.Request, timeout: float | None = None) -> Response:
+            assert timeout is not None
+            assert timeout > 0
+            attempts.append((now[0], req.get_method(), req.full_url.removeprefix(ROOT)))
+            if len(attempts) <= 2:  # the first two failure writes go through
+                return self.server.urlopen(req, timeout)
+            now[0] += timeout
+            raise TimeoutError("hung")
+
+        api = GitHub(sleep=sleep, clock=lambda: now[0])
+        out = io.StringIO()
+        with mock.patch("urllib.request.urlopen", hung), contextlib.redirect_stdout(out), self.assertRaises(TimeoutError):
+            governance.stop(api, 1, SHA, "stop")
+        worst = governance.STOP_STEPS_SECONDS + governance.FINAL_WRITE_SECONDS
+        self.assertLessEqual(now[0], worst)
+        self.assertGreater(now[0], governance.STOP_STEPS_SECONDS, "the last write got its own time after the steps used theirs")
+        last_writes = [at for at, method, path in attempts[2:] if method == "POST" and path.startswith("/statuses/")]
+        self.assertTrue(last_writes and min(last_writes) >= governance.STOP_STEPS_SECONDS, attempts)
+        self.assertIn("::error::", out.getvalue())
+        self.assertIsNone(api.deadline)
+
+    def test_a_first_write_that_hangs_still_leaves_the_cancels_and_the_last_write(self) -> None:
+        self.admit(self.event("opened"))
+        self.server.add_run(400, "in_progress")
+        now = [0.0]
+        hung_writes: list[float] = []
+
+        def sleep(seconds: float) -> None:
+            now[0] += seconds
+
+        def first_write_hangs(req: urllib.request.Request, timeout: float | None = None) -> Response:
+            assert timeout is not None
+            assert timeout > 0
+            if req.get_method() == "POST" and req.full_url.removeprefix(ROOT).startswith("/statuses/") and len(hung_writes) < 5:
+                hung_writes.append(now[0])  # every attempt of the first write hangs until its timeout
+                now[0] += timeout
+                raise TimeoutError("hung")
+            return self.server.urlopen(req, timeout)
+
+        api = GitHub(sleep=sleep, clock=lambda: now[0])
+        out = io.StringIO()
+        with mock.patch("urllib.request.urlopen", first_write_hangs), contextlib.redirect_stdout(out):
+            governance.stop(api, 1, SHA, "stop")
+        self.assertEqual(len(hung_writes), 1 + len(governance.STATUS_RETRY_DELAYS))
+        self.assertIn("::warning::The first failure status could not be written (TimeoutError); the stop goes on", out.getvalue())
+        self.assertNotIn("::error::", out.getvalue())
+        self.assertEqual(self.server.cancelled, [400])
+        self.assertEqual(self.states(), {"Quality": "failure", "Repository standards": "failure"})
+        self.assertLessEqual(now[0], governance.STOP_STEPS_SECONDS + governance.FINAL_WRITE_SECONDS)
+        self.assertIsNone(api.deadline)
+
+    def test_no_request_starts_or_sleeps_past_the_deadline(self) -> None:
+        self.api.deadline = self.api.clock() - 1
+        with self.assertRaises(TimeoutError):
+            self.api.request("/pulls/1")
+        self.assertEqual(self.server.calls, [])
+        self.api.deadline = self.api.clock() + 2
+        self.api.pause(60)
+        self.assertLessEqual(self.sleeps[-1], 2)
+
+    def test_status_writes_have_their_own_shorter_timeout(self) -> None:
+        self.api.status(SHA, "Quality", "pending", "queued")
+        self.api.request("/pulls/1")
+        self.assertEqual(self.server.timeouts, [governance.STATUS_TIMEOUT, governance.REQUEST_TIMEOUT])
+
+    def test_the_deadline_is_cleared_after_every_stop(self) -> None:
+        self.admit(self.event("opened"))
+        self.server.fail("POST", "/statuses/", 503)
+        with self.assertRaises(urllib.error.HTTPError):
+            self.admit(self.labeled(REVOKE_LABEL))
+        self.assertIsNone(self.api.deadline)
 
 
 class FinishTests(GateCase):

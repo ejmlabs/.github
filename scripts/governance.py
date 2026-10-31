@@ -22,6 +22,16 @@ ACTIONS = ("opened", "reopened", "synchronize", "ready_for_review", "converted_t
 RETRY_DELAYS = (1, 2)
 # A status write is the gate's only way to stop or publish a head, so it gets a longer budget than the other calls.
 STATUS_RETRY_DELAYS = (1, 2, 4, 8)
+# Seconds a request may block. A status answers in well under a second, so a hung one is retried instead of waited for.
+REQUEST_TIMEOUT = 30
+STATUS_TIMEOUT = 10
+# A stop ends within STOP_STEPS_SECONDS + FINAL_WRITE_SECONDS whatever GitHub does: the first write, the cancels, the
+# dismissals and the wait share the first, the last write has the second. The admission job has 3 minutes in all.
+STOP_STEPS_SECONDS = 80
+FINAL_WRITE_SECONDS = 40
+# After the cancels, wait up to RUN_POLLS * RUN_POLL_SECONDS (45) seconds for the cancelled runs to complete.
+RUN_POLL_SECONDS = 3
+RUN_POLLS = 15
 MAX_RESPONSE_BYTES = 8_000_000
 FULL_SHA = re.compile(r"[0-9a-f]{40}")
 NETWORK_ERRORS = (OSError, http.client.HTTPException)
@@ -46,24 +56,33 @@ def current_head(pr: dict[str, Any], sha: str) -> bool:
 
 
 class GitHub:
-    def __init__(self, sleep: Callable[[float], None] = time.sleep) -> None:
+    def __init__(self, sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic) -> None:
         self.repo = os.environ["GITHUB_REPOSITORY"]
         if self.repo not in REPOS:
             raise ValueError("Repository has not adopted the ejmlabs policy")
         self.token = os.environ["GH_TOKEN"]
         self.root = "https://api.github.com/repos/" + self.repo
         self.sleep = sleep
+        self.clock = clock
+        # Set while a stop runs. No request or sleep goes past it, so the stop's total time is bounded by construction.
+        self.deadline: float | None = None
 
     @property
     def run_url(self) -> str:
         return f"https://github.com/{self.repo}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
 
+    def pause(self, seconds: float) -> None:
+        """Sleep, but never past the deadline."""
+        if self.deadline is not None:
+            seconds = min(seconds, max(self.deadline - self.clock(), 0))
+        self.sleep(seconds)
+
     def request(self, path: str, method: str = "GET", data: dict[str, Any] | None = None, *, retry: bool | None = None,
-                delays: tuple[int, ...] = RETRY_DELAYS) -> dict[str, Any]:
+                delays: tuple[int, ...] = RETRY_DELAYS, timeout: float = REQUEST_TIMEOUT) -> dict[str, Any]:
         """Call the API once, or again after each delay on 429, 5xx and network errors when the call is safe to repeat.
 
         GET, PUT and DELETE repeat by default. A POST repeats only when the caller says it is idempotent (statuses, cancel),
-        so a review is never posted twice.
+        so a review is never posted twice. Past the deadline, if one is set, no attempt starts and a TimeoutError is raised.
         """
         url = path if path.startswith("https://api.github.com/") else self.root + path
         body = None if data is None else json.dumps(data).encode()
@@ -74,8 +93,11 @@ class GitHub:
         last = len(delays) if (method != "POST" if retry is None else retry) else 0
         attempt = 0
         while True:
+            budget = timeout if self.deadline is None else min(timeout, self.deadline - self.clock())
+            if budget <= 0:
+                raise TimeoutError("The time budget for this step is spent")
             try:
-                with urllib.request.urlopen(req, timeout=30) as response:  # noqa: S310 - url is always https://api.github.com/
+                with urllib.request.urlopen(req, timeout=budget) as response:  # noqa: S310 - url is always https://api.github.com/
                     raw = response.read(MAX_RESPONSE_BYTES + 1)
             except urllib.error.HTTPError as error:
                 if attempt == last or not (error.code == 429 or 500 <= error.code <= 599):
@@ -87,7 +109,7 @@ class GitHub:
                 if len(raw) > MAX_RESPONSE_BYTES:
                     raise ValueError("GitHub response exceeds the size limit")
                 return cast("dict[str, Any]", json.loads(raw or b"null"))
-            self.sleep(delays[attempt])
+            self.pause(delays[attempt])
             attempt += 1
 
     def pages(self, path: str, limit: int = 10) -> list[dict[str, Any]]:
@@ -125,7 +147,7 @@ class GitHub:
         # The target URL names the run that wrote the status; ownership checks compare it with the current run.
         self.request(f"/statuses/{sha}", "POST", {
             "context": context, "state": state, "description": description[:140], "target_url": self.run_url,
-        }, retry=True, delays=STATUS_RETRY_DELAYS)
+        }, retry=True, delays=STATUS_RETRY_DELAYS, timeout=STATUS_TIMEOUT)
 
 
 def outputs(**items: str | int) -> None:
@@ -167,24 +189,56 @@ def remove_label(api: GitHub, number: int | str, name: str) -> None:
             raise
 
 
-def cancel_runs(api: GitHub, sha: str) -> None:
-    """Cancel this workflow's queued and in-progress runs for a head, except this run and any newer one.
+def older_runs(api: GitHub, sha: str) -> list[int]:
+    """Ids of this workflow's queued and in-progress runs for a head, except this run and any newer one.
 
-    A newer run is a later decision for the same head, for example Ready after a draft conversion. List errors surface;
-    a run that finished or cannot be cancelled (409, 422) is fine.
+    A newer run is a later decision for the same head, for example Ready after a draft conversion. List errors surface.
     """
     current = int(os.environ["GITHUB_RUN_ID"])
     workflow = int(api.request(f"/actions/runs/{current}")["workflow_id"])
+    found: list[int] = []
     for state in ("queued", "in_progress"):
         listing = api.request(f"/actions/workflows/{workflow}/runs?head_sha={sha}&status={state}&per_page=100")
         for item in listing["workflow_runs"]:
-            if int(item["id"]) >= current:
-                continue
-            try:
-                api.request(f"/actions/runs/{int(item['id'])}/cancel", "POST", retry=True)
-            except urllib.error.HTTPError as error:
-                if error.code not in (409, 422):
-                    raise
+            run = int(item["id"])
+            if run < current and run not in found:
+                found.append(run)
+    return found
+
+
+def cancel_runs(api: GitHub, runs: list[int]) -> None:
+    """Ask GitHub to cancel each run. A run that finished or cannot be cancelled (409, 422) is fine."""
+    for run in runs:
+        try:
+            api.request(f"/actions/runs/{run}/cancel", "POST", retry=True)
+        except urllib.error.HTTPError as error:
+            if error.code not in (409, 422):
+                raise
+
+
+def run_completed(api: GitHub, run: int) -> bool:
+    """True when the run has completed or no longer exists. A run that cannot be read counts as still running."""
+    try:
+        return bool(api.request(f"/actions/runs/{run}")["status"] == "completed")
+    except HANDLED as error:
+        return isinstance(error, urllib.error.HTTPError) and error.code == 404
+
+
+def wait_for_runs(api: GitHub, runs: list[int]) -> None:
+    """Poll, for a bounded time, until every listed run has completed; warn naming the ones that have not.
+
+    A cancelled run's finish job can still be running, and its success status would land after the stop's last write.
+    Waiting for the run to complete closes that. This never raises: the stop's last write matters more than the wait.
+    """
+    pending = runs
+    for poll in range(RUN_POLLS + 1):
+        pending = [run for run in pending if not run_completed(api, run)]
+        if not pending or poll == RUN_POLLS:
+            break
+        api.pause(RUN_POLL_SECONDS)
+    if pending:
+        print("::warning::Runs not confirmed completed after the stop, so a finish job in one may still write a status: "
+              + ", ".join(str(run) for run in pending))
 
 
 def cancel_superseded(api: GitHub, before: object) -> None:
@@ -193,7 +247,7 @@ def cancel_superseded(api: GitHub, before: object) -> None:
         notice("The event names no previous head, so no runs are cancelled")
         return
     try:
-        cancel_runs(api, before)
+        cancel_runs(api, older_runs(api, before))
     except NETWORK_ERRORS as error:
         # A read-only token (for example a Dependabot push) cannot cancel; the old run stops at its own ownership check.
         print(f"::warning::Could not cancel runs for the previous head: {type(error).__name__}")
@@ -205,19 +259,40 @@ def fail_checks(api: GitHub, sha: str, reason: str) -> None:
 
 
 def stop(api: GitHub, number: int, sha: str, reason: str) -> None:
-    """Authoritative stop: fail the checks, cancel runs, dismiss approvals, then fail the checks again as the last write.
+    """Authoritative stop: fail the checks, cancel runs, dismiss approvals, wait for the runs, then fail the checks as the last write.
 
-    Approvals are dismissed even when cancelling fails, and the last write goes out even when a step above fails, so a
-    finish job that wrote success while this ran cannot win.
+    Approvals are dismissed even when cancelling fails, and the last write goes out even when a step above fails. The wait
+    lets a finish job that was already running when its cancel landed write, and then end, before the last write, so its
+    success cannot come after it. If a run is still going after the wait, the last write goes out anyway with a warning.
+    The whole stop shares one clock: STOP_STEPS_SECONDS for the steps and FINAL_WRITE_SECONDS for the last write. If that
+    write fails, the head may still read an earlier success: the job fails with an error and its label stays.
     """
-    fail_checks(api, sha, reason)
+    runs: list[int] = []
+    api.deadline = api.clock() + STOP_STEPS_SECONDS
     try:
         try:
-            cancel_runs(api, sha)
+            try:
+                try:
+                    fail_checks(api, sha, reason)
+                except HANDLED as error:
+                    # The last write has its own time and fences the head on its own, so a first write that fails or
+                    # spends the steps' time skips nothing: the cancels, the dismissals and the last write still run.
+                    print(f"::warning::The first failure status could not be written ({type(error).__name__}); the stop goes on")
+                runs = older_runs(api, sha)
+                cancel_runs(api, runs)
+            finally:
+                dismiss_bot_approvals(api, number, sha, reason)
         finally:
-            dismiss_bot_approvals(api, number, sha, reason)
+            wait_for_runs(api, runs)
+            api.deadline = api.clock() + FINAL_WRITE_SECONDS
+            try:
+                fail_checks(api, sha, reason)
+            except HANDLED:
+                print("::error::The final failure status could not be written, so this head may still read success. "
+                      "Do not merge it until this job is rerun and passes, or the gate runs again.")
+                raise
     finally:
-        fail_checks(api, sha, reason)
+        api.deadline = None
 
 
 # Every status the gate writes comes from a workflow token, which GitHub records as this account.
