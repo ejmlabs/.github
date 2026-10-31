@@ -16,11 +16,11 @@
 
 - [ ] 2.1 Hosted gate run after the pins move: a maintainer PR in each consumer is admitted and merges; a Dependabot PR is admitted by `gate:approve`; a fork PR prints the notice; `gate:revoke` and conversion to draft stop a head; a rerun of failed jobs keeps the admission
   - [x] Maintainer PRs admitted on 863bd13 and merged with a `gate:approve` bot approval: ejmlabs/ejm-ui#52, ejmlabs/ejmlabs#52, ejmlabs/ejm-ide#54, ejmlabs/ejm-harness#66 (Linux, macOS and Windows Quality) and ejmlabs/.github#74; ejmlabs/ejm-ide#55 admitted a 501-file, 84,000-line deletion with no size cap
-  - [ ] A Dependabot PR admitted by `gate:approve`
+  - [x] A Dependabot PR admitted by `gate:approve`: ejmlabs/.github#71 got the bot approval and an admitted run on its head, then merged
   - [ ] A fork PR prints the notice (needs an outside account)
   - [ ] `gate:revoke` and conversion to draft stop a head
   - [ ] A rerun of failed jobs keeps the admission
-- [ ] 2.2 A Dependabot actions PR passes `python3 scripts/build_workflows.py --check`
+- [x] 2.2 A Dependabot actions PR passes `python3 scripts/build_workflows.py --check`: ejmlabs/.github#71 changed `action.yml` and the generated `attach-assets.yml` together, and its admitted Quality and Repository standards passed
 - [ ] 2.3 First staging and production deploy for each adopting site, with its environments configured
 - [ ] 2.4 `python3 scripts/configure_repositories.py --check` passes for every repository
 - [ ] 2.5 Admitted gate timings on each consumer after its pin moves, cold and with a warm cache
