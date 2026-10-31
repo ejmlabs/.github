@@ -13,7 +13,8 @@ there. A rule below or a repository skill may add to them, never relax them.
   PR, merge, deploy and a live check without asking at each step. Open the PR non-draft once
   local checks pass (a draft is for unfinished work or when asked); the request covers it. Stop
   only for a human action (`gate:approve`, `gate:revoke`, marking a user's draft Ready, a
-  production approval, a release), a failing check, or an ambiguous product decision.
+  production approval, a release; an agent does one only when the user explicitly asks), a
+  failing check, or an ambiguous product decision.
 - Other agents may be working here. Check `git status` first, change only your paths, never
   revert work you did not make, and never use bare `git stash`.
 - Follow an existing pattern, or define one and record it before you use it. Prefer trusted,
