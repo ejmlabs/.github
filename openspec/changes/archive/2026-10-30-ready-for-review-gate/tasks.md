@@ -20,10 +20,10 @@
 
 ## 4. Rollout
 
-- [ ] 4.1 Merge the shared revision, retain `workflow-pins/FULL_SHA`, and verify the pin branch exists
-- [ ] 4.2 For each gate repo, land a pin/form PR to the new revision and create the two gate labels; verify main's caller and that maintainer PRs run without slash commands
-- [ ] 4.3 Set branch protection required checks to Quality and Repository standards; verify read-back with `enforce_admins` and one approving review retained
-- [ ] 4.4 Manual check: maintainer non-draft PR runs checks; outsider Ready alone does not; `gate:approve` records a bot approval; verify with Actions run links
+- [x] 4.1 Merge the shared revision, retain `workflow-pins/FULL_SHA`, and verify the pin branch exists
+- [x] 4.2 For each gate repo, land a pin/form PR to the new revision and create the two gate labels; verify main's caller and that maintainer PRs run without slash commands
+- [x] 4.3 Set branch protection required checks to Quality and Repository standards; verify read-back with `enforce_admins` and one approving review retained
+- [x] 4.4 Manual check: maintainer non-draft PR runs checks; outsider Ready alone does not; `gate:approve` records a bot approval; verify with Actions run links
 
 ## Workflow follow-up
 
