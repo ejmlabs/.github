@@ -1,9 +1,8 @@
 # Browser checks and browser tests
 
-Read when a layout, style or behavior change is visible in a page or an app window, when you
-capture before and after screenshots, or when you write or change a Playwright test. A text-only
-change needs only step 7, the console check. If the repository has the `ejmlabs-design` skill, it
-holds the visual quality review; this file holds the verification steps.
+Read when a change is visible in a page or an app window, when you capture before and after
+screenshots, when you check a live deploy, or when you write or change a Playwright test.
+`ejmlabs-design` holds the visual quality review; this file holds the verification steps.
 
 ## Look at the change
 
@@ -30,9 +29,10 @@ holds the visual quality review; this file holds the verification steps.
 
 ## After a deploy
 
-The live check belongs to the repository's deploy skill. If the repository has the
-`ejmlabs-cloudflare` skill, its verify reference lists it. Say which URL and which commit you
-checked.
+- Fetch the live URL with `curl -sI`: check the status and the security headers.
+- Request a missing page and confirm it returns 404.
+- Load the live page in a browser in both themes and read the console.
+- Say which URL and which commit you checked.
 
 ## Playwright tests
 
