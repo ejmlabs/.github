@@ -10,10 +10,16 @@
 - [x] 1.6 Root `action.yml` for action pins and a 14-day Dependabot cooldown
 - [x] 1.7 Docs: `docs/operations.md`, README, CHANGELOG and PR template; archive the finished changes and sync their specs, including `pr-gate`
 - [x] 1.8 Release hardening: attestation in its own `attest` job, a draft with no tag until a human publishes it, attach bound to the draft's `tag_name` and `target_commitish`, and `semver` in `scripts/versioning.py` so `verify-build.yml` and `attach-assets.yml` embed less
+- [x] 1.9 Close the stop residuals and the deploy setup gaps: a stop waits at most 45 seconds for the runs it cancelled before its last write, fails the job when that write fails, and ends within 120 seconds; production follows staging with no required reviewer and deploy jobs queue instead of cancelling; the deploy Wrangler is 4.153.0; `scripts/set_deploy_token.py` sets the deploy token in every site repository
 
 ## 2. Verification (hosted)
 
 - [ ] 2.1 Hosted gate run after the pins move: a maintainer PR in each consumer is admitted and merges; a Dependabot PR is admitted by `gate:approve`; a fork PR prints the notice; `gate:revoke` and conversion to draft stop a head; a rerun of failed jobs keeps the admission
+  - [x] Maintainer PRs admitted on 863bd13 and merged with a `gate:approve` bot approval: ejmlabs/ejm-ui#52, ejmlabs/ejmlabs#52, ejmlabs/ejm-ide#54, ejmlabs/ejm-harness#66 (Linux, macOS and Windows Quality) and ejmlabs/.github#74; ejmlabs/ejm-ide#55 admitted a 501-file, 84,000-line deletion with no size cap
+  - [ ] A Dependabot PR admitted by `gate:approve`
+  - [ ] A fork PR prints the notice (needs an outside account)
+  - [ ] `gate:revoke` and conversion to draft stop a head
+  - [ ] A rerun of failed jobs keeps the admission
 - [ ] 2.2 A Dependabot actions PR passes `python3 scripts/build_workflows.py --check`
 - [ ] 2.3 First staging and production deploy for each adopting site, with its environments configured
 - [ ] 2.4 `python3 scripts/configure_repositories.py --check` passes for every repository
@@ -27,6 +33,8 @@
   - [x] Drop the `XAI_API_KEY` declaration from `governance.yml`, and make the standards accept only that form
   - [x] Fix the community text (3.3)
 - [ ] 3.2 One PR per consumer (`ejm-cli`, `ejm-harness`, `ejm-ide`, `ejm-ui`, `ejmlabs`) that moves every pin, switches `deploy.yml` to `secrets: inherit` where present, and resyncs community files and other templates
+  - [x] ejm-harness#66, ejm-ide#54, ejm-ui#52 and ejmlabs#52 on 863bd13
+  - [ ] ejm-cli, which needs push access for the agent
 - [x] 3.3 Fix stale community text in `templates/community/` and the root files: SECURITY.md ("before checks or AI run"), CODE_OF_CONDUCT.md ("AI review"), CONTRIBUTING.md ("Address findings", forks admitted by Ready, "Do not use Actions rerun to replay an admission")
 - [ ] 3.4 Archive this change, skipping the `pr-gate` sync (already done here), and sync `repository-standards` into `openspec/specs/`
 
