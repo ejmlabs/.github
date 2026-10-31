@@ -9,7 +9,7 @@ The owner wants high velocity with safety and security, and no ceremony that buy
 - Gate: act on the event's head SHA, own statuses by run URL instead of an admission id, allow reruns, stop authoritatively, admit a bot PR with one `gate:approve` label, and drop the size cap. **BREAKING**: fork PRs are not admitted; a maintainer pushes the reviewed change to a branch.
 - Standards: require callers to equal the canonical text except the pin, allow any other workflow that passes a credential-free lint, require community files only to exist, and check public UI packages by structure. Every problem is reported at once.
 - Prepare and cache: raw `git archive` bytes, a tested `scripts/extract.py`, Rust caches keyed by lockfile and only restored by the gate, and product-owned `.github/quality` and `.github/site-build` with the built-in commands as fallback.
-- Release and deploy: draft from any commit on main, deploy only the reviewed Wrangler config, check environments fail closed, and pass the Cloudflare token through `secrets: inherit` in the canonical `deploy.yml`.
+- Release and deploy: draft from any commit on main with no tag until a human publishes it, attestation in its own least-privilege job, deploy only the reviewed Wrangler config, check environments fail closed, and pass the Cloudflare token through `secrets: inherit` in the canonical `deploy.yml`.
 - Settings: a read-only `--check`, `staging` and `production` environments limited to `main`, and a fix for the missing-label bug.
 - Action pins move to a root `action.yml` so Dependabot bumps them with the generated workflows.
 
@@ -24,7 +24,7 @@ The owner wants high velocity with safety and security, and no ceremony that buy
 - `pr-gate`: event-head binding, fork policy, one-label approve and admit, authoritative stop, ownership and reruns, no size cap, product-owned gate.
 - `fast-gate`: cache keys, restore-only gate jobs, PR-scoped writes.
 - `site-deploys`: reviewed config, environment checks, product-owned build, `secrets: inherit`.
-- `release-attach`: drafts from any main commit, attestation scope.
+- `release-attach`: drafts from any main commit, no tag before publication, attestation in its own job.
 - `ui-publish`: structural rules replace per-package digests.
 - `no-size-caps`: admission size cap removed.
 

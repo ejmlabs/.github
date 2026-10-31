@@ -60,6 +60,11 @@ def source(name: str, *, library: bool = False) -> str:
     return text.split('\nif __name__ == "__main__":')[0] if library else text
 
 
+def libraries(*names: str) -> str:
+    """Join library scripts into one namespace, in dependency order. Each workflow embeds only the libraries it uses."""
+    return "\n".join(source(name, library=True) for name in names)
+
+
 def python(text: str, args: str = "", executable: str = "python3 -I") -> str:
     # GitHub evaluates expressions even inside quoted script strings. Encoding the
     # trusted library preserves literal consumer expressions without evaluating them.
@@ -187,7 +192,7 @@ def restore(job: str) -> list[dict[str, Any]]:
 
 
 def governance() -> dict[str, Any]:
-    standards_check = source("standards.py", library=True) + "\nsys.exit(standards_main(sys.argv[1:]))\n"
+    standards_check = libraries("versioning.py", "standards.py") + "\nsys.exit(standards_main(sys.argv[1:]))\n"
     pull_if = (
         "github.event_name == 'pull_request' && "
         "contains(fromJSON('[\"opened\",\"reopened\",\"synchronize\",\"ready_for_review\",\"converted_to_draft\",\"labeled\"]'), github.event.action) && "
@@ -239,23 +244,21 @@ def governance() -> dict[str, Any]:
               "permissions": {"contents": "read", "pull-requests": "write", "statuses": "write"},
               "env": {**ENV, "JOB_RESULTS": "${{ toJSON(needs) }}"},
               "steps": [run("Publish required results only after live admission validation", python(source("governance.py"), "finish"))]}
-    # XAI_API_KEY stays declared, optional and unused, only because the standards check of every pin through
-    # 8230ef8 requires the declaration in this scaffold. Nothing reads it; drop it once those pins are retired.
-    secrets = {"XAI_API_KEY": {"required": False}, "EJM_HARNESS_TOKEN": {"required": False}}
+    secrets = {"EJM_HARNESS_TOKEN": {"required": False}}
     return {"name": "Human-admitted PR checks", "on": {"workflow_call": {"secrets": secrets}}, "permissions": {}, "jobs": {"admission": admission, "prepare": prepare, "quality": quality, "registry": registry, "standards": standards, "finish": finish}}
 
 
 def release_workflow() -> dict[str, Any]:
     inputs = {"commit": {"required": True, "type": "string"}, "version": {"required": True, "type": "string"}, "standards-ref": {"required": True, "type": "string"}}
     # Embed libraries, not their command entry points, before the release entry point.
-    code = source("governance.py", library=True) + "\n" + source("standards.py", library=True) + "\n" + source("prepare.py", library=True) + "\n" + source("release.py")
+    code = libraries("governance.py", "versioning.py", "standards.py", "prepare.py") + "\n" + source("release.py")
     return {"name": "Checked draft source release", "on": {"workflow_call": {"inputs": inputs}}, "permissions": {},
             "concurrency": {"group": "draft-release-${{ github.repository }}", "cancel-in-progress": False},
             "jobs": {"draft": {"if": "${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 8,
                                "permissions": {"contents": "write", "pull-requests": "read", "statuses": "read"},
                                "env": {"GH_TOKEN": "${{ github.token }}", "RELEASE_COMMIT": "${{ inputs.commit }}", "RELEASE_VERSION": "${{ inputs.version }}", "STANDARDS_REF": "${{ inputs.standards-ref }}"},
                                "steps": [checkout("product", "${{ inputs.commit }}"), run("Validate protected source and prepare assets without executing project code", python(code)),
-                                         run("Create a new tag and draft release without replacing anything", """python3 - <<'PY'
+                                         run("Create a draft release without a tag, replacing nothing", """python3 - <<'PY'
 import json, os, subprocess
 from pathlib import Path
 manifest = json.loads(Path('release-assets/provenance.json').read_text())
@@ -263,9 +266,9 @@ tag = 'v' + manifest['version']
 repo = os.environ['GITHUB_REPOSITORY']
 # VERSION is already validated; hyphens in build metadata do not mark prereleases.
 prerelease_flags = ['--prerelease', '--latest=false'] if '-' in manifest['version'].split('+', 1)[0] else []
-# No --force, --clobber, or implicit existing-tag acceptance.
-subprocess.run(['gh', 'api', '--method', 'POST', 'repos/' + repo + '/git/refs', '-f', 'ref=refs/tags/' + tag, '-f', 'sha=' + manifest['commit']], check=True)
-subprocess.run(['gh', 'release', 'create', tag, '--repo', repo, '--verify-tag', '--draft', '--title', tag, '--notes-file', 'release-notes.md', *prerelease_flags, *[str(p) for p in sorted(Path('release-assets').iterdir())]], check=True)
+# No tag ref is written. The draft only targets the commit, and GitHub creates the tag when a human publishes it,
+# so a failed run never burns a version. No --force, --clobber, or implicit existing-tag acceptance.
+subprocess.run(['gh', 'release', 'create', tag, '--repo', repo, '--target', manifest['commit'], '--draft', '--title', tag, '--notes-file', 'release-notes.md', *prerelease_flags, *[str(p) for p in sorted(Path('release-assets').iterdir())]], check=True)
 PY
 """)]}}}
 
@@ -280,27 +283,40 @@ def build_env(inputs: dict[str, Any]) -> dict[str, Any]:
     return {**env, "RELEASE_VERSION": "${{ inputs.version }}"} if "version" in inputs else env
 
 
+def attach_code() -> str:
+    """The attach script with the two libraries it needs: the API class and SemVer. The standards check stays out."""
+    return libraries("governance.py", "versioning.py") + "\n" + source("attach.py")
+
+
 def verify_build_workflow() -> dict[str, Any]:
-    """Pre-tag gate: no checkout, no project code, read-only."""
+    """Pre-draft gate: no checkout, no project code, read-only."""
     inputs = build_inputs()
-    code = source("governance.py", library=True) + "\n" + source("standards.py", library=True) + "\n" + source("attach.py")
     return {"name": "Verified build run", "on": {"workflow_call": {"inputs": inputs}}, "permissions": {},
             "jobs": {"verify": {"runs-on": "ubuntu-24.04", "timeout-minutes": 3, "permissions": {"actions": "read"}, "env": build_env(inputs),
-                                "steps": [run("Require a successful build of this commit from main", python(code, "verify", "python3 -I"))]}}}
+                                "steps": [run("Require a successful build of this commit from main", python(attach_code(), "verify", "python3 -I"))]}}}
 
 
 def attach_workflow() -> dict[str, Any]:
-    """The only job that holds the release write token. It checks out and runs no project code."""
+    """Two jobs. `attach` alone holds the release write token and runs no project code. `attest`, only on request, holds the
+    attestation permissions and no write token for contents, and attests exactly the files `attach` verified and attached."""
     inputs = build_inputs("version", "attest")
-    code = source("governance.py", library=True) + "\n" + source("standards.py", library=True) + "\n" + source("attach.py")
+    code = attach_code()
+    artifact = {"uses": DOWNLOAD, "with": {"name": "release-files", "run-id": "${{ inputs.build-run-id }}", "github-token": "${{ github.token }}", "path": "built"}}
+    attach = {"runs-on": "ubuntu-24.04", "timeout-minutes": 10, "permissions": {"contents": "write", "actions": "read"}, "env": build_env(inputs),
+              "outputs": {"digests": "${{ steps.attached.outputs.digests }}"},
+              "steps": [run("Require the build run and the draft release to match", python(code, "check", "python3 -I")), artifact,
+                        run("Recompute digests and attach to the draft", python(code, "attach", "python3 -I"), id="attached")]}
+    # Nothing here can write contents or releases. The digests come from the attach job's output and are recomputed from a fresh
+    # download of the same artifact, so a changed or swapped file stops the job before the attestation is signed. The attach job
+    # verified the run this job downloads from, and the confirm step checks the run again before it reads the files.
+    attest = {"needs": "attach", "if": "${{ inputs.attest }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 10,
+              "permissions": {"contents": "read", "actions": "read", "id-token": "write", "attestations": "write"},
+              "env": {**build_env(build_inputs()), "ATTACHED_DIGESTS": "${{ needs.attach.outputs.digests }}"},
+              "steps": [artifact, run("Require the files to equal the attached files", python(code, "confirm", "python3 -I")),
+                        {"uses": ATTEST, "with": {"subject-path": "built/*", "show-summary": False}}]}
     return {"name": "Attach verified build files", "on": {"workflow_call": {"inputs": inputs}}, "permissions": {},
             "concurrency": {"group": "attach-assets-${{ github.repository }}", "cancel-in-progress": False},
-            "jobs": {"attach": {"runs-on": "ubuntu-24.04", "timeout-minutes": 10,
-                                "permissions": {"contents": "write", "actions": "read", "id-token": "write", "attestations": "write"}, "env": build_env(inputs),
-                                "steps": [run("Require the build run, tag and draft release to match", python(code, "check", "python3 -I")),
-                                          {"uses": DOWNLOAD, "with": {"name": "release-files", "run-id": "${{ inputs.build-run-id }}", "github-token": "${{ github.token }}", "path": "built"}},
-                                          run("Recompute digests and attach to the draft", python(code, "attach", "python3 -I")),
-                                          {"uses": ATTEST, "if": "${{ inputs.attest }}", "with": {"subject-path": "built/*", "show-summary": False}}]}}}
+            "jobs": {"attach": attach, "attest": attest}}
 
 
 DEPENDENCY = {"persist-credentials": False, "fetch-depth": 1, "submodules": False}

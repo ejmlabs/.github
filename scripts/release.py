@@ -15,9 +15,10 @@ from typing import IO, TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from governance import REQUIRED_CONTEXTS, GitHub, human
     from prepare import source_archive
-    from standards import DOCS, UI_FONT_NOTICES, read, semver, versions
+    from standards import DOCS, UI_FONT_NOTICES, read, versions
+    from versioning import semver
 
-# The workflow generator embeds governance.py, standards.py, and prepare.py first.
+# The workflow generator embeds governance.py, versioning.py, standards.py, and prepare.py first.
 
 
 def validate_archive(data: bytes, format_: str, prefix: str, required: dict[str, bytes]) -> None:
@@ -79,6 +80,21 @@ def require_standards_pin(root: Path, standards_ref: str) -> None:
         raise ValueError("standards-ref must equal the shared workflow pin in the release commit's .github/workflows/release.yml")
 
 
+def require_unused_tag(api: "GitHub", tag: str) -> None:
+    """A version is used once: no tag, no published release and no draft may exist for it, and nothing here creates a tag."""
+    for path in ("/git/ref/tags/" + tag, "/releases/tags/" + tag):
+        try:
+            api.request(path)
+        except urllib.error.HTTPError as error:
+            if error.code == 404:
+                continue
+            raise
+        raise ValueError("Version tag or release already exists; never overwrite it")
+    # The by-tag lookup never returns a draft, so list every release.
+    if any(item["tag_name"] == tag for item in api.pages("/releases")):
+        raise ValueError("A draft or published release already exists for the version; never overwrite it")
+
+
 def release(api: "GitHub", root: Path, sha: str, requested: str, standards_ref: str) -> None:
     if os.environ.get("GITHUB_RUN_ATTEMPT", "1") != "1":
         raise ValueError("Release reruns are not allowed; inspect the existing tag and draft")
@@ -92,15 +108,7 @@ def release(api: "GitHub", root: Path, sha: str, requested: str, standards_ref: 
     version = versions(root, api.repo.split("/")[1])
     if version != requested:
         raise ValueError("Requested version differs from committed VERSION")
-    tag = "v" + version
-    for path in ("/git/ref/tags/" + tag, "/releases/tags/" + tag):
-        try:
-            api.request(path)
-        except urllib.error.HTTPError as error:
-            if error.code == 404:
-                continue
-            raise
-        raise ValueError("Version tag or release already exists; never overwrite it")
+    require_unused_tag(api, "v" + version)
     pulls = api.pages(f"/commits/{sha}/pulls")
     eligible = [p for p in pulls if p.get("merged_at") and p["base"]["ref"] == "main" and p["merge_commit_sha"] == sha]
     if len(eligible) != 1:
