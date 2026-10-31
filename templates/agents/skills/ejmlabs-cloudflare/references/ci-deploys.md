@@ -23,10 +23,12 @@ canonical text except for the pin. Each push to main runs three jobs in order.
 2. `staging` deploys that artifact with `wrangler deploy --env staging`.
 3. `production` runs once staging succeeds and deploys the same files with the top-level config.
 
-The human decision is the merge: `gate:approve` and the required checks. GitHub asks for no
-approval unless the owner put a required reviewer on the `production` environment. Then the job
-shows "Waiting for review" until a person approves it. An agent never approves a deployment and
-never changes the environment to skip one.
+The human decision is the merge: `gate:approve` and the required checks. The `production`
+environment needs no reviewer. If the owner keeps one, each production job shows "Waiting for
+review" until a person approves it. Approving is a human action: an agent approves a deployment
+only when the user explicitly asks, and only after the check in
+[Production ahead of main](#production-ahead-of-main). An agent never changes an environment to
+skip a review.
 
 Each job queues per repository in push order. A deploy that has started is never cancelled, so
 Wrangler never stops midway. A newer main commit replaces an older one that is still waiting, so
@@ -55,7 +57,9 @@ gets the `CLOUDFLARE_API_TOKEN` secret of the job's environment and no GitHub to
 
 A merge to main deploys, so finish the checks first. Run the repository's checks from a clean
 build (see [build-and-deploy.md](build-and-deploy.md)), read the list of files that will be
-published, and run a Wrangler dry run for each environment the change touches:
+published, and run a Wrangler dry run for each environment the change touches. Run it from the
+directory that holds the config, with the Wrangler the repository pins; a repository without a
+pin uses a current Wrangler 4 and says which version ran:
 
 ```sh
 npx --no-install wrangler deploy --config wrangler.jsonc --env "" --dry-run
@@ -77,6 +81,21 @@ gh run watch RUN_ID --exit-status
 When the staging job finishes, check staging live the way [verify.md](verify.md) and the
 repository's docs say, then production once its job finishes. Record the merge SHA, the ejm-ui
 pin when the site has one, the run URL, and the `Current Version ID` each deploy job prints.
+
+## Production ahead of main
+
+A deploy by hand from a branch leaves production serving files that main does not have, and the
+next production job from main rolls them back. Before you approve a production job, or before the
+owner removes a reviewer, check that production serves a build of main that the job moves forward
+from:
+
+1. Download the `site` artifact of a recent deploy run on main
+   (`gh run download RUN_ID -n site`), unpack `site.tar` as data, and list its hashed assets.
+2. Request a few of them from production with curl. Hashed assets are not challenged, so a build
+   whose assets production serves byte for byte is the live one.
+3. If that build's commit is an ancestor of the job's commit, approving moves production forward.
+   If production serves no main build, stop and report it: the branch behind it lands through
+   the gate first. Never deploy by hand to close the gap.
 
 ## When a run fails
 
@@ -103,6 +122,8 @@ or changes environments, secrets or tokens.
   token and checks it with Cloudflare. It then creates or repairs `staging` and `production` with
   the main-only branch policy in every site repository (or one, with `--repository NAME`) and
   stores the token as `CLOUDFLARE_API_TOKEN` in each. It keeps any reviewer the owner set.
+- Production needs no reviewer. The owner removes one under the environment's settings once
+  production serves a build of main (see [Production ahead of main](#production-ahead-of-main)).
 - The token needs Workers scripts, routes and custom domains on `ejmlabs.com`, plus R2 read for a
   site that binds a bucket.
 
