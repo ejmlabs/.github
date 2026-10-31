@@ -204,13 +204,8 @@ def github(path: str) -> Any:  # noqa: ANN401 - GitHub's JSON is untyped until c
     return json.loads(body)
 
 
-def required_reviewers(environment: dict[str, Any]) -> int:
-    rules = environment.get("protection_rules") or []
-    return sum(len(rule.get("reviewers") or []) for rule in rules if isinstance(rule, dict) and rule.get("type") == "required_reviewers")
-
-
 def check_environment(environment: str) -> None:
-    """GitHub creates a missing environment without rules, so require the rules this deploy relies on: only main may deploy, and production needs a reviewer."""
+    """GitHub creates a missing environment without rules, so require the rule this deploy relies on: only main may deploy. A reviewer is allowed, never required."""
     if environment not in ENVIRONMENTS:
         raise ValueError("Unknown deploy environment: " + environment)
     found = github("/environments/" + environment)
@@ -222,8 +217,6 @@ def check_environment(environment: str) -> None:
     if (not isinstance(entries, list) or len(entries) != 1 or listing.get("total_count") != 1
             or not isinstance(entries[0], dict) or entries[0].get("name") != "main" or entries[0].get("type") != "branch"):
         raise ValueError(f"The {environment} environment must allow deployments from the main branch only")
-    if environment == "production" and required_reviewers(found) < 1:
-        raise ValueError("The production environment must require a human reviewer before any deploy")
 
 
 def wrangler_environment() -> dict[str, str]:

@@ -11,7 +11,7 @@ The net change since 0.1.0:
 - Repository standards for versions, licenses, documents and workflow callers.
 - A settings tool, `scripts/configure_repositories.py`, that applies the repository controls and reads them back.
 - Draft source releases from checked main commits, and native release files that are verified before the draft and attached after it, with optional provenance attestation in its own job.
-- Continuous site deploys: staging on every push to main, production after a reviewer approves.
+- Continuous site deploys: staging on every push to main, then production once staging succeeds. The merge is the human decision.
 - A faster Quality gate: every matrix entry starts at once, Cargo uses every core, and `cargo-deny` and `cargo-machete` come from prebuilt archives checked against SHA-256 digests.
 - A trusted Rust build cache written only by reviewed main.
 - CLI and harness support: a harness pin checked against protected harness history, Linux keyring packages and a CLI setup hook.
@@ -52,6 +52,9 @@ The net change since 0.1.0:
 - `ejm-ide` selects its harness pin from the admitted head, with the same protected-main ancestry check as `ejm-cli`.
 - The canonical `deploy.yml` passes `secrets: inherit`, so the environment's `CLOUDFLARE_API_TOKEN` reaches the deploy jobs. The older form is still accepted.
 - Deploy jobs validate tar members before extraction and run Wrangler with a minimal environment that holds no GitHub token.
+- Production deploys no longer need a required reviewer. The deploy check still requires staging and production to allow deployment from exactly `main`, and a reviewer a human adds is allowed. `configure_repositories.py` no longer warns about or checks for one.
+- Deploy jobs never cancel a running deploy. The build, staging and production jobs queue per repository, and only an older run that has not started is replaced.
+- The deploy Wrangler is 4.153.0 (was 4.151.3). Its Miniflare resolves undici 7.30.1, which clears the eight undici advisories (high severity) that `npm audit` reported for 7.0.0 through 7.30.0.
 - Draft releases accept any commit on main, not only its head, and require `standards-ref` to equal every pin in that commit's own `release.yml`. An approval counts only as a reviewer's latest decision on the merged head.
 - Repository standards require community files only to exist and be non-empty. `scripts/sync_community.py --check` reports drift on demand.
 
@@ -95,6 +98,10 @@ The net change since 0.1.0:
 - Attach binds to the draft's `tag_name` and `target_commitish` instead of a tag ref. It refuses any existing tag ref, two releases for the tag and a replaced asset, and it reads the draft again right before the first upload.
 - SemVer checking moved to `scripts/versioning.py`. `verify-build.yml` and `attach-assets.yml` embed it and the API class instead of the whole standards check, which shrinks the generated files from 122,515 to 37,047 bytes (`verify-build.yml`) and from 245,200 to 111,398 bytes (`attach-assets.yml`, which gained a job).
 - The community templates and root files describe the current gate and release flow: no AI review, no fork admission, reruns allowed, no size cap, and a draft before the tag.
+
+#### Fixed
+
+- A stop waits, for at most 45 seconds, until the runs it cancelled have completed before its last write, so a finish job that was already running cannot post a success after it. A run still going then is named in a warning. A last write that fails prints an error that the head may still read success, and the job fails. The whole stop is bounded to 120 seconds, inside the admission job's 3 minutes, with a 10-second timeout per status attempt.
 
 #### Removed
 

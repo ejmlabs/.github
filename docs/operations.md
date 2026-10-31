@@ -45,8 +45,8 @@ The default scope is `.github`, `ejmlabs`, `ejm-cli`, `ejm-harness` and `ejm-ide
 `--repository ejm-ui`. Apply refuses to enable Actions until reviewed callers are on main
 (`--hold-actions` keeps them off for bootstrap). `--protect-main` adds branch protection and the
 `v*` tag ruleset. For a repository with `deploy.yml` on main, apply also creates the `staging` and
-`production` environments, each allowing deployment from `main` only. It never sets reviewers: add
-the production reviewer by hand. `--check` writes nothing and exits 1 on any failure. It asserts
+`production` environments, each allowing deployment from `main` only. It never sets reviewers: one is
+optional, and a reviewer a human adds is kept. `--check` writes nothing and exits 1 on any failure. It asserts
 the settings above, collaborator roles, and that main's workflows pass the standards workflow
 check on a pin that is on `ejmlabs/.github` main or a retained `workflow-pins/` branch
 (`--standards-revision` requires one exact SHA).
@@ -71,9 +71,27 @@ Comments such as `/ready` or `/approve` do nothing. Draft PRs spend nothing.
   maintainer's PR, a new Ready or `gate:approve` for any other.
 - Stop. `gate:revoke` and conversion to draft fail both statuses, cancel this workflow's other
   queued and in-progress runs for that head, dismiss bot approvals (even when cancelling fails),
-  then fail both statuses again as the last write, so a finishing job cannot replace the failure
-  with a success. A status write is tried five times (1, 2, 4 and 8 seconds apart), other calls
-  three.
+  wait until those runs have completed, then fail both statuses again as the last write. The wait
+  matters because a finish job that was already running when its cancel landed can still post a
+  success: the stop's last write goes out only after that job's run has ended, so it is the newest.
+  The current run is never waited on. The wait polls every 3 seconds for at most 45 seconds. If a
+  run is still going then, the last write goes out anyway and a `::warning::` names the run ids.
+  A status write is tried five times (1, 2, 4 and 8 seconds apart, 10 seconds per attempt), other
+  calls three (30 seconds per attempt).
+- Stop time. The whole stop shares one clock: 80 seconds for the first write, the cancels, the
+  dismissals and the wait, then 40 seconds for the last write, 120 seconds at most. No request
+  starts and no sleep runs past it, so the stop always ends inside the admission job's 3 minutes,
+  with 60 seconds left for the job's start, the reads before the stop and the label removal after
+  it. A test computes this from the constants and the generated job's `timeout-minutes`. A first
+  write that fails or uses up its time skips nothing: a `::warning::` says so, and the cancels, the
+  dismissals and the last write, in its own 40 seconds, still run.
+- A failed last write. If the last status writes still fail after their retries, the head can
+  keep an earlier success. The `gate:revoke` label stays and blocks finish and admission, but it
+  does not block a merge on green statuses. The job fails with an `::error::` saying so. Do not
+  merge that head. Rerun the job (a maintainer may), which writes the failure again, then read the
+  head's statuses. The gate does not convert the PR to a draft as a fallback: GitHub documents the
+  GraphQL mutation `convertPullRequestToDraft` and that a draft cannot be merged, but not that a
+  workflow `GITHUB_TOKEN` may call the mutation, and reports say integration tokens are refused.
 - Durable revoke. `gate:revoke` stays on the PR until its stop has completed. While it is there,
   verify and finish fail closed, and a Ready, a push or `gate:approve` admits nothing and records
   no approval; the notice says so. If the revoke job fails or never ran (Actions keeps one pending
@@ -111,8 +129,9 @@ review the PR, then add `gate:approve` to approve and admit its head. Agents add
 when the user explicitly asks.
 
 A PR has no file or line cap. Time limits: admission, Repository standards and finish 3 minutes
-each, preparation 5, Quality 45, the separate registry gate 25. Builds receive no model key,
-source-read secret, deployment credential or write token. Never enable step or runner debug
+each (a stop uses at most 120 seconds of the admission job's), preparation 5, Quality 45, the
+separate registry gate 25. Builds receive no model key, source-read secret, deployment credential
+or write token. Never enable step or runner debug
 logging on this path. Set a workflow execution budget and alerts: per-run limits do not cap
 aggregate spending.
 
@@ -132,6 +151,9 @@ aggregate spending.
   deploy jobs through `secrets: inherit` in the canonical `deploy.yml`, and only the final deploy
   step of each job reads it. Scope it to Workers scripts, routes and custom domains on
   `ejmlabs.com`, plus R2 read for sites that bind a bucket. The build job gets no secret.
+  `python3 scripts/set_deploy_token.py` asks for the token once, checks it with Cloudflare, creates
+  or repairs both environments with the main-only policy in every site repository, and stores the
+  token in each through `gh secret set` on standard input. Rerun it to rotate the token.
 
 ## Quality profiles
 
@@ -253,8 +275,9 @@ shared `deploy-site.yml`:
    else the commands for the site in `SITES` in `scripts/deploy.py`, which also holds each site's
    config path and output paths.
 2. `staging` deploys the artifact with `wrangler deploy --env staging`.
-3. `production` waits for the `production` environment's required reviewer, then deploys the same
-   files with the top-level config.
+3. `production` runs once staging succeeds and deploys the same files with the top-level config. No
+   one approves it in GitHub: the human decision is the merge (`gate:approve` and the required
+   checks).
 
 A deploy job trusts nothing in the artifact. It checks out the reviewed `github.sha` (sparse,
 `persist-credentials: false`, `contents: read`), validates every tar member before extraction,
@@ -265,16 +288,18 @@ committed source. A Wrangler `build` command is refused, and staging needs its o
 routes, because `--env staging` otherwise inherits the production custom domain. Wrangler runs
 from the lockfile in `deploy/` with a minimal environment that holds no GitHub token. A separate
 step first reads the environment and fails closed unless it has exactly one deployment branch
-policy, `main`; production also needs at least one required reviewer.
+policy, `main`, in staging and production alike. A required reviewer on `production` is allowed
+and never required.
 
 Before a site moves to the new pin, create `staging` and `production` with
-`configure_repositories.py`, add a human reviewer to `production`, set `CLOUDFLARE_API_TOKEN` as an
+`configure_repositories.py`, set `CLOUDFLARE_API_TOKEN` as an
 environment secret in both, and read the result back with `--check`. Change `deploy.yml` to the
 `secrets: inherit` form (the older form leaves the token empty) and give the Wrangler config
 `env.staging` with its own Worker name and routes, on fresh staging hostnames: a custom domain
-whose DNS record exists makes Wrangler prompt, and CI cannot answer. A newer main commit replaces a
-production deploy still waiting for approval. Roll back by redeploying an earlier Worker version
-in Cloudflare, or by approving an earlier run's production job while it is still available.
+whose DNS record exists makes Wrangler prompt, and CI cannot answer. A deploy that has started is
+never cancelled, so Wrangler is never stopped midway. The build, staging and production jobs each
+queue per repository in push order, and a newer main commit replaces an older one that has not
+started. Roll back by redeploying an earlier Worker version in Cloudflare.
 
 ## Releases and native build files
 
@@ -414,7 +439,9 @@ verify resolution through fresh human admission.
 For a stuck pending check, open the run in the status link. If it finished or is gone, add
 `gate:approve` (which also records your approval) or push a commit: a stale pending pair is
 admitted again. If it still runs, `gate:revoke` stops it first. After a stop, read the head's
-statuses: both must be failed with no later success.
+statuses: both must be failed with no later success. A stop job that failed with the `::error::`
+about its last write left the head possibly reading success: do not merge it, rerun the job, then
+read the statuses again.
 
 Revoke a suspect head, cancel admitted work and inspect its isolated artifacts.
 For a failed shared revision, re-pin callers to the previous shared revision

@@ -318,8 +318,15 @@ class WorkflowSecurityTests(unittest.TestCase):
                 self.assertIn("npm ci --ignore-scripts", install)
                 lock = (workflows.ROOT / "deploy/package-lock.json").read_text()
                 self.assertIn(repr(lock), embedded_source(install) or "")
-        self.assertTrue(jobs["production"]["concurrency"]["cancel-in-progress"])
-        self.assertFalse(jobs["staging"]["concurrency"]["cancel-in-progress"])
+
+    def test_site_deploys_queue_per_environment_and_never_cancel_a_running_deploy(self) -> None:
+        jobs = generated_yaml(workflows.yaml(workflows.deploy_workflow()))["jobs"]
+        # Production runs by itself once staging succeeds, so a newer push must never stop a Wrangler deploy that is running.
+        for name in ("build", "staging", "production"):
+            with self.subTest(job=name):
+                self.assertFalse(jobs[name]["concurrency"]["cancel-in-progress"])
+        groups = [jobs[name]["concurrency"]["group"] for name in ("build", "staging", "production")]
+        self.assertEqual(groups, ["deploy-build-${{ github.repository }}", "deploy-staging-${{ github.repository }}", "deploy-production-${{ github.repository }}"])
 
     def build_site(self, profile: str, prepare: Callable[[Path], None] | None = None, *, stub_npm: bool = True) -> tuple[subprocess.CompletedProcess[str], Path]:
         """Run the generated build step for a profile in a scratch workspace with a recording npm. Returns the result and the workspace."""

@@ -98,7 +98,7 @@ A current human maintainer or admin SHALL be able to approve the current head by
 
 ### Requirement: Authoritative stop
 
-A current human maintainer or admin SHALL be able to stop the current head with the label `gate:revoke`, and converting a PR to draft SHALL stop it the same way. A stop SHALL fail both required statuses, cancel this workflow's other queued and in-progress runs for that head, dismiss bot approvals even when cancelling fails, and fail both statuses again as its last write. Status writes SHALL retry five times in all.
+A current human maintainer or admin SHALL be able to stop the current head with the label `gate:revoke`, and converting a PR to draft SHALL stop it the same way. A stop SHALL fail both required statuses, cancel this workflow's other queued and in-progress runs for that head, dismiss bot approvals even when cancelling fails, wait a bounded time (at most 45 seconds) until the runs it listed have completed, and then fail both statuses again as its last write, even when a run is still going or a step above failed. The current run SHALL never be waited on. A stop SHALL end within 120 seconds whatever GitHub does, so it fits the 3-minute admission job. Status writes SHALL retry five times in all, 10 seconds per attempt. If the last write still fails, the job SHALL fail with an error saying the head may still read success and must not be merged, and `gate:revoke` SHALL stay on the PR.
 
 `gate:revoke` SHALL stay on the PR until its stop has completed, or until the event is found stale or superseded. While the label is on the PR, verify and finish SHALL fail closed, and admission and approval SHALL write nothing and print a notice. Nothing SHALL clear the label except a completed stop or a maintainer.
 
@@ -111,6 +111,21 @@ A current human maintainer or admin SHALL be able to stop the current head with 
 
 - **WHEN** a finish job writes success while a stop runs
 - **THEN** the last status written for each required context is a failure
+
+#### Scenario: A finish job running when its cancel lands
+
+- **WHEN** a stop cancels an older run whose finish job is still running and that job then writes success
+- **THEN** the stop's last write comes after that run has completed, so the newest Quality and Repository standards statuses are failure
+
+#### Scenario: A cancelled run that does not end
+
+- **WHEN** a run the stop listed is still going after 45 seconds
+- **THEN** the stop still writes its last failure statuses and prints a warning that names the run ids
+
+#### Scenario: A last write that fails
+
+- **WHEN** the stop's last status writes fail after their retries
+- **THEN** the job fails with an error saying the head may still read success and must not be merged, and `gate:revoke` stays on the PR
 
 ### Requirement: Status ownership and reruns
 
