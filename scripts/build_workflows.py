@@ -203,7 +203,7 @@ def governance() -> dict[str, Any]:
         "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
         "permissions": {"contents": "read", "pull-requests": "write", "statuses": "write", "actions": "write"},
         "concurrency": {
-            "group": "gate-${{ github.repository }}-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}",
+            "group": "gate-${{ github.repository }}-${{ github.event.pull_request.head.sha }}",
             "cancel-in-progress": False,
         },
         "outputs": {key: "${{ steps.admit.outputs." + key + " }}" for key in ("run", "pr", "head", "base", "profile")},
@@ -240,7 +240,7 @@ def governance() -> dict[str, Any]:
         "steps": [ARTIFACT, EXTRACT, run("Validate shared public standards and version metadata", python(standards_check, 'product "$PROFILE"'))],
     }
     finish = {"needs": ["admission", "prepare", "quality", "registry", "standards"],
-              "if": "${{ always() && needs.admission.outputs.run == 'true' }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
+              "if": "${{ !cancelled() && needs.admission.outputs.run == 'true' }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
               "permissions": {"contents": "read", "pull-requests": "write", "statuses": "write"},
               "env": {**ENV, "JOB_RESULTS": "${{ toJSON(needs) }}"},
               "steps": [run("Publish required results only after live admission validation", python(source("governance.py"), "finish"))]}

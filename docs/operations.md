@@ -58,10 +58,10 @@ Comments such as `/ready` or `/approve` do nothing. Draft PRs spend nothing.
 
 | Event | Who admits | Result |
 | --- | --- | --- |
-| Same-repo non-draft PR by a human maintainer or admin: opened, reopened, pushed, Ready | The PR itself | Checks run for the event head |
-| Same-repo non-draft PR by a bot (Dependabot) or a non-maintainer | A maintainer marks it Ready or adds `gate:approve` | Checks run for the head |
+| Same-repo non-draft PR by a human maintainer or admin, when a maintainer also did the event: opened, reopened, pushed, Ready | The PR itself | Checks run for the event head |
+| Same-repo non-draft PR by a bot (Dependabot) or a non-maintainer, or any event by a non-maintainer | A maintainer marks it Ready or adds `gate:approve` | Checks run for the head |
 | `gate:approve` by a maintainer on the current non-draft head | That maintainer | Bot approval bound to the head, head admitted if no live run holds it, label removed |
-| `gate:revoke` by a maintainer, or conversion to draft | That maintainer | Stop |
+| `gate:revoke` by a maintainer, or conversion to draft | That maintainer | Stop; `gate:revoke` is removed only after the stop completes |
 | Fork PR | Nobody | Notice only, no API write |
 | A gate label added by a non-maintainer | Nobody | Label removed, run fails |
 
@@ -70,15 +70,29 @@ Comments such as `/ready` or `/approve` do nothing. Draft PRs spend nothing.
   removed). A newer event handles the new head. A new commit needs a new admission: the push for a
   maintainer's PR, a new Ready or `gate:approve` for any other.
 - Stop. `gate:revoke` and conversion to draft fail both statuses, cancel this workflow's other
-  queued and in-progress runs for that head, dismiss bot approvals, then fail both statuses again
-  as the last write, so a finishing job cannot replace the failure with a success.
+  queued and in-progress runs for that head, dismiss bot approvals (even when cancelling fails),
+  then fail both statuses again as the last write, so a finishing job cannot replace the failure
+  with a success. A status write is tried five times (1, 2, 4 and 8 seconds apart), other calls
+  three.
+- Durable revoke. `gate:revoke` stays on the PR until its stop has completed. While it is there,
+  verify and finish fail closed, and a Ready, a push or `gate:approve` admits nothing and records
+  no approval; the notice says so. If the revoke job fails or never ran (Actions keeps one pending
+  job per group, so a later event can cancel a waiting one), rerun that job, which a maintainer
+  may do, or remove the label by hand, then mark the PR Ready or add `gate:approve`. A label added
+  by a non-maintainer is removed at once and the run fails.
+- Order. Run ids grow with the order events were created, and the gate assumes it. An admission,
+  approval or draft event is skipped, with a notice and no write, when a run with a higher id has
+  already written a required status for the head, so a late Ready cannot undo a newer revoke and a
+  rerun of an old run cannot undo a newer decision. A skipped gate label is still removed.
+- One run per head. Statuses belong to the commit, so admission jobs are serialized per repository
+  and head SHA across PRs: two PRs at one commit cannot admit it at once.
 - Ownership. Every status carries the URL of the run that wrote it. The verify and finish steps
   act only when the newest Quality and Repository standards statuses on the head belong to the
   current run and no other run has written one since this run's first. A stop therefore ends a
   run's claim for good: its later writes and its reruns cannot take the head back. Finish reads
   the history again after writing, fails the checks it wrote if a stop landed first, and fails
-  closed when that read is impossible. To admit a stopped head again, mark it Ready or add
-  `gate:approve`.
+  closed when that read is impossible. A finish job does not start for a cancelled run. To admit a
+  stopped head again, mark it Ready or add `gate:approve`.
 - Reruns are allowed. Re-run failed jobs keeps the admission, and finish re-checks ownership and
   the live head. Re-running the admission job itself needs a current human maintainer as the
   actor. Rerun for infrastructure failures; fix code in a new commit.

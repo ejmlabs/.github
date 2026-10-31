@@ -200,14 +200,16 @@ class WorkflowSecurityTests(unittest.TestCase):
         conditions = [job.get("if", "") for job in jobs.values()] + [step.get("if", "") for job in jobs.values() for step in job["steps"]]
         self.assertFalse([condition for condition in conditions if "run_attempt" in condition])
         self.assertEqual(jobs["prepare"]["if"], "${{ needs.admission.outputs.run == 'true' }}")
-        self.assertEqual(jobs["finish"]["if"], "${{ always() && needs.admission.outputs.run == 'true' }}")
+        # A cancelled run (a stop cancels its older runs) starts no finish job, so a stopped run publishes nothing late.
+        self.assertEqual(jobs["finish"]["if"], "${{ !cancelled() && needs.admission.outputs.run == 'true' }}")
         for name in ("quality", "registry", "standards"):
             self.assertNotIn("if", jobs[name], "a skipped prepare job already skips the jobs that need it")
             self.assertIn("prepare", jobs[name]["needs"])
 
-    def test_admission_serializes_per_pull_request_head_and_never_cancels_a_running_admission(self) -> None:
+    def test_admission_serializes_per_head_across_pull_requests_and_never_cancels_a_running_admission(self) -> None:
+        # Statuses belong to the commit, so two PRs at one commit must share a group; a PR number would split them.
         self.assertEqual(self.governance["jobs"]["admission"]["concurrency"], {
-            "group": "gate-${{ github.repository }}-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}",
+            "group": "gate-${{ github.repository }}-${{ github.event.pull_request.head.sha }}",
             "cancel-in-progress": False,
         })
         self.assertNotIn("admission", self.governance["jobs"]["admission"]["outputs"])

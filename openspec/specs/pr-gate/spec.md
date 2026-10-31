@@ -17,12 +17,17 @@ A draft pull request targeting main SHALL NOT start Quality, Repository standard
 
 ### Requirement: Maintainer same-repo PRs auto-admit
 
-A non-draft, same-repository pull request whose live author is a current human maintainer or admin SHALL be admitted for the current head on open, reopen, synchronize, and ready_for_review, and paid checks MAY run for that head.
+A non-draft, same-repository pull request whose live author is a current human maintainer or admin SHALL be admitted for the current head on open, reopen, synchronize, and ready_for_review, and paid checks MAY run for that head. Every admission event SHALL admit only when its sender is a current human maintainer or admin.
 
 #### Scenario: A maintainer pushes to their non-draft PR
 
 - **WHEN** a current maintainer or admin who authors a same-repository non-draft PR targeting main pushes a new commit
 - **THEN** the gate admits that head once and starts the bounded paid checks
+
+#### Scenario: Someone else reopens a maintainer's stopped PR
+
+- **WHEN** an account that is not a current maintainer or admin reopens, pushes to or marks Ready a maintainer's PR whose head a maintainer stopped
+- **THEN** nothing is admitted and the head stays failed
 
 ### Requirement: Other same-repo PRs need a maintainer
 
@@ -61,6 +66,13 @@ Admission, approval and revoke SHALL act on the head SHA of the event. When the 
 - **WHEN** an event's head is no longer the PR head
 - **THEN** the run prints a notice and writes no status or review
 
+A decision SHALL be skipped, with a notice and no status or review write, when a run with a higher run id has already written a required status for the head. Run ids are assumed to grow with the order events were created. This covers events that reach their job out of order and reruns of older runs, and it replaces any check of the PR's current draft state for a delayed draft event.
+
+#### Scenario: An older event runs after a newer decision
+
+- **WHEN** a Ready, approve or draft event reaches its job after a newer run's revoke or admission has written statuses
+- **THEN** the older event admits, approves and stops nothing
+
 ### Requirement: Required merge checks are Quality and Repository standards
 
 Protected main SHALL require **Quality** and **Repository standards** and SHALL NOT require **Human readiness** or **Maintainer approval** statuses. GitHub's required approving review count SHALL remain enforced for administrators too.
@@ -86,7 +98,14 @@ A current human maintainer or admin SHALL be able to approve the current head by
 
 ### Requirement: Authoritative stop
 
-A current human maintainer or admin SHALL be able to stop the current head with the label `gate:revoke`, and converting a PR to draft SHALL stop it the same way. A stop SHALL fail both required statuses, cancel this workflow's other queued and in-progress runs for that head, dismiss bot approvals, and fail both statuses again as its last write.
+A current human maintainer or admin SHALL be able to stop the current head with the label `gate:revoke`, and converting a PR to draft SHALL stop it the same way. A stop SHALL fail both required statuses, cancel this workflow's other queued and in-progress runs for that head, dismiss bot approvals even when cancelling fails, and fail both statuses again as its last write. Status writes SHALL retry five times in all.
+
+`gate:revoke` SHALL stay on the PR until its stop has completed, or until the event is found stale or superseded. While the label is on the PR, verify and finish SHALL fail closed, and admission and approval SHALL write nothing and print a notice. Nothing SHALL clear the label except a completed stop or a maintainer.
+
+#### Scenario: A stop that cannot complete
+
+- **WHEN** a revoke job fails before its stop completes, or its job never runs
+- **THEN** the label stays, finish fails the checks, and a Ready or `gate:approve` admits nothing until a maintainer reruns the revoke job or removes the label
 
 #### Scenario: A finishing job races a revoke
 
@@ -95,7 +114,7 @@ A current human maintainer or admin SHALL be able to stop the current head with 
 
 ### Requirement: Status ownership and reruns
 
-Every status SHALL carry the URL of the run that wrote it. Verify and finish SHALL act only when the newest Quality and Repository standards statuses on the head belong to the current run and no other run has written one since this run's first, so a stop ends a run's claim for good. Reruns SHALL be allowed: re-running failed jobs keeps the admission, and re-running the admission job needs a current human maintainer as the actor. A pending pair whose run finished SHALL be stale and admitted again.
+Every status SHALL carry the URL of the run that wrote it. Verify and finish SHALL act only when the newest Quality and Repository standards statuses on the head belong to the current run and no other run has written one since this run's first, so a stop ends a run's claim for good. Reruns SHALL be allowed: re-running failed jobs keeps the admission, and re-running the admission job needs a current human maintainer as the actor. A pending pair whose run finished SHALL be stale and admitted again. Admission jobs SHALL be serialized per repository and head SHA, not per PR, so two PRs at one commit cannot admit it at once. A finish job SHALL NOT start for a cancelled run.
 
 #### Scenario: A rerun of a stopped run
 

@@ -18,9 +18,16 @@ Admission, approval and revoke SHALL act on the event's head SHA. When the live 
 - **WHEN** an event's head is no longer the PR head
 - **THEN** the run prints a notice and writes no status or review
 
+A decision SHALL also be skipped, with a notice and no status or review write, when a run with a higher run id has already written a required status for the head. Run ids are assumed to grow with the order events were created.
+
+#### Scenario: An older event runs after a newer decision
+
+- **WHEN** a Ready, approve or draft event reaches its job after a newer run's revoke or admission has written statuses
+- **THEN** the older event admits, approves and stops nothing
+
 ### Requirement: Status ownership and reruns
 
-Every status SHALL carry its run URL, and verify and finish SHALL act only when the newest required statuses on the head belong to the current run and no other run has written one since this run's first, so a stop ends a run's claim for good. Reruns SHALL be allowed, and re-running the admission job SHALL need a current human maintainer as the actor.
+Every status SHALL carry its run URL, and verify and finish SHALL act only when the newest required statuses on the head belong to the current run and no other run has written one since this run's first, so a stop ends a run's claim for good. Reruns SHALL be allowed, and re-running the admission job SHALL need a current human maintainer as the actor. Admission jobs SHALL be serialized per repository and head SHA, and a finish job SHALL NOT start for a cancelled run.
 
 #### Scenario: A rerun of a stopped run
 
@@ -63,7 +70,7 @@ A current human maintainer SHALL approve and admit the current head with `gate:a
 
 ### Requirement: Authoritative stop
 
-`gate:revoke` and conversion to draft SHALL fail both statuses, cancel this workflow's other runs for the head, dismiss bot approvals, and fail both statuses again as the last write.
+`gate:revoke` and conversion to draft SHALL fail both statuses, cancel this workflow's other runs for the head, dismiss bot approvals even when cancelling fails, and fail both statuses again as the last write. `gate:revoke` SHALL stay on the PR until its stop has completed: while it is there, verify and finish fail closed and admission and approval write nothing. Every admission event SHALL admit only when its sender is a current human maintainer.
 
 #### Scenario: A finishing job races a revoke
 
