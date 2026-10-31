@@ -52,6 +52,7 @@ The net change since 0.1.0:
 - `ejm-ide` selects its harness pin from the admitted head, with the same protected-main ancestry check as `ejm-cli`.
 - The canonical `deploy.yml` passes `secrets: inherit`, so the environment's `CLOUDFLARE_API_TOKEN` reaches the deploy jobs. The older form is still accepted.
 - Deploy jobs validate tar members before extraction and run Wrangler with a minimal environment that holds no GitHub token.
+- The deploy Wrangler is 4.153.0 (was 4.151.3). Its Miniflare resolves undici 7.30.1, which clears the eight undici advisories (high severity) that `npm audit` reported for 7.0.0 through 7.30.0.
 - Draft releases accept any commit on main, not only its head, and require `standards-ref` to equal every pin in that commit's own `release.yml`. An approval counts only as a reviewer's latest decision on the merged head.
 - Repository standards require community files only to exist and be non-empty. `scripts/sync_community.py --check` reports drift on demand.
 
