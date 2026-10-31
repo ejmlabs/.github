@@ -22,8 +22,8 @@
 
 ## 3. Follow-ups
 
-- [ ] 3.1 This repository adopts the new revision
-  - [ ] Retain the merged SHA under `workflow-pins/` and move `pr.yml` and `release.yml` to it
+- [x] 3.1 This repository adopts the new revision
+  - [x] Retain the merged SHA under `workflow-pins/` and move `pr.yml` and `release.yml` to it (0180b449b34537f1cc368bdd5dd05a2fbc1c64b6)
   - [x] Drop the `XAI_API_KEY` declaration from `governance.yml`, and make the standards accept only that form
   - [x] Fix the community text (3.3)
 - [ ] 3.2 One PR per consumer (`ejm-cli`, `ejm-harness`, `ejm-ide`, `ejm-ui`, `ejmlabs`) that moves every pin, switches `deploy.yml` to `secrets: inherit` where present, and resyncs community files and other templates
