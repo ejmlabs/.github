@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Trusted admission and approval for ejmlabs repositories."""
+import http.client
 import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -15,6 +18,14 @@ REQUIRED_CONTEXTS = ("Quality", "Repository standards")
 APPROVE_LABEL = "gate:approve"
 REVOKE_LABEL = "gate:revoke"
 GATE_LABELS = (APPROVE_LABEL, REVOKE_LABEL)
+ACTIONS = ("opened", "reopened", "synchronize", "ready_for_review", "converted_to_draft", "labeled")
+RETRY_DELAYS = (1, 2)
+MAX_RESPONSE_BYTES = 8_000_000
+FULL_SHA = re.compile(r"[0-9a-f]{40}")
+NETWORK_ERRORS = (OSError, http.client.HTTPException)
+# Failures a command reports as one clean line: bad input, an unexpected payload shape, or an API or network error.
+HANDLED = (ValueError, KeyError, TypeError, *NETWORK_ERRORS)
+STALE_HEAD = "The PR head changed, or the PR is closed, a draft, or no longer targets main; a newer event handles it"
 
 
 def human(user: dict[str, Any], permission: str) -> bool:
@@ -30,27 +41,49 @@ def current_head(pr: dict[str, Any], sha: str) -> bool:
     return bool(pr["state"] == "open" and not pr.get("draft") and pr["base"]["ref"] == "main" and pr["head"]["sha"] == sha)
 
 
-def current_pr(pr: dict[str, Any], sha: str) -> bool:
-    return current_head(pr, sha) and same_repository(pr)
-
-
 class GitHub:
-    def __init__(self) -> None:
+    def __init__(self, sleep: Callable[[float], None] = time.sleep) -> None:
         self.repo = os.environ["GITHUB_REPOSITORY"]
         if self.repo not in REPOS:
             raise ValueError("Repository has not adopted the ejmlabs policy")
         self.token = os.environ["GH_TOKEN"]
         self.root = "https://api.github.com/repos/" + self.repo
+        self.sleep = sleep
 
-    def request(self, path: str, method: str = "GET", data: dict[str, Any] | None = None) -> dict[str, Any]:
+    @property
+    def run_url(self) -> str:
+        return f"https://github.com/{self.repo}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+
+    def request(self, path: str, method: str = "GET", data: dict[str, Any] | None = None, *, retry: bool | None = None) -> dict[str, Any]:
+        """Call the API once, or up to three times on 429, 5xx and network errors when the call is safe to repeat.
+
+        GET, PUT and DELETE repeat by default. A POST repeats only when the caller says it is idempotent (statuses, cancel),
+        so a review is never posted twice.
+        """
         url = path if path.startswith("https://api.github.com/") else self.root + path
         body = None if data is None else json.dumps(data).encode()
         req = urllib.request.Request(url, data=body, method=method, headers={  # noqa: S310 - url is always https://api.github.com/
             "Authorization": "Bearer " + self.token, "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json",
         })
-        with urllib.request.urlopen(req, timeout=30) as response:  # noqa: S310 - url is always https://api.github.com/
-            return cast("dict[str, Any]", json.loads(response.read() or "null"))
+        last = len(RETRY_DELAYS) if (method != "POST" if retry is None else retry) else 0
+        attempt = 0
+        while True:
+            try:
+                with urllib.request.urlopen(req, timeout=30) as response:  # noqa: S310 - url is always https://api.github.com/
+                    raw = response.read(MAX_RESPONSE_BYTES + 1)
+            except urllib.error.HTTPError as error:
+                if attempt == last or not (error.code == 429 or 500 <= error.code <= 599):
+                    raise
+            except NETWORK_ERRORS:
+                if attempt == last:
+                    raise
+            else:
+                if len(raw) > MAX_RESPONSE_BYTES:
+                    raise ValueError("GitHub response exceeds the size limit")
+                return cast("dict[str, Any]", json.loads(raw or b"null"))
+            self.sleep(RETRY_DELAYS[attempt])
+            attempt += 1
 
     def pages(self, path: str, limit: int = 10) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
@@ -64,20 +97,30 @@ class GitHub:
     def permission(self, login: str) -> str:
         if not re.fullmatch(r"[A-Za-z0-9-]+", login):
             return "none"
-        role = self.request(f"/collaborators/{login}/permission")
+        try:
+            role = self.request(f"/collaborators/{login}/permission")
+        except urllib.error.HTTPError as error:
+            if error.code == 404:
+                return "none"
+            raise
         return cast("str", role.get("role_name", role["permission"]))
 
     def statuses(self, sha: str) -> dict[str, dict[str, Any]]:
+        """Return the newest status of each context from the combined status, one read for up to 100 contexts."""
         result: dict[str, dict[str, Any]] = {}
-        for status in self.pages(f"/commits/{sha}/statuses"):
-            result.setdefault(status["context"], status)
-        return result
+        for page in range(1, 11):
+            batch = cast("list[dict[str, Any]]", self.request(f"/commits/{sha}/status?per_page=100&page={page}")["statuses"])
+            for status in batch:
+                result.setdefault(status["context"], status)
+            if len(batch) < 100:
+                return result
+        raise ValueError("Metadata limit exceeded; maintainer triage is required")
 
     def status(self, sha: str, context: str, state: str, description: str) -> None:
+        # The target URL names the run that wrote the status; ownership checks compare it with the current run.
         self.request(f"/statuses/{sha}", "POST", {
-            "context": context, "state": state, "description": description[:140],
-            "target_url": f"https://github.com/{self.repo}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
-        })
+            "context": context, "state": state, "description": description[:140], "target_url": self.run_url,
+        }, retry=True)
 
 
 def outputs(**items: str | int) -> None:
@@ -85,23 +128,24 @@ def outputs(**items: str | int) -> None:
         out.writelines(f"{key}={value}\n" for key, value in items.items())
 
 
-def first_attempt() -> None:
-    if os.environ.get("GITHUB_RUN_ATTEMPT", "1") != "1":
-        raise ValueError("Workflow reruns cannot replay admission; convert to draft and Ready again, or push a new commit")
+def notice(message: str) -> None:
+    """Report a no-op as an annotation. Callers pass fixed text, never PR content."""
+    print("::notice::" + message)
 
 
-def author_login(pr: dict[str, Any]) -> str:
-    return cast("str", (pr.get("user") or {}).get("login") or "")
+def checked_sha(value: object) -> str:
+    if not isinstance(value, str) or not FULL_SHA.fullmatch(value):
+        raise ValueError("Expected a full lowercase commit SHA")
+    return value
 
 
 def is_maintainer(api: GitHub, user: dict[str, Any]) -> bool:
-    login = user.get("login") or ""
-    return human(user, api.permission(login))
+    return bool(user.get("type") == "User" and human(user, api.permission(user.get("login") or "")))
 
 
 def dismiss_bot_approvals(api: GitHub, number: int | str, sha: str, reason: str) -> None:
     for review in api.pages(f"/pulls/{number}/reviews"):
-        if review["user"]["login"] == "github-actions[bot]" and review["state"] == "APPROVED" and review["commit_id"] == sha:
+        if (review.get("user") or {}).get("login") == "github-actions[bot]" and review["state"] == "APPROVED" and review["commit_id"] == sha:
             path = f"/pulls/{number}/reviews/{review['id']}"
             try:
                 api.request(path + "/dismissals", "PUT", {"message": reason})
@@ -118,163 +162,234 @@ def remove_label(api: GitHub, number: int | str, name: str) -> None:
             raise
 
 
-def cancel_runs_for_head(api: GitHub, sha: str) -> None:
-    """Cancel in-progress gate runs for this head using the Actions API."""
-    path = f"/actions/runs?status=in_progress&per_page=20&head_sha={sha}"
-    try:
-        payload = api.request(path)
-    except urllib.error.HTTPError:
+def cancel_runs(api: GitHub, sha: str) -> None:
+    """Cancel this workflow's queued and in-progress runs for a head, except this run and any newer one.
+
+    A newer run is a later decision for the same head, for example Ready after a draft conversion. List errors surface;
+    a run that finished or cannot be cancelled (409, 422) is fine.
+    """
+    current = int(os.environ["GITHUB_RUN_ID"])
+    workflow = int(api.request(f"/actions/runs/{current}")["workflow_id"])
+    for state in ("queued", "in_progress"):
+        listing = api.request(f"/actions/workflows/{workflow}/runs?head_sha={sha}&status={state}&per_page=100")
+        for item in listing["workflow_runs"]:
+            if int(item["id"]) >= current:
+                continue
+            try:
+                api.request(f"/actions/runs/{int(item['id'])}/cancel", "POST", retry=True)
+            except urllib.error.HTTPError as error:
+                if error.code not in (409, 422):
+                    raise
+
+
+def cancel_superseded(api: GitHub, before: object) -> None:
+    """Cancel the runs of the head a push replaced. This saves runner time only: finish still checks ownership and the live head."""
+    if not isinstance(before, str) or not FULL_SHA.fullmatch(before):
+        notice("The event names no previous head, so no runs are cancelled")
         return
-    for run in payload.get("workflow_runs") or []:
-        if str(run.get("id")) == os.environ["GITHUB_RUN_ID"]:
-            continue
+    try:
+        cancel_runs(api, before)
+    except NETWORK_ERRORS as error:
+        # A read-only token (for example a Dependabot push) cannot cancel; the old run stops at its own ownership check.
+        print(f"::warning::Could not cancel runs for the previous head: {type(error).__name__}")
+
+
+def fail_checks(api: GitHub, sha: str, reason: str) -> None:
+    for context in REQUIRED_CONTEXTS:
+        api.status(sha, context, "failure", reason)
+
+
+def stop(api: GitHub, number: int, sha: str, reason: str) -> None:
+    """Authoritative stop: fail the checks, cancel runs, dismiss approvals, then fail the checks again as the last write.
+
+    The last write goes out even when a step above fails, so a finish job that wrote success while this ran cannot win.
+    """
+    fail_checks(api, sha, reason)
+    try:
+        cancel_runs(api, sha)
+        dismiss_bot_approvals(api, number, sha, reason)
+    finally:
+        fail_checks(api, sha, reason)
+
+
+def owns_checks(api: GitHub, sha: str) -> bool:
+    """True when the newest status of each required context on this head was written by the current run."""
+    found = api.statuses(sha)
+    return all(found.get(context, {}).get("target_url") == api.run_url for context in REQUIRED_CONTEXTS)
+
+
+def other_run_is_live(api: GitHub, found: dict[str, dict[str, Any]]) -> bool:
+    """True when every required context is pending under another run that has not completed.
+
+    A pending pair whose run completed, is missing, or has no run URL for this repository is stale, as is one this
+    run wrote itself (a rerun of the admission job), so the head can be admitted again.
+    """
+    if any(found.get(context, {}).get("state") != "pending" for context in REQUIRED_CONTEXTS):
+        return False
+    prefix = re.escape(f"https://github.com/{api.repo}/actions/runs/")
+    owners = set()
+    for context in REQUIRED_CONTEXTS:
+        match = re.fullmatch(prefix + "([0-9]{1,20})", found[context].get("target_url") or "")
+        if match is None:
+            return False
+        owners.add(int(match[1]))
+    for owner in owners:
+        if owner == int(os.environ["GITHUB_RUN_ID"]):
+            return False
         try:
-            api.request(f"/actions/runs/{run['id']}/cancel", "POST")
+            if api.request(f"/actions/runs/{owner}")["status"] == "completed":
+                return False
         except urllib.error.HTTPError as error:
-            if error.code not in (409, 422):
+            if error.code != 404:
                 raise
+            return False
+    return True
 
 
-def queue_checks(api: GitHub, sha: str) -> None:
+def admit_head(api: GitHub, number: int, sha: str, base: str) -> None:
+    found = api.statuses(sha)
+    if all(found.get(context, {}).get("state") == "success" for context in REQUIRED_CONTEXTS):
+        notice("This commit already passed its checks; push a new commit to run them again")
+        return
+    if other_run_is_live(api, found):
+        notice("This commit is already admitted by a running workflow; gate:revoke stops it")
+        return
     for context in REQUIRED_CONTEXTS:
         api.status(sha, context, "pending", "Admitted checks queued")
+    outputs(run="true", pr=number, head=sha, base=checked_sha(base), profile=api.repo.split("/")[1])
 
 
-def publish_admission(api: GitHub, pr: dict[str, Any], number: int, sha: str) -> None:
-    if pr["changed_files"] > 200 or pr["additions"] + pr["deletions"] > 12000:
-        raise ValueError("PR exceeds review limits; split it before admission")
-    pending = all(api.statuses(sha).get(context, {}).get("state") == "pending" for context in REQUIRED_CONTEXTS)
-    success = all(api.statuses(sha).get(context, {}).get("state") == "success" for context in REQUIRED_CONTEXTS)
-    if pending or success:
-        # Already admitted or finished for this head in a live run; do not start a duplicate.
-        if pending:
-            raise ValueError("This commit is already admitted; revoke or wait for the current run")
-        raise ValueError("This commit already has successful checks; push a new commit to re-run")
-    queue_checks(api, sha)
-    outputs(run="true", pr=number, head=sha, base=pr["base"]["sha"], admission=os.environ["GITHUB_RUN_ID"],
-            profile=api.repo.split("/")[1])
-
-
-def require_live_head(api: GitHub, number: int | str, sha: str) -> dict[str, Any]:
+def require_live_head(api: GitHub, number: int, sha: str) -> dict[str, Any]:
     pr = api.request(f"/pulls/{number}")
     if not current_head(pr, sha):
-        raise ValueError("PR head changed, PR is a draft, or PR no longer targets main")
+        raise ValueError("PR head changed, PR is a draft or closed, or PR no longer targets main")
     return pr
 
 
-def live_ready(api: GitHub, number: int | str, sha: str, admission: str) -> dict[str, Any]:
-    """Re-validate the admitted head from the Pull Request API and job outputs."""
-    first_attempt()
-    if not admission or admission != os.environ["GITHUB_RUN_ID"]:
-        # finish/verify run in the same workflow as admission; the output must be this run.
-        raise ValueError("Admission output does not match this workflow run")
-    return require_live_head(api, number, sha)
+def rerun_allowed(api: GitHub) -> bool:
+    """A rerun replays an old event, so whoever started the rerun must be a current human maintainer."""
+    if os.environ.get("GITHUB_RUN_ATTEMPT", "1") == "1":
+        return True
+    actor = urllib.parse.quote(os.environ.get("GITHUB_TRIGGERING_ACTOR", ""), safe="")
+    return bool(actor) and is_maintainer(api, api.request("https://api.github.com/users/" + actor))
 
 
-def handle_label(api: GitHub, event: dict[str, Any]) -> None:
+def handle_label(api: GitHub, event: dict[str, Any], number: int, sha: str) -> None:
     label = (event.get("label") or {}).get("name")
     if label not in GATE_LABELS:
+        notice("Not a gate label; nothing to do")
         return
-    pr_meta = event.get("pull_request") or {}
-    number = int(pr_meta.get("number") or event.get("number") or 0)
-    if number <= 0:
-        return
-    pr = api.request(f"/pulls/{number}")
-    sha = pr["head"]["sha"]
     sender = event.get("sender") or {}
     remove_label(api, number, label)
     if not is_maintainer(api, sender):
         raise ValueError("Only a current human maintainer may apply gate labels")
-    if not current_head(pr, sha):
-        raise ValueError("Gate labels require the current non-draft PR head targeting main")
-    if label == REVOKE_LABEL:
-        dismiss_bot_approvals(api, number, sha, "Revoked by a current human maintainer")
-        cancel_runs_for_head(api, sha)
-        for context in REQUIRED_CONTEXTS:
-            api.status(sha, context, "failure", "Revoked by a current human maintainer")
+    live = api.request(f"/pulls/{number}")
+    if not current_head(live, sha):
+        notice(STALE_HEAD)
         return
-    # Record a bot approval for the current head.
+    if label == REVOKE_LABEL:
+        stop(api, number, sha, "Revoked by a current human maintainer")
+        return
+    # The approval is bound to the event head, which the live check above just matched.
     api.request(f"/pulls/{number}/reviews", "POST", {
         "commit_id": sha, "event": "APPROVE",
-        "body": f"Maintainer self-approve by @{sender.get('login')} via label `{APPROVE_LABEL}` for `{sha}`. Required checks still apply.",
+        "body": f"Maintainer self-approve by @{sender['login']} via label `{APPROVE_LABEL}` for `{sha}`. Required checks still apply.",
     })
+    admit_head(api, number, sha, live["base"]["sha"])
 
 
-def handle_pull_request(api: GitHub, event: dict[str, Any]) -> None:
-    action = event.get("action")
-    number = int((event.get("pull_request") or {}).get("number") or event.get("number") or 0)
-    if number <= 0:
-        return
+def handle_admission(api: GitHub, event: dict[str, Any], number: int, sha: str) -> None:
+    action = event["action"]
+    if action == "synchronize":
+        cancel_superseded(api, event.get("before"))
     live = api.request(f"/pulls/{number}")
-    sha = live["head"]["sha"]
-    sender = event.get("sender") or {}
-    if action == "converted_to_draft":
-        dismiss_bot_approvals(api, number, sha, "PR converted to draft")
-        cancel_runs_for_head(api, sha)
-        for context in REQUIRED_CONTEXTS:
-            if api.statuses(sha).get(context, {}).get("state") == "pending":
-                api.status(sha, context, "failure", "PR converted to draft; mark Ready to admit again")
-        return
-    if action == "labeled":
-        handle_label(api, event)
-        return
-    if action not in {"opened", "reopened", "synchronize", "ready_for_review"}:
-        return
-    if live.get("draft"):
-        return
     if not current_head(live, sha):
+        notice(STALE_HEAD)
         return
-    author = {"type": "User", "login": author_login(live)}
-    maintainer_author = same_repository(live) and is_maintainer(api, author)
-    maintainer_actor = is_maintainer(api, sender)
-    if maintainer_author:
-        publish_admission(api, live, number, sha)
-        return
-    if action == "ready_for_review" and maintainer_actor:
-        publish_admission(api, live, number, sha)
-        return
+    # A maintainer's own PR admits itself. Any other PR waits for a maintainer to mark it Ready or add gate:approve.
+    if is_maintainer(api, live.get("user") or {}) or (action == "ready_for_review" and is_maintainer(api, event.get("sender") or {})):
+        admit_head(api, number, sha, live["base"]["sha"])
+    else:
+        notice("This PR is not admitted yet; a maintainer marks it Ready or adds gate:approve")
 
 
 def admit(api: GitHub, event: dict[str, Any]) -> None:
     outputs(run="false")
-    first_attempt()
-    handle_pull_request(api, event)
+    pull = event.get("pull_request")
+    action = event.get("action")
+    if action not in ACTIONS or not isinstance(pull, dict):
+        notice("Not a pull request admission event; nothing to do")
+        return
+    number, sha = pull["number"], checked_sha(pull["head"]["sha"])
+    if not isinstance(number, int) or number <= 0:
+        raise ValueError("Pull request event has no valid number")
+    if not same_repository(pull):
+        # A fork's token is read-only, so nothing could be written. A maintainer who reviewed the change pushes it to a branch here.
+        notice("Pull requests from forks are not admitted; push the reviewed change to a branch in this repository")
+        return
+    if not rerun_allowed(api):
+        notice("Only a current human maintainer can rerun an admission")
+        return
+    if action == "converted_to_draft":
+        stop(api, number, sha, "PR converted to draft; mark Ready to admit again")
+    elif action == "labeled":
+        handle_label(api, event, number, sha)
+    else:
+        handle_admission(api, event, number, sha)
+
+
+def pull_request_from_environment() -> tuple[int, str]:
+    number = os.environ["PR_NUMBER"]
+    if not re.fullmatch(r"[1-9][0-9]{0,9}", number):
+        raise ValueError("Expected a pull request number")
+    return int(number), checked_sha(os.environ["PR_HEAD"])
+
+
+def verify(api: GitHub) -> None:
+    number, sha = pull_request_from_environment()
+    if not owns_checks(api, sha):
+        raise ValueError("Another run now owns the checks for this head")
+    require_live_head(api, number, sha)
 
 
 def finish(api: GitHub) -> None:
-    first_attempt()
-    number, sha, admission = os.environ["PR_NUMBER"], os.environ["PR_HEAD"], os.environ["ADMISSION_ID"]
+    number, sha = pull_request_from_environment()
+    if not owns_checks(api, sha):
+        notice("Another run owns the checks for this head; nothing is published")
+        return
     try:
-        live_ready(api, number, sha, admission)
-    except (ValueError, KeyError, urllib.error.URLError):
-        for context in REQUIRED_CONTEXTS:
-            api.status(sha, context, "failure", "Admission no longer valid for this head")
+        require_live_head(api, number, sha)
+        results = json.loads(os.environ["JOB_RESULTS"])
+        quality = all(results.get(job, {}).get("result") == "success" for job in ("quality", "registry"))
+        standards = results.get("standards", {}).get("result") == "success"
+    except HANDLED:
+        fail_checks(api, sha, "Admission could not be revalidated for this head")
         dismiss_bot_approvals(api, number, sha, "Admission no longer valid")
         raise
-    results = json.loads(os.environ["JOB_RESULTS"])
-    quality = all(results.get(job, {}).get("result") == "success" for job in ("quality", "registry"))
-    standards = results.get("standards", {}).get("result") == "success"
     for context, ok in (("Quality", quality), ("Repository standards", standards)):
         api.status(sha, context, "success" if ok else "failure", "Passed for admitted commit" if ok else "Failed, cancelled, missing, or incomplete")
 
 
 def main() -> None:
-    api = GitHub()
-    mode = sys.argv[1]
-    if mode == "admit":
-        admit(api, json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text()))
-    elif mode == "verify":
-        live_ready(api, os.environ["PR_NUMBER"], os.environ["PR_HEAD"], os.environ["ADMISSION_ID"])
-    elif mode == "finish":
-        finish(api)
-    else:
-        raise ValueError("Unknown operation")
+    mode = sys.argv[1] if len(sys.argv) > 1 else ""
+    try:
+        api = GitHub()
+        if mode == "admit":
+            event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+            if not isinstance(event, dict):
+                raise ValueError("Event payload is not an object")
+            admit(api, event)
+        elif mode == "verify":
+            verify(api)
+        elif mode == "finish":
+            finish(api)
+        else:
+            raise ValueError("Unknown operation")
+    except HANDLED as error:
+        # Print only our own text and the error type, never a response body, label text or credential.
+        print(f"Governance stopped: {type(error).__name__}: {error}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except (ValueError, KeyError, urllib.error.URLError) as error:
-        # Do not print untrusted response bodies, label text beyond names we compare, or credentials.
-        print(f"Governance stopped: {type(error).__name__}: {error}", file=sys.stderr)
-        sys.exit(1)
+    main()

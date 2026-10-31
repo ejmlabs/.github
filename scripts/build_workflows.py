@@ -50,9 +50,10 @@ def source(name: str, *, library: bool = False) -> str:
     return text.split('\nif __name__ == "__main__":')[0] if library else text
 
 
-def python(text: str, args: str = "", executable: str = "python3") -> str:
+def python(text: str, args: str = "", executable: str = "python3 -I") -> str:
     # GitHub evaluates expressions even inside quoted script strings. Encoding the
     # trusted library preserves literal consumer expressions without evaluating them.
+    # -I keeps the working directory (which holds admitted sources) and PYTHON* variables out of imports.
     encoded = base64.b64encode(text.encode()).decode()
     return executable + " - " + args + " <<'TRUSTED_PYTHON'\nimport base64\nexec(compile(base64.b64decode('" + encoded + "'), 'trusted-workflow.py', 'exec'))\nTRUSTED_PYTHON\n"
 
@@ -65,12 +66,8 @@ def checkout(path: str, ref: str, **extra: str | bool | int | dict[str, Any] | l
     return {"uses": CHECKOUT, "with": {"path": path, "ref": ref, "persist-credentials": False, "fetch-depth": 1, "submodules": False, **extra}}
 
 
-ENV = {"PR_NUMBER": "${{ needs.admission.outputs.pr }}", "PR_HEAD": "${{ needs.admission.outputs.head }}", "PR_BASE": "${{ needs.admission.outputs.base }}", "ADMISSION_ID": "${{ needs.admission.outputs.admission }}", "GH_TOKEN": "${{ github.token }}"}
+ENV = {"PR_NUMBER": "${{ needs.admission.outputs.pr }}", "PR_HEAD": "${{ needs.admission.outputs.head }}", "PR_BASE": "${{ needs.admission.outputs.base }}", "GH_TOKEN": "${{ github.token }}"}
 VERIFY = run("Recheck current human admission", python(source("governance.py"), "verify"))
-REJECT_DEBUG = run("Require private review logs", python("""import os
-if os.environ.get('RUNNER_DEBUG') == '1':
-    raise SystemExit('Runner diagnostics must be disabled for review')
-"""))
 ARTIFACT = {"uses": DOWNLOAD, "with": {"artifact-ids": "${{ needs.prepare.outputs.artifact }}", "merge-multiple": True, "path": "prepared"}}
 EXTRACT = run("Extract source data safely", """python3 - <<'PY'
 import os
@@ -172,21 +169,21 @@ def governance() -> dict[str, Any]:
         "(github.event.action != 'labeled' || github.event.label.name == 'gate:approve' || github.event.label.name == 'gate:revoke')"
     )
     admission = {
-        "if": "${{ github.run_attempt == 1 && (" + pull_if + ") }}",
+        "if": "${{ " + pull_if + " }}",
         "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
         "permissions": {"contents": "read", "pull-requests": "write", "statuses": "write", "actions": "write"},
         "concurrency": {
-            "group": "gate-${{ github.repository }}-${{ github.event.pull_request.number }}",
-            "cancel-in-progress": True,
+            "group": "gate-${{ github.repository }}-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}",
+            "cancel-in-progress": False,
         },
-        "outputs": {key: "${{ steps.admit.outputs." + key + " }}" for key in ("run", "pr", "head", "base", "admission", "profile")},
+        "outputs": {key: "${{ steps.admit.outputs." + key + " }}" for key in ("run", "pr", "head", "base", "profile")},
         "steps": [run("Admit from PR state or handle gate labels", python(source("governance.py"), "admit"), id="admit", env={"GH_TOKEN": "${{ github.token }}"})],
     }
     prepare = {
-        "needs": "admission", "if": "${{ github.run_attempt == 1 && needs.admission.outputs.run == 'true' }}",
+        "needs": "admission", "if": "${{ needs.admission.outputs.run == 'true' }}",
         "runs-on": "ubuntu-24.04", "timeout-minutes": 5, "permissions": {"contents": "read", "pull-requests": "read", "statuses": "read"}, "env": ENV,
         "outputs": {"artifact": "${{ steps.sources.outputs.artifact-id }}"},
-        "steps": [REJECT_DEBUG, VERIFY, checkout("product", "${{ needs.admission.outputs.head }}"), checkout("base", "${{ needs.admission.outputs.base }}"),
+        "steps": [VERIFY, checkout("product", "${{ needs.admission.outputs.head }}"), checkout("base", "${{ needs.admission.outputs.base }}"),
                   run("Select the admitted harness dependency against trusted source authority", python(source("prepare.py"), "select-harness"),
                       id="harness", env={"PROFILE": "${{ needs.admission.outputs.profile }}", "HARNESS_READ_TOKEN": "${{ secrets.EJM_HARNESS_TOKEN || github.token }}"}),
                   {"uses": CHECKOUT, "if": "${{ steps.harness.outputs.revision != '' }}", "with": {"repository": "ejmlabs/ejm-harness", "ref": "${{ steps.harness.outputs.revision }}", "path": "harness", "persist-credentials": False, "token": "${{ secrets.EJM_HARNESS_TOKEN || github.token }}"}},
@@ -196,28 +193,28 @@ def governance() -> dict[str, Any]:
                   {"uses": UPLOAD, "id": "sources", "with": {"name": "admitted-sources", "path": "prepared/", "retention-days": 3, "if-no-files-found": "error"}}],
     }
     quality = {
-        "needs": ["admission", "prepare"], "if": "${{ github.run_attempt == 1 }}", "runs-on": "${{ matrix.os }}", "timeout-minutes": 45, "permissions": {},
+        "needs": ["admission", "prepare"], "runs-on": "${{ matrix.os }}", "timeout-minutes": 45, "permissions": {},
         "strategy": {"fail-fast": False, "matrix": {"os": os_matrix("needs.admission.outputs.profile")}},
         "env": {**CARGO_ENV, "PROFILE": "${{ needs.admission.outputs.profile }}", "CI": "true"},
         "steps": [ARTIFACT, EXTRACT, *restore("quality"), *build_steps("needs.admission.outputs.profile")],
     }
     registry = {
-        "needs": ["admission", "prepare"], "if": "${{ github.run_attempt == 1 }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 25, "permissions": {},
+        "needs": ["admission", "prepare"], "runs-on": "ubuntu-24.04", "timeout-minutes": 25, "permissions": {},
         "env": {**CARGO_ENV, "PROFILE": "${{ needs.admission.outputs.profile }}"},
         "steps": [ARTIFACT, EXTRACT, *restore("registry"), {"uses": NODE, "if": "${{ needs.admission.outputs.profile == 'ejm-harness' }}", "with": {"node-version": "24"}}, REGISTRY],
     }
     standards = {
-        "needs": ["admission", "prepare"], "if": "${{ github.run_attempt == 1 }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 3, "permissions": {},
+        "needs": ["admission", "prepare"], "runs-on": "ubuntu-24.04", "timeout-minutes": 3, "permissions": {},
         "env": {"PROFILE": "${{ needs.admission.outputs.profile }}"},
         "steps": [ARTIFACT, EXTRACT, run("Validate shared public standards and version metadata", python(standards_check, 'product "$PROFILE"'))],
     }
     finish = {"needs": ["admission", "prepare", "quality", "registry", "standards"],
-              "if": "${{ github.run_attempt == 1 && always() && needs.admission.outputs.run == 'true' }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
+              "if": "${{ always() && needs.admission.outputs.run == 'true' }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
               "permissions": {"contents": "read", "pull-requests": "write", "statuses": "write"},
               "env": {**ENV, "JOB_RESULTS": "${{ toJSON(needs) }}"},
               "steps": [run("Publish required results only after live admission validation", python(source("governance.py"), "finish"))]}
-    # Keep XAI_API_KEY declared optional and unused so the live pin's standards
-    # scaffold check still passes; the next shared revision drops it.
+    # XAI_API_KEY stays declared, optional and unused, only because the standards check of every pin through
+    # 8230ef8 requires the declaration in this scaffold. Nothing reads it; drop it once those pins are retired.
     secrets = {"XAI_API_KEY": {"required": False}, "EJM_HARNESS_TOKEN": {"required": False}}
     return {"name": "Human-admitted PR checks", "on": {"workflow_call": {"secrets": secrets}}, "permissions": {}, "jobs": {"admission": admission, "prepare": prepare, "quality": quality, "registry": registry, "standards": standards, "finish": finish}}
 
