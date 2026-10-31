@@ -87,8 +87,9 @@ class Server:
     def add_run(self, run: int, status: str, workflow: int = WORKFLOW, head: str = SHA) -> None:
         self.runs[run] = {"id": run, "status": status, "workflow_id": workflow, "head_sha": head}
 
-    def add_status(self, state: str, context: str, url: str, sha: str = SHA) -> None:
-        self.log.append({"id": len(self.log) + 1, "sha": sha, "context": context, "state": state, "description": "seeded", "target_url": url})
+    def add_status(self, state: str, context: str, url: str, sha: str = SHA, creator: str = "github-actions[bot]") -> None:
+        self.log.append({"id": len(self.log) + 1, "sha": sha, "context": context, "state": state, "description": "seeded", "target_url": url,
+                         "creator": {"login": creator}})
 
     def latest(self, sha: str = SHA) -> dict[str, dict[str, Any]]:
         found: dict[str, dict[str, Any]] = {}
@@ -150,7 +151,7 @@ class Server:
             case "POST", ["statuses", sha]:
                 assert body is not None
                 self.writes.append("status:" + body["state"])
-                self.log.append({"id": len(self.log) + 1, "sha": sha, **body})
+                self.log.append({"id": len(self.log) + 1, "sha": sha, **body, "creator": {"login": "github-actions[bot]"}})
                 return 201, {}
             case "DELETE", ["issues", "1", "labels", name]:
                 self.writes.append("label:" + urllib.parse.unquote(name))
@@ -907,6 +908,26 @@ class DecisionOrderTests(GateCase):
         self.complete(500, 501)
         self.assertEqual(self.admit_as(500, self.event("opened"), attempt="2")["run"], "false")
         self.assertEqual(set(self.states().values()), {"failure"})
+
+    def test_a_forged_newer_status_cannot_disarm_a_revoke(self) -> None:
+        # Statuses that name a higher run id but were not written by a real run of this workflow are ignored.
+        self.server.add_run(9000, "completed", workflow=WORKFLOW + 1)
+        forged = {
+            "by a person": (run_url(8000), "everettmorgan"),
+            "for a run that does not exist": (run_url(8000), "github-actions[bot]"),
+            "for a run of another workflow": (run_url(9000), "github-actions[bot]"),
+        }
+        for name, (url, creator) in forged.items():
+            with self.subTest(name):
+                self.setUp()
+                self.server.add_run(9000, "completed", workflow=WORKFLOW + 1)
+                self.assertEqual(self.admit_as(500, self.event("opened"))["run"], "true")
+                for context in REQUIRED_CONTEXTS:
+                    self.server.add_status("success", context, url, creator=creator)
+                self.admit_as(501, self.labeled(REVOKE_LABEL))
+                self.assertNotIn("newer run already decided", self.notices)
+                self.assertEqual(self.states(), {"Quality": "failure", "Repository standards": "failure"})
+                self.assertEqual(self.server.pr["labels"], [])
 
     def test_a_superseded_revoke_is_skipped_and_its_label_is_removed(self) -> None:
         revoke = self.labeled(REVOKE_LABEL)

@@ -220,9 +220,17 @@ def stop(api: GitHub, number: int, sha: str, reason: str) -> None:
         fail_checks(api, sha, reason)
 
 
+# Every status the gate writes comes from a workflow token, which GitHub records as this account.
+GATE_WRITER = "github-actions[bot]"
+
+
 def check_history(api: GitHub, sha: str) -> list[dict[str, Any]]:
-    """The required checks' statuses on a head, newest first, as GitHub lists them."""
-    return [status for status in api.pages(f"/commits/{sha}/statuses") if status.get("context") in REQUIRED_CONTEXTS]
+    """The gate's own required-check statuses on a head, newest first, as GitHub lists them.
+
+    A status another account or app created for the same context never counts for ownership, stops or ordering.
+    """
+    return [status for status in api.pages(f"/commits/{sha}/statuses")
+            if status.get("context") in REQUIRED_CONTEXTS and (status.get("creator") or {}).get("login") == GATE_WRITER]
 
 
 def stopped(history: list[dict[str, Any]], run_url: str) -> bool:
@@ -261,7 +269,19 @@ def superseded(api: GitHub, sha: str) -> bool:
     a status already ends the claim of every older run, and a maintainer can act again.
     """
     current = int(os.environ["GITHUB_RUN_ID"])
-    return any((owner := run_id(api, status.get("target_url"))) is not None and owner > current for status in check_history(api, sha))
+    newer = {owner for status in check_history(api, sha) if (owner := run_id(api, status.get("target_url"))) is not None and owner > current}
+    if not newer:
+        return False
+    # Only a real run of this same workflow counts, so a status naming a made-up or unrelated run cannot skip a stop.
+    workflow = api.request(f"/actions/runs/{current}")["workflow_id"]
+    for owner in sorted(newer):
+        try:
+            if api.request(f"/actions/runs/{owner}").get("workflow_id") == workflow:
+                return True
+        except urllib.error.HTTPError as error:
+            if error.code != 404:
+                raise
+    return False
 
 
 def revoked(pr: dict[str, Any]) -> bool:

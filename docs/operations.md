@@ -83,7 +83,10 @@ Comments such as `/ready` or `/approve` do nothing. Draft PRs spend nothing.
 - Order. Run ids grow with the order events were created, and the gate assumes it. An admission,
   approval or draft event is skipped, with a notice and no write, when a run with a higher id has
   already written a required status for the head, so a late Ready cannot undo a newer revoke and a
-  rerun of an old run cannot undo a newer decision. A skipped gate label is still removed.
+  rerun of an old run cannot undo a newer decision. A skipped gate label is still removed. Only
+  statuses the gate wrote (created by `github-actions[bot]`) count for ordering, ownership and
+  stops, and a newer run counts only when the Actions API shows a run of this same workflow, so
+  a status forged by another account, app or workflow cannot disarm a stop.
 - One run per head. Statuses belong to the commit, so admission jobs are serialized per repository
   and head SHA across PRs: two PRs at one commit cannot admit it at once.
 - Ownership. Every status carries the URL of the run that wrote it. The verify and finish steps
