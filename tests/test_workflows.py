@@ -193,7 +193,9 @@ class WorkflowSecurityTests(unittest.TestCase):
     def test_reruns_are_allowed_and_each_job_keeps_only_its_own_condition(self) -> None:
         # Ownership of the statuses, not the attempt number, decides whether a rerun may publish.
         jobs = self.governance["jobs"]
-        self.assertNotIn("run_attempt", json.dumps(self.governance))
+        # The attempt number may name a per-attempt artifact, but no job or step condition may depend on it.
+        conditions = [job.get("if", "") for job in jobs.values()] + [step.get("if", "") for job in jobs.values() for step in job["steps"]]
+        self.assertFalse([condition for condition in conditions if "run_attempt" in condition])
         self.assertEqual(jobs["prepare"]["if"], "${{ needs.admission.outputs.run == 'true' }}")
         self.assertEqual(jobs["finish"]["if"], "${{ always() && needs.admission.outputs.run == 'true' }}")
         for name in ("quality", "registry", "standards"):
