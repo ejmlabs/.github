@@ -15,37 +15,51 @@ A draft pull request targeting main SHALL NOT start Quality, Repository standard
 - **WHEN** a draft PR targeting main is opened or receives a new commit
 - **THEN** the gate does not start paid checks for that head
 
-### Requirement: Maintainer same-repo PRs auto-admit when Ready
+### Requirement: Maintainer same-repo PRs auto-admit
 
-A non-draft, same-repository pull request whose author is a current human maintainer or admin SHALL be admitted for the current head on open, synchronize, and ready_for_review, and paid checks MAY run for that head.
+A non-draft, same-repository pull request whose live author is a current human maintainer or admin SHALL be admitted for the current head on open, reopen, synchronize, and ready_for_review, and paid checks MAY run for that head.
 
 #### Scenario: A maintainer pushes to their non-draft PR
 
 - **WHEN** a current maintainer or admin who authors a same-repository non-draft PR targeting main pushes a new commit
 - **THEN** the gate admits that head once and starts the bounded paid checks
 
-### Requirement: Outsider and fork PRs need a maintainer Ready action
+### Requirement: Other same-repo PRs need a maintainer
 
-A pull request from a fork, or whose author is not a current maintainer or admin, SHALL be admitted only when a current human maintainer or admin marks that PR Ready for review. The author's own Ready action SHALL NOT admit paid checks.
+A same-repository pull request whose author is not a current maintainer or admin, such as a bot or an outsider, SHALL be admitted only when a current human maintainer or admin marks it Ready for review or adds `gate:approve`. The author's own Ready action SHALL NOT admit paid checks.
 
-#### Scenario: An outsider marks their own PR Ready
+#### Scenario: A non-maintainer author marks their own PR Ready
 
 - **WHEN** a non-maintainer author converts their PR from draft to Ready for review
 - **THEN** paid checks do not start
 
-#### Scenario: A maintainer marks an outsider PR Ready
+#### Scenario: A maintainer marks a PR Ready
 
 - **WHEN** a current maintainer or admin converts that PR to Ready for review
 - **THEN** the gate admits the current head and starts the bounded paid checks
 
-### Requirement: New commits need a fresh admission
+### Requirement: Fork PRs are not admitted
 
-An admission SHALL bind to one head SHA via workflow outputs. A new commit SHALL require a new admission under the rules above. Converting a PR back to draft SHALL cancel admitted work and stop further auto-admission until it is Ready again under those rules.
+A pull request from a fork SHALL NOT be admitted, because its `pull_request` token is read-only. The gate SHALL print a notice naming the policy and make no API write. A maintainer who reviewed the change SHALL push it to a branch in the repository, where the gate runs.
+
+#### Scenario: A fork opens or updates a PR
+
+- **WHEN** a fork PR is opened, updated or marked Ready
+- **THEN** the gate prints a notice and starts no checks
+
+### Requirement: Decisions bind the event head
+
+Admission, approval and revoke SHALL act on the head SHA of the event. When the live PR head differs, or the PR is closed, a draft or not based on main, the run SHALL print a notice and write nothing, except that it removes a gate label. A new commit SHALL need a new admission under the rules above.
 
 #### Scenario: A new commit lands after admission
 
 - **WHEN** the PR head changes after an admission
 - **THEN** the previous admission does not authorize checks for the new head
+
+#### Scenario: A stale event
+
+- **WHEN** an event's head is no longer the PR head
+- **THEN** the run prints a notice and writes no status or review
 
 ### Requirement: Required merge checks are Quality and Repository standards
 
@@ -56,28 +70,60 @@ Protected main SHALL require **Quality** and **Repository standards** and SHALL 
 - **WHEN** a maintainer merges to main
 - **THEN** Quality and Repository standards must be successful for that head, and at least one current approving GitHub review must apply to that head
 
-### Requirement: Label-based maintainer self-approve
+### Requirement: One-label approve and admit
 
-A current human maintainer or admin SHALL be able to approve the current head by adding the label `gate:approve`. Trusted automation SHALL record a GitHub approval for that head, then remove the label. Control flow SHALL use exact label name equality from the labeled event, not comment text. Agents SHALL add this label only when the maintainer explicitly asks.
+A current human maintainer or admin SHALL be able to approve the current head by adding the label `gate:approve`. Trusted automation SHALL record a bot approval bound to the event head, admit that head when no live run holds it, and remove the label. Control flow SHALL use exact label name equality from the labeled event, not comment text. Agents SHALL add this label only when the maintainer explicitly asks.
 
-#### Scenario: Solo maintainer self-approves
+#### Scenario: A maintainer approves a bot PR
 
-- **WHEN** a current maintainer adds `gate:approve` on the current non-draft head
-- **THEN** automation records an approving review for that head and removes the label
+- **WHEN** a current maintainer adds `gate:approve` on the current non-draft head of a Dependabot PR
+- **THEN** automation records an approving review for that head, admits it, and removes the label
 
 #### Scenario: A non-maintainer adds the approve label
 
 - **WHEN** an account without maintain or admin permission adds `gate:approve`
-- **THEN** automation does not record an approval
+- **THEN** automation removes the label and does not record an approval
 
-### Requirement: Label-based revoke
+### Requirement: Authoritative stop
 
-A current human maintainer or admin SHALL be able to add the label `gate:revoke` to cancel an admitted run and dismiss bot approvals for that head. Automation SHALL remove the label after handling.
+A current human maintainer or admin SHALL be able to stop the current head with the label `gate:revoke`, and converting a PR to draft SHALL stop it the same way. A stop SHALL fail both required statuses, cancel this workflow's other queued and in-progress runs for that head, dismiss bot approvals, and fail both statuses again as its last write.
 
-#### Scenario: Maintainer revokes an admitted head
+#### Scenario: A finishing job races a revoke
 
-- **WHEN** a current maintainer adds `gate:revoke` for the current head
-- **THEN** active admitted work for that head is cancelled and bot approvals for that head are dismissed
+- **WHEN** a finish job writes success while a stop runs
+- **THEN** the last status written for each required context is a failure
+
+### Requirement: Status ownership and reruns
+
+Every status SHALL carry the URL of the run that wrote it. Verify and finish SHALL act only when the newest Quality and Repository standards statuses on the head belong to the current run and no other run has written one since this run's first, so a stop ends a run's claim for good. Reruns SHALL be allowed: re-running failed jobs keeps the admission, and re-running the admission job needs a current human maintainer as the actor. A pending pair whose run finished SHALL be stale and admitted again.
+
+#### Scenario: A rerun of a stopped run
+
+- **WHEN** a maintainer revokes a head and then reruns the original run's jobs
+- **THEN** the rerun publishes nothing and admits nothing, and the head stays failed until a new Ready or `gate:approve`
+
+#### Scenario: Another run owns the checks
+
+- **WHEN** a newer run wrote the newest statuses for the head
+- **THEN** the older run's verify stops it and its finish writes nothing
+
+### Requirement: A product owns its gate commands
+
+When the product has an executable, regular `.github/quality`, the credential-free Quality job SHALL run it from the product root instead of the profile's built-in commands, which remain the fallback.
+
+#### Scenario: Product gate present
+
+- **WHEN** an admitted head has an executable `.github/quality`
+- **THEN** Quality runs it with lifecycle scripts disabled and not the built-in commands
+
+### Requirement: Admission has no size cap
+
+The gate SHALL NOT refuse a PR for the number of changed files or lines. Job time limits SHALL remain.
+
+#### Scenario: A large PR
+
+- **WHEN** a PR changes more than 200 files
+- **THEN** admission proceeds and the job time limits bound the run
 
 ### Requirement: No comment-text or status-token control plane
 

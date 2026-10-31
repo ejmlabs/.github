@@ -2,7 +2,7 @@
 
 ## Why
 
-The `/ready FULL_SHA` and `/approve FULL_SHA` comment ritual blocks the maintainer and every agent session on paste-the-SHA friction. The real goal of the gate is cost control: outsiders must not start paid Actions runs. GitHub already has the right primitive for that—draft versus Ready for review—plus required pull request reviews.
+The `/ready FULL_SHA` and `/approve FULL_SHA` comment ritual blocks the maintainer and every agent session on paste-the-SHA friction. The real goal of the gate is cost control: outsiders must not start paid Actions runs. GitHub already has the right primitive for that: draft versus Ready for review, plus required pull request reviews.
 
 ## What Changes
 

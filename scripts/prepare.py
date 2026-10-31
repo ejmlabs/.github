@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import IO, Any, Never
@@ -17,10 +18,23 @@ HARNESS_REPOSITORY = "ejmlabs/ejm-harness"
 HARNESS_PIN = ".github/harness-revision"
 MAX_HARNESS_METADATA_BYTES = 8_000_000
 MAX_HARNESS_SELECTION_BYTES = 4_096
+MAX_COMMAND_ERROR_BYTES = 2_000
+# Profiles that build against ejm-harness. The admitted head's own pin chooses the commit.
+HARNESS_PROFILES = ("ejm-cli", "ejm-ide")
+# Highest-priority archive attributes. Unset (`-`, not `!`) so every committed `.gitattributes`
+# and `core.autocrlf` are ignored: `!text` would fall back to core.autocrlf and still rewrite bytes.
+RAW_ARCHIVE_ATTRIBUTES = b"* -export-ignore -export-subst -text -eol -ident -filter -working-tree-encoding\n"
 
 
 def run(*args: str) -> bytes:
-    return subprocess.run(args, check=True, capture_output=True).stdout
+    """Run a command and return its output. A failure carries the bounded, single-line stderr."""
+    try:
+        return subprocess.run(args, check=True, capture_output=True).stdout
+    except subprocess.CalledProcessError as error:
+        text = error.stderr[:MAX_COMMAND_ERROR_BYTES].decode("utf-8", "replace")
+        # Paths in git messages come from the repository; one printable line cannot forge a workflow command.
+        detail = "".join(char if char.isprintable() else " " for char in text).strip()
+        raise RuntimeError(f"{args[0]} failed with status {error.returncode}: {detail}") from error
 
 
 def full_sha(value: str) -> str:
@@ -73,14 +87,15 @@ def source_archive(root: str | Path, sha: str, prefix: str, format_: str) -> byt
     if total > MAX_SOURCE_BYTES:
         raise ValueError("Source tree exceeds the byte limit")
     # info/attributes has priority over every committed .gitattributes file.
-    # Clear these attributes for directories too, so archive never skips a subtree.
+    # Clear export attributes for directories too, so archive never skips a subtree, and clear every
+    # conversion so the archive holds the committed blob bytes that were reviewed.
     attributes = Path(run("git", "-C", str(root), "rev-parse", "--path-format=absolute", "--git-path", "info/attributes").decode().strip())
     if attributes.is_symlink():
         raise ValueError("Unsafe Git metadata attributes file")
     original = attributes.read_bytes() if attributes.exists() else None
     attributes.parent.mkdir(parents=True, exist_ok=True)
     try:
-        attributes.write_bytes((original or b"") + b"\n* -export-ignore -export-subst\n")
+        attributes.write_bytes((original or b"") + b"\n" + RAW_ARCHIVE_ATTRIBUTES)
         return run("git", "-C", str(root), "archive", "--format=" + format_, "--prefix=" + prefix + "/", sha)
     finally:
         if original is None:
@@ -119,6 +134,7 @@ def harness_json(path: str, token: str) -> dict[str, Any]:
         "Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     })
+    failure = "Could not verify protected harness source metadata"
     try:
         with urllib.request.build_opener(NoHarnessRedirects()).open(request, timeout=30) as response:
             if response.status != 200 or response.geturl() != url:
@@ -130,43 +146,40 @@ def harness_json(path: str, token: str) -> dict[str, Any]:
         if not isinstance(value, dict):
             raise ValueError("Harness metadata must be an object")  # noqa: TRY004, TRY301 - reported through the same verification error below
         return value  # noqa: TRY300 - the return must stay inside the try so parse failures are reported
-    except (OSError, ValueError):
-        raise ValueError("Could not verify protected harness source metadata") from None
+    except urllib.error.HTTPError as error:
+        # A 403 or 404 means the token cannot read the harness; say so without echoing the response body.
+        raise ValueError(f"{failure}: HTTP {error.code}") from None
+    except (OSError, ValueError) as error:
+        # Only fixed messages from this function and the JSON decoder reach here, never response content.
+        raise ValueError(f"{failure}: {error if isinstance(error, ValueError) else type(error).__name__}") from None
 
 
-def select_harness(profile: str, head: str, base: str, token: str) -> dict[str, str] | None:
-    if profile == "ejm-cli":
-        revision = harness_pin("product", full_sha(head))
-        try:
-            branch = harness_json("branches/main", token)
-            if branch.get("name") != "main" or branch.get("protected") is not True:
-                raise ValueError("Harness main must be protected")
-            main = full_sha(branch["commit"]["sha"])
-            comparison = harness_json("compare/" + revision + "..." + main + "?per_page=1", token)
-            ahead = comparison.get("ahead_by")
-            if (comparison.get("status") != ("identical" if revision == main else "ahead")
-                    or type(comparison.get("behind_by")) is not int or comparison["behind_by"] != 0
-                    or type(ahead) is not int or (ahead != 0 if revision == main else ahead <= 0)
-                    or comparison["base_commit"]["sha"] != revision
-                    or comparison["merge_base_commit"]["sha"] != revision):
-                raise ValueError("Harness pin is not an ancestor of protected main")
-            return {"repository": HARNESS_REPOSITORY, "revision": revision,
-                    "tree": full_sha(comparison["base_commit"]["commit"]["tree"]["sha"]),
-                    "protected_main": main, "pin_source": "head", "pin_revision": head}
-        except (KeyError, TypeError):
-            raise ValueError("Incomplete protected harness source metadata") from None
-    if profile == "ejm-ide":
-        # IDE keeps its existing trusted-base selection until its own adoption.
-        pin = Path("base", HARNESS_PIN)
-        if pin.is_symlink():
-            raise ValueError("Unsafe harness pin")
-        revision = full_sha(pin.read_text().strip())
-        return {"repository": HARNESS_REPOSITORY, "revision": revision,
-                "pin_source": "base", "pin_revision": full_sha(base)}
-    return None
+def select_harness(profile: str, head: str, token: str) -> dict[str, str] | None:
+    """Choose the harness commit pinned by the admitted head, if protected harness main contains it."""
+    if profile not in HARNESS_PROFILES:
+        return None
+    revision = harness_pin("product", full_sha(head))
+    try:
+        branch = harness_json("branches/main", token)
+        if branch.get("name") != "main" or branch.get("protected") is not True:
+            raise ValueError("Harness main must be protected")
+        main = full_sha(branch["commit"]["sha"])
+        comparison = harness_json("compare/" + revision + "..." + main + "?per_page=1", token)
+        ahead = comparison.get("ahead_by")
+        if (comparison.get("status") != ("identical" if revision == main else "ahead")
+                or type(comparison.get("behind_by")) is not int or comparison["behind_by"] != 0
+                or type(ahead) is not int or (ahead != 0 if revision == main else ahead <= 0)
+                or comparison["base_commit"]["sha"] != revision
+                or comparison["merge_base_commit"]["sha"] != revision):
+            raise ValueError("Harness pin is not an ancestor of protected main")
+        # The tree binds the later checkout of this commit to what the API reported for it.
+        return {"revision": revision, "tree": full_sha(comparison["base_commit"]["commit"]["tree"]["sha"])}
+    except (KeyError, TypeError):
+        raise ValueError("Incomplete protected harness source metadata") from None
 
 
-def load_harness_selection(profile: str, head: str, base: str) -> dict[str, Any]:
+def load_harness_selection(head: str) -> dict[str, str]:
+    """Read the selection step's output and require it to still match the pin in the admitted head."""
     file = Path("harness-selection.json")
     if file.is_symlink():
         raise ValueError("Unsafe harness source selection")
@@ -175,28 +188,20 @@ def load_harness_selection(profile: str, head: str, base: str) -> dict[str, Any]
     if len(data) > MAX_HARNESS_SELECTION_BYTES:
         raise ValueError("Harness source selection exceeds its byte limit")
     selection = json.loads(data)
-    expected = {"repository", "revision", "pin_source", "pin_revision"}
-    if profile == "ejm-cli":
-        expected.update(("tree", "protected_main"))
-    if not isinstance(selection, dict) or set(selection) != expected or selection["repository"] != HARNESS_REPOSITORY:
+    if not isinstance(selection, dict) or set(selection) != {"revision", "tree"}:
         raise ValueError("Invalid harness source selection")
-    revision = full_sha(selection["revision"])
-    if profile == "ejm-cli":
-        full_sha(selection["tree"])
-        full_sha(selection["protected_main"])
-        if selection["pin_source"] != "head" or selection["pin_revision"] != head or harness_pin("product", head) != revision:
-            raise ValueError("Harness selection does not match admitted CLI source")
-    elif selection != select_harness(profile, head, base, ""):
-        raise ValueError("Harness selection does not match trusted IDE base")
-    return selection
+    revision, tree = full_sha(selection["revision"]), full_sha(selection["tree"])
+    if harness_pin("product", head) != revision:
+        raise ValueError("Harness selection does not match the admitted source pin")
+    return {"revision": revision, "tree": tree}
 
 
-def archive_harness(selection: dict[str, Any]) -> bytes:
+def archive_harness(selection: dict[str, str]) -> bytes:
     revision = full_sha(selection["revision"])
     if run("git", "-C", "harness", "rev-parse", "HEAD").decode().strip() != revision:
         raise ValueError("Harness checkout does not match selected source")
     tree = full_sha(run("git", "-C", "harness", "rev-parse", "HEAD^{tree}").decode().strip())
-    if selection.get("tree", tree) != tree:
+    if selection["tree"] != tree:
         raise ValueError("Harness checkout tree does not match source authority")
     return source_archive("harness", revision, "ejm-harness", "tar")
 
@@ -209,11 +214,11 @@ def main() -> None:
     if sys.argv[1:] == ["warm-pins"]:
         # Main's reviewed pins choose the dependency sources, as they do for a PR admitted onto this main commit.
         profile = os.environ["GITHUB_REPOSITORY"].split("/")[-1]
-        harness = harness_pin("product", full_sha(os.environ["GITHUB_SHA"])) if profile in ("ejm-cli", "ejm-ide") else ""
+        harness = harness_pin("product", full_sha(os.environ["GITHUB_SHA"])) if profile in HARNESS_PROFILES else ""
         with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
             output.write("harness=" + harness + "\nui=" + ui_revision("product") + "\n")
         return
-    head, base = full_sha(os.environ["PR_HEAD"]), full_sha(os.environ["PR_BASE"])
+    head = full_sha(os.environ["PR_HEAD"])
     # Validate proposed metadata without allowing it to select privileged input.
     ui_revision("product")
     repository = os.environ["GITHUB_REPOSITORY"]
@@ -221,7 +226,7 @@ def main() -> None:
     if len(sys.argv) == 2 and sys.argv[1] == "select-harness":
         if os.environ["PROFILE"] != profile:
             raise ValueError("Harness profile does not match admitted repository")
-        selection = select_harness(profile, head, base, os.environ.get("HARNESS_READ_TOKEN", ""))
+        selection = select_harness(profile, head, os.environ.get("HARNESS_READ_TOKEN", ""))
         if selection is not None:
             with Path("harness-selection.json").open("x") as output:
                 output.write(json.dumps(selection))
@@ -230,7 +235,7 @@ def main() -> None:
         return
     if len(sys.argv) != 1:
         raise ValueError("Unknown source preparation operation")
-    selection = load_harness_selection(profile, head, base) if profile in ("ejm-cli", "ejm-ide") else None
+    selection = load_harness_selection(head) if profile in HARNESS_PROFILES else None
     out = Path("prepared")
     out.mkdir()
     (out / "product.tar").write_bytes(source_archive("product", head, "product", "tar"))

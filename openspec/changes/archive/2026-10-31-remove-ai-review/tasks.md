@@ -11,14 +11,14 @@
 - [x] 2.5 Fresh independent code and security review, then the owner approves the push and merge; tag the new pin.
 
 ## 3. Re-pin the callers
-- [ ] 3.1 One pin-only PR per repository (.github, ejm-ui, ejm-cli, ejm-ide, ejm-harness, ejmlabs), keeping the current caller form, so the previous standards accept it. .github first re-pins to the 2.0 commit, then to the removal commit. Order across repositories is free.
-- [ ] 3.2 One caller-form PR per repository, after its pin is on the removal commit: drop the model key forward and the unlabeled trigger. A pin change and a form change in one PR fail the previous standards, so they are separate.
-- [ ] 3.3 Read back all six mains on the new pin and form.
+- [x] 3.1 One pin-only PR per repository (.github, ejm-ui, ejm-cli, ejm-ide, ejm-harness, ejmlabs), keeping the current caller form, so the previous standards accept it. .github first re-pins to the 2.0 commit, then to the removal commit. Order across repositories is free. Superseded: one PR per consumer moves every pin, and `velocity-and-safety-refactor` task 3.2 carries it.
+- [x] 3.2 One caller-form PR per repository, after its pin is on the removal commit: drop the model key forward and the unlabeled trigger. A pin change and a form change in one PR fail the previous standards, so they are separate. Superseded: one PR per consumer moves every pin, and `velocity-and-safety-refactor` task 3.2 carries it.
+- [x] 3.3 Read back all six mains on the new pin and form. Superseded: one PR per consumer moves every pin, and `velocity-and-safety-refactor` task 3.2 carries it.
 
 ## 4. Retire the key (owner only, after 3.2)
-- [ ] 4.1 Delete the `legacy-review` environment (its secret and branch rule) in each repository.
-- [ ] 4.2 Close or empty the prepaid provider account.
+- [x] 4.1 Delete the `legacy-review` environment (its secret and branch rule) in each repository. Moved to `velocity-and-safety-refactor` task 4.2.
+- [x] 4.2 Close or empty the prepaid provider account. Moved to `velocity-and-safety-refactor` task 4.3.
 
 ## 5. Clean up
-- [ ] 5.1 Next gate revision drops the old caller form, the optional model key secret declaration and the missing-key fixture form from the standards check.
-- [ ] 5.2 Update the shared community CONTRIBUTING template, which still names the removed status, through its own adoption (consumers compare it byte for byte).
+- [x] 5.1 Next gate revision drops the old caller form, the optional model key secret declaration and the missing-key fixture form from the standards check. Done in `velocity-and-safety-refactor`: the standards no longer accept the previous caller form or the fixture, and the secret declaration drops with its task 3.1.
+- [x] 5.2 Update the shared community CONTRIBUTING template, which still names the removed status, through its own adoption (consumers compare it byte for byte). Moved to `velocity-and-safety-refactor` task 3.3.

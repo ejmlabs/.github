@@ -2,27 +2,37 @@
 """Embed trusted scripts in reusable workflows so private callers need no read token."""
 import base64
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
 
-from deploy import SITES
+from deploy import SITES, source_path
 
 ROOT = Path(__file__).resolve().parent.parent
-CHECKOUT = "actions/checkout@11d5960a326750d5838078e36cf38b85af677262"
-NODE = "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020"
-UV = "astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884"
-ATTEST = "actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be"
-UPLOAD = "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
-DOWNLOAD = "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333"
-CACHE_RESTORE = "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
-CACHE_SAVE = "actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9"
+
+
+def action_pins(manifest: Path) -> dict[str, str]:
+    """Read the action pins from action.yml, the manifest Dependabot updates beside the generated workflows."""
+    text = manifest.read_text()
+    found = re.findall(r"(?m)^ +(?:- )?uses: ([A-Za-z0-9][A-Za-z0-9._/-]*)@([0-9a-f]{40})(?: +#.*)?$", text)
+    names = [name for name, _ in found]
+    if len(found) != text.count("uses:") or len(set(names)) != len(names):
+        raise ValueError("action.yml must list each action once, pinned to a full commit SHA")
+    return {name: name + "@" + sha for name, sha in found}
+
+
+PINS = action_pins(ROOT / "action.yml")
+CHECKOUT, NODE, UV, ATTEST = PINS["actions/checkout"], PINS["actions/setup-node"], PINS["astral-sh/setup-uv"], PINS["actions/attest-build-provenance"]
+UPLOAD, DOWNLOAD, CACHE_RESTORE, CACHE_SAVE = PINS["actions/upload-artifact"], PINS["actions/download-artifact"], PINS["actions/cache/restore"], PINS["actions/cache/save"]
 # Runner images for each profile's quality job; every other profile uses Linux. The cache warm job builds the same set.
 QUALITY_OS = {"ejm-harness": ["ubuntu-24.04", "macos-15", "windows-2025"], "ejm-cli": ["ubuntu-24.04", "macos-15"], "ejm-ide": ["macos-15"]}
-# Cargo target directory each gate job builds, per profile. Only these profiles get a trusted build cache.
+# Cargo target directory each gate job builds, per profile. Only these profiles get a trusted build cache,
+# keyed by the Cargo.lock beside each target directory.
 RUST_TARGETS = {"quality": {"ejm-cli": "product/target", "ejm-harness": "product/target", "ejm-ide": "product/src-tauri/target",
                             "ejm-ui": "product/crates/ejm-tui/target"},
                 "registry": {"ejm-harness": "product/registry/target"}}
+RUST_VERSION = "1.99.1"
 # The repositories' .cargo/config.toml caps local builds at two jobs; hosted runners use every core.
 CARGO_ENV = {"CARGO_BUILD_JOBS": "default", "CARGO_INCREMENTAL": "0"}
 
@@ -50,9 +60,10 @@ def source(name: str, *, library: bool = False) -> str:
     return text.split('\nif __name__ == "__main__":')[0] if library else text
 
 
-def python(text: str, args: str = "", executable: str = "python3") -> str:
+def python(text: str, args: str = "", executable: str = "python3 -I") -> str:
     # GitHub evaluates expressions even inside quoted script strings. Encoding the
     # trusted library preserves literal consumer expressions without evaluating them.
+    # -I keeps the working directory (which holds admitted sources) and PYTHON* variables out of imports.
     encoded = base64.b64encode(text.encode()).decode()
     return executable + " - " + args + " <<'TRUSTED_PYTHON'\nimport base64\nexec(compile(base64.b64decode('" + encoded + "'), 'trusted-workflow.py', 'exec'))\nTRUSTED_PYTHON\n"
 
@@ -65,74 +76,79 @@ def checkout(path: str, ref: str, **extra: str | bool | int | dict[str, Any] | l
     return {"uses": CHECKOUT, "with": {"path": path, "ref": ref, "persist-credentials": False, "fetch-depth": 1, "submodules": False, **extra}}
 
 
-ENV = {"PR_NUMBER": "${{ needs.admission.outputs.pr }}", "PR_HEAD": "${{ needs.admission.outputs.head }}", "PR_BASE": "${{ needs.admission.outputs.base }}", "ADMISSION_ID": "${{ needs.admission.outputs.admission }}", "GH_TOKEN": "${{ github.token }}"}
+ENV = {"PR_NUMBER": "${{ needs.admission.outputs.pr }}", "PR_HEAD": "${{ needs.admission.outputs.head }}", "PR_BASE": "${{ needs.admission.outputs.base }}", "GH_TOKEN": "${{ github.token }}"}
 VERIFY = run("Recheck current human admission", python(source("governance.py"), "verify"))
-REJECT_DEBUG = run("Require private review logs", python("""import os
-if os.environ.get('RUNNER_DEBUG') == '1':
-    raise SystemExit('Runner diagnostics must be disabled for review')
-"""))
 ARTIFACT = {"uses": DOWNLOAD, "with": {"artifact-ids": "${{ needs.prepare.outputs.artifact }}", "merge-multiple": True, "path": "prepared"}}
-EXTRACT = run("Extract source data safely", """python3 - <<'PY'
-import os
-import tarfile
-from pathlib import Path
-for file in Path('prepared').glob('*.tar'):
-    with tarfile.open(file) as archive:
-        archive.extractall('.', filter='data')
-        # Admitted sources must be newer than any restored build, so Cargo rebuilds every local crate.
-        for member in archive.getmembers():
-            if member.isfile():
-                os.utime(member.name)
-PY
-""")
+EXTRACT = run("Extract source data safely", python(source("extract.py"), "", "python3 -I"))
 INSTALL_TOOLS = python(source("tools.py"), "cargo-deny cargo-machete", "python3 -I")
 RUST_TOOLS = run("Install pinned Rust tools", """if [[ "$PROFILE" == ejm-* ]]; then
-  rustup toolchain install 1.99.1 --profile minimal --component clippy,rustfmt
-  rustup default 1.99.1
+  rustup toolchain install """ + RUST_VERSION + """ --profile minimal --component clippy,rustfmt
+  rustup default """ + RUST_VERSION + """
   if [[ "$PROFILE" != ejm-ui ]]; then
 """ + INSTALL_TOOLS + """  fi
 fi
 """)
+
+
+def owned(command: str) -> str:
+    """Shell test for a product's own gate command: a regular, executable file that is not a symlink."""
+    path = ".github/" + command
+    return f"[[ ! -L .github && ! -L {path} && -f {path} && -x {path} ]]"
+
+
+# The product owns its gate: an executable .github/quality replaces the profile's built-in commands below,
+# which remain only as the transitional fallback. Toolchains and the shared ejm-ui sibling install stay here.
 GATE = run("Run the project's required gate without secrets or write tokens", """cd product
 if [[ -d ../ejm-ui ]]; then
   npm --prefix ../ejm-ui ci --ignore-scripts
 fi
-case "$PROFILE" in
-  ejm-cli) ./scripts/check ;;
-  ejm-harness) npm ci --ignore-scripts; npm --prefix registry ci --ignore-scripts; ./scripts/check ;;
-  ejm-ide) npm ci --ignore-scripts; npm run verify; npm run site:check; npm run site:build ;;
-  ejm-ui)
-    export npm_config_ignore_scripts=true
-    npm ci --ignore-scripts
-    npm rebuild node-pty --ignore-scripts=false
-    npm run check
-    npm run build
-    npm run check:rust
-    node scripts/pack-proof.mjs
-    ;;
-  ejmlabs) node scripts/check.mjs; npm --prefix site test; npm --prefix site run build ;;
-  .github) python3 -m unittest discover -s tests -v; python3 scripts/build_workflows.py --check ;;
-  *) exit 1 ;;
-esac
+if """ + owned("quality") + """; then
+  export npm_config_ignore_scripts=true
+  ./.github/quality
+else
+  case "$PROFILE" in
+    ejm-cli) ./scripts/check ;;
+    ejm-harness) npm ci --ignore-scripts; npm --prefix registry ci --ignore-scripts; ./scripts/check ;;
+    ejm-ide) npm ci --ignore-scripts; npm run verify; npm run site:check; npm run site:build ;;
+    ejm-ui)
+      export npm_config_ignore_scripts=true
+      npm ci --ignore-scripts
+      npm rebuild node-pty --ignore-scripts=false
+      npm run check
+      npm run build
+      npm run check:rust
+      node scripts/pack-proof.mjs
+      ;;
+    ejmlabs) node scripts/check.mjs; npm --prefix site test; npm --prefix site run build ;;
+    .github) python3 -m unittest discover -s tests -v; python3 scripts/build_workflows.py --check ;;
+    *) exit 1 ;;
+  esac
+fi
 """)
 REGISTRY = run("Run separate registry gate when applicable", """if [[ "$PROFILE" == ejm-harness ]]; then
-  rustup toolchain install 1.99.1 --profile minimal --component clippy,rustfmt --target wasm32-unknown-unknown
-  rustup default 1.99.1
+  rustup toolchain install """ + RUST_VERSION + """ --profile minimal --component clippy,rustfmt --target wasm32-unknown-unknown
+  rustup default """ + RUST_VERSION + """
 """ + INSTALL_TOOLS + """  cargo install worker-build --version 0.8.7 --locked
   cd product
   if [[ -d ../ejm-ui ]]; then
     npm --prefix ../ejm-ui ci --ignore-scripts
   fi
-  npm ci --ignore-scripts
-  npm --prefix registry ci --ignore-scripts
-  ./scripts/check-registry
+  if """ + owned("quality-registry") + """; then
+    export npm_config_ignore_scripts=true
+    ./.github/quality-registry
+  else
+    npm ci --ignore-scripts
+    npm --prefix registry ci --ignore-scripts
+    ./scripts/check-registry
+  fi
 fi
 """)
 
 
 def build_steps(profile: str) -> list[dict[str, Any]]:
     """Toolchain and gate steps shared by the quality job and the cache warm job, so both build the same artifacts."""
-    return [{"uses": NODE, "with": {"node-version": "24"}}, {"uses": UV, "with": {"version": "0.9.26"}},
+    # The gate never saves a cache, so setup-uv's own cache save is off too.
+    return [{"uses": NODE, "with": {"node-version": "24"}}, {"uses": UV, "with": {"version": "0.9.26", "enable-cache": False}},
             run("Install Linux harness keyring build prerequisites", """sudo apt-get update
 sudo apt-get install --yes --no-install-recommends pkg-config libdbus-1-dev
 """, **{"if": "${{ " + profile + " == 'ejm-harness' && runner.os == 'Linux' }}"}),
@@ -146,78 +162,85 @@ def os_matrix(profile: str) -> str:
     return "${{ fromJSON(" + choices + "'[\"ubuntu-24.04\"]') }}"
 
 
-def rust_cache(job: str, profile: str, revision: str) -> tuple[str, dict[str, str]]:
-    """Return the condition and inputs of a job's Cargo cache, keyed by the exact main commit that built it."""
+def cache_prefix(job: str) -> str:
+    """Start of every cache key of a gate job. A new toolchain or runner OS never reuses an older entry."""
+    return "gate-" + job + "-${{ runner.os }}-rust" + RUST_VERSION + "-"
+
+
+def rust_cache(job: str, profile: str) -> tuple[str, dict[str, str]]:
+    """Return the condition and inputs of a job's Cargo cache, keyed by toolchain and the lockfile beside the target directory.
+
+    The lockfile paths exist in the same layout after the gate extracts its sources and after the warm job checks them out.
+    """
     targets = RUST_TARGETS[job]
     condition = "contains(fromJSON('" + json.dumps(sorted(targets), separators=(",", ":")) + "'), " + profile + ")"
     target = "${{ fromJSON('" + json.dumps(targets, separators=(",", ":")) + "')[" + profile + "] }}"
-    return condition, {"path": "~/.cargo/registry/index\n~/.cargo/registry/cache\n~/.cargo/git/db\n" + target + "\n",
-                       "key": "gate-" + job + "-${{ runner.os }}-${{ " + revision + " }}"}
+    locks = {name: path.removesuffix("/target") + "/Cargo.lock" for name, path in targets.items()}
+    lock = "${{ hashFiles(fromJSON('" + json.dumps(locks, separators=(",", ":")) + "')[" + profile + "]) }}"
+    return condition, {"path": "~/.cargo/registry/index\n~/.cargo/registry/cache\n~/.cargo/git/db\n" + target + "\n", "key": cache_prefix(job) + lock}
 
 
 def restore(job: str) -> list[dict[str, Any]]:
-    """Restore only the build main made at the admitted base; a prefix match or any other entry is deleted unused."""
-    condition, cache = rust_cache(job, "needs.admission.outputs.profile", "needs.admission.outputs.base")
-    return [{"uses": CACHE_RESTORE, "id": "cache", "if": "${{ " + condition + " }}", "with": cache},
-            run("Discard any cache that is not main's exact build", 'rm -rf ~/.cargo/registry/index ~/.cargo/registry/cache ~/.cargo/git/db "$TARGET_DIR"\n',
-                **{"if": "${{ " + condition + " && steps.cache.outputs.cache-hit != 'true' }}"}, env={"TARGET_DIR": cache["path"].splitlines()[-1]})]
+    """Restore main's build for this lockfile, or its newest build for the same toolchain. The gate never saves."""
+    condition, cache = rust_cache(job, "needs.admission.outputs.profile")
+    return [{"uses": CACHE_RESTORE, "if": "${{ " + condition + " }}", "with": {**cache, "restore-keys": cache_prefix(job)}}]
 
 
 def governance() -> dict[str, Any]:
-    templates = {path.name: path.read_text() for path in sorted((ROOT / "templates/community").glob("*.md"))}
-    standards_check = source("standards.py", library=True) + "\nstandards(Path(sys.argv[1]), sys.argv[2], " + repr(templates) + ")\n"
+    standards_check = source("standards.py", library=True) + "\nsys.exit(standards_main(sys.argv[1:]))\n"
     pull_if = (
         "github.event_name == 'pull_request' && "
         "contains(fromJSON('[\"opened\",\"reopened\",\"synchronize\",\"ready_for_review\",\"converted_to_draft\",\"labeled\"]'), github.event.action) && "
         "(github.event.action != 'labeled' || github.event.label.name == 'gate:approve' || github.event.label.name == 'gate:revoke')"
     )
     admission = {
-        "if": "${{ github.run_attempt == 1 && (" + pull_if + ") }}",
+        "if": "${{ " + pull_if + " }}",
         "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
         "permissions": {"contents": "read", "pull-requests": "write", "statuses": "write", "actions": "write"},
         "concurrency": {
-            "group": "gate-${{ github.repository }}-${{ github.event.pull_request.number }}",
-            "cancel-in-progress": True,
+            "group": "gate-${{ github.repository }}-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}",
+            "cancel-in-progress": False,
         },
-        "outputs": {key: "${{ steps.admit.outputs." + key + " }}" for key in ("run", "pr", "head", "base", "admission", "profile")},
+        "outputs": {key: "${{ steps.admit.outputs." + key + " }}" for key in ("run", "pr", "head", "base", "profile")},
         "steps": [run("Admit from PR state or handle gate labels", python(source("governance.py"), "admit"), id="admit", env={"GH_TOKEN": "${{ github.token }}"})],
     }
     prepare = {
-        "needs": "admission", "if": "${{ github.run_attempt == 1 && needs.admission.outputs.run == 'true' }}",
+        "needs": "admission", "if": "${{ needs.admission.outputs.run == 'true' }}",
         "runs-on": "ubuntu-24.04", "timeout-minutes": 5, "permissions": {"contents": "read", "pull-requests": "read", "statuses": "read"}, "env": ENV,
         "outputs": {"artifact": "${{ steps.sources.outputs.artifact-id }}"},
-        "steps": [REJECT_DEBUG, VERIFY, checkout("product", "${{ needs.admission.outputs.head }}"), checkout("base", "${{ needs.admission.outputs.base }}"),
+        "steps": [VERIFY, checkout("product", "${{ needs.admission.outputs.head }}"), checkout("base", "${{ needs.admission.outputs.base }}"),
                   run("Select the admitted harness dependency against trusted source authority", python(source("prepare.py"), "select-harness"),
                       id="harness", env={"PROFILE": "${{ needs.admission.outputs.profile }}", "HARNESS_READ_TOKEN": "${{ secrets.EJM_HARNESS_TOKEN || github.token }}"}),
                   {"uses": CHECKOUT, "if": "${{ steps.harness.outputs.revision != '' }}", "with": {"repository": "ejmlabs/ejm-harness", "ref": "${{ steps.harness.outputs.revision }}", "path": "harness", "persist-credentials": False, "token": "${{ secrets.EJM_HARNESS_TOKEN || github.token }}"}},
                   run("Read optional public UI dependency from trusted main", python(source("prepare.py"), "ui-pin"), id="ui"),
                   {"uses": CHECKOUT, "if": "${{ steps.ui.outputs.revision != '' }}", "with": {"repository": "ejmlabs/ejm-ui", "ref": "${{ steps.ui.outputs.revision }}", "path": "ejm-ui", "persist-credentials": False, "fetch-depth": 1, "submodules": False}},
                   run("Archive admitted source", python(source("prepare.py"))), VERIFY,
-                  {"uses": UPLOAD, "id": "sources", "with": {"name": "admitted-sources", "path": "prepared/", "retention-days": 3, "if-no-files-found": "error"}}],
+                  # One artifact per attempt: "Re-run all jobs" uploads again, and an artifact is never replaced by name.
+                  {"uses": UPLOAD, "id": "sources", "with": {"name": "admitted-sources-${{ github.run_attempt }}", "path": "prepared/", "retention-days": 3, "if-no-files-found": "error"}}],
     }
     quality = {
-        "needs": ["admission", "prepare"], "if": "${{ github.run_attempt == 1 }}", "runs-on": "${{ matrix.os }}", "timeout-minutes": 45, "permissions": {},
+        "needs": ["admission", "prepare"], "runs-on": "${{ matrix.os }}", "timeout-minutes": 45, "permissions": {},
         "strategy": {"fail-fast": False, "matrix": {"os": os_matrix("needs.admission.outputs.profile")}},
         "env": {**CARGO_ENV, "PROFILE": "${{ needs.admission.outputs.profile }}", "CI": "true"},
         "steps": [ARTIFACT, EXTRACT, *restore("quality"), *build_steps("needs.admission.outputs.profile")],
     }
     registry = {
-        "needs": ["admission", "prepare"], "if": "${{ github.run_attempt == 1 }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 25, "permissions": {},
+        "needs": ["admission", "prepare"], "runs-on": "ubuntu-24.04", "timeout-minutes": 25, "permissions": {},
         "env": {**CARGO_ENV, "PROFILE": "${{ needs.admission.outputs.profile }}"},
         "steps": [ARTIFACT, EXTRACT, *restore("registry"), {"uses": NODE, "if": "${{ needs.admission.outputs.profile == 'ejm-harness' }}", "with": {"node-version": "24"}}, REGISTRY],
     }
     standards = {
-        "needs": ["admission", "prepare"], "if": "${{ github.run_attempt == 1 }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 3, "permissions": {},
+        "needs": ["admission", "prepare"], "runs-on": "ubuntu-24.04", "timeout-minutes": 3, "permissions": {},
         "env": {"PROFILE": "${{ needs.admission.outputs.profile }}"},
         "steps": [ARTIFACT, EXTRACT, run("Validate shared public standards and version metadata", python(standards_check, 'product "$PROFILE"'))],
     }
     finish = {"needs": ["admission", "prepare", "quality", "registry", "standards"],
-              "if": "${{ github.run_attempt == 1 && always() && needs.admission.outputs.run == 'true' }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
+              "if": "${{ always() && needs.admission.outputs.run == 'true' }}", "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
               "permissions": {"contents": "read", "pull-requests": "write", "statuses": "write"},
               "env": {**ENV, "JOB_RESULTS": "${{ toJSON(needs) }}"},
               "steps": [run("Publish required results only after live admission validation", python(source("governance.py"), "finish"))]}
-    # Keep XAI_API_KEY declared optional and unused so the live pin's standards
-    # scaffold check still passes; the next shared revision drops it.
+    # XAI_API_KEY stays declared, optional and unused, only because the standards check of every pin through
+    # 8230ef8 requires the declaration in this scaffold. Nothing reads it; drop it once those pins are retired.
     secrets = {"XAI_API_KEY": {"required": False}, "EJM_HARNESS_TOKEN": {"required": False}}
     return {"name": "Human-admitted PR checks", "on": {"workflow_call": {"secrets": secrets}}, "permissions": {}, "jobs": {"admission": admission, "prepare": prepare, "quality": quality, "registry": registry, "standards": standards, "finish": finish}}
 
@@ -287,23 +310,36 @@ def deploy_workflow() -> dict[str, Any]:
     """Build a site once without credentials, deploy it to staging, then deploy the same files to production after a human approves."""
     profile = "github.event.repository.name"
     push = "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}"
-    build = 'cd product\ncase "$PROFILE" in\n' + "".join(
-        "  " + name + ")\n" + "".join("    " + line + "\n" for line in commands.splitlines()) + '    tar -cf "$RUNNER_TEMP/site.tar" ' + " ".join(files) + "\n    ;;\n"
-        for name, (commands, _, files) in SITES.items()) + "  *) exit 1 ;;\nesac\n"
+    # A product that owns .github/site-build builds with it; the profile's commands are the fallback. The files to pack stay in SITES.
+    product_build = "[[ ! -L .github && ! -L .github/site-build && -f .github/site-build && -x .github/site-build ]]"
+    commands = "".join("    " + name + ")\n" + "".join("      " + line + "\n" for line in build.splitlines()) + "      ;;\n" for name, (build, _, _) in SITES.items())
+    packs = "".join("  " + name + ') tar -cf "$RUNNER_TEMP/site.tar" ' + " ".join(files) + " ;;\n" for name, (_, _, files) in SITES.items())
+    build = ("cd product\nif " + product_build + "; then\n  export npm_config_ignore_scripts=true\n  ./.github/site-build\nelse\n"
+             '  case "$PROFILE" in\n' + commands + "    *) exit 1 ;;\n  esac\nfi\n" + 'case "$PROFILE" in\n' + packs + "  *) exit 1 ;;\nesac\n")
     manifest, lock = ((ROOT / "deploy" / name).read_text() for name in ("package.json", "package-lock.json"))
     install = 'mkdir -p "$RUNNER_TEMP/deployer"\ncd "$RUNNER_TEMP/deployer"\n' + python(
         "from pathlib import Path\nPath('package.json').write_text(" + repr(manifest) + ")\nPath('package-lock.json').write_text(" + repr(lock) + ")\n"
     ) + "npm ci --ignore-scripts --no-audit --no-fund\n"
+    # Each repository has one of these paths; the deploy compares the build's copy with the reviewed commit's, so only these are fetched.
+    sparse: dict[str, str | bool] = {"sparse-checkout": "\n".join(sorted({"/" + source_path(name) for name in SITES})), "sparse-checkout-cone-mode": False}
 
-    def deploy(environment: str, needs: str, permissions: dict[str, str], env: dict[str, str]) -> dict[str, Any]:
-        return {"needs": needs, "if": push, "runs-on": "ubuntu-24.04", "timeout-minutes": 10, "environment": environment, "permissions": permissions,
+    def deploy(environment: str, needs: str) -> dict[str, Any]:
+        trusted = python(source("deploy.py"), "{mode} " + environment, "python3 -I")
+        return {"needs": needs, "if": push, "runs-on": "ubuntu-24.04", "timeout-minutes": 10, "environment": environment,
+                # contents reads the reviewed config; actions reads the environment's rules. Both fit within the caller's grant.
+                "permissions": {"contents": "read", "actions": "read"},
                 # A newer main commit replaces a production deploy still waiting for approval; staging deploys run in order.
                 "concurrency": {"group": "deploy-" + environment + "-${{ github.repository }}", "cancel-in-progress": environment == "production"},
                 "env": {"PROFILE": "${{ " + profile + " }}"},
-                "steps": [{"uses": DOWNLOAD, "with": {"name": "site", "path": "artifact"}}, {"uses": NODE, "with": {"node-version": "24"}},
+                "steps": [{"uses": DOWNLOAD, "with": {"name": "site", "path": "artifact"}},
+                          # The Wrangler config and any Worker source come from this reviewed commit, as data. Nothing from it runs.
+                          checkout("reviewed", "${{ github.sha }}", **sparse),
+                          {"uses": NODE, "with": {"node-version": "24"}},
                           run("Install the pinned deployer", install, env={"GH_TOKEN": "", "GITHUB_TOKEN": "", "NPM_CONFIG_USERCONFIG": "/dev/null"}),
-                          run("Deploy the built site to " + environment, python(source("deploy.py"), environment, "python3 -I"),
-                              env={"CLOUDFLARE_API_TOKEN": "${{ secrets.CLOUDFLARE_API_TOKEN }}", **env})]}
+                          # GitHub creates a missing environment without rules, so read them before the deploy token is in play.
+                          run("Require the " + environment + " environment's protections", trusted.replace("{mode}", "protection"), env={"GH_TOKEN": "${{ github.token }}"}),
+                          run("Deploy the built site to " + environment, trusted.replace("{mode}", "deploy"),
+                              env={"CLOUDFLARE_API_TOKEN": "${{ secrets.CLOUDFLARE_API_TOKEN }}"})]}
 
     jobs = {
         "build": {"if": push, "runs-on": "ubuntu-24.04", "timeout-minutes": 20, "permissions": {"contents": "read"}, "env": {"PROFILE": "${{ " + profile + " }}"},
@@ -314,15 +350,17 @@ def deploy_workflow() -> dict[str, Any]:
                             {"uses": NODE, "with": {"node-version": "24"}},
                             run("Build the site without credentials", build),
                             {"uses": UPLOAD, "with": {"name": "site", "path": "${{ runner.temp }}/site.tar", "retention-days": 7, "if-no-files-found": "error"}}]},
-        "staging": deploy("staging", "build", {}, {}),
-        # Reads the environment's rules so a missing or unprotected production environment fails instead of deploying.
-        "production": deploy("production", "staging", {"actions": "read"}, {"GH_TOKEN": "${{ github.token }}"}),
+        "staging": deploy("staging", "build"),
+        "production": deploy("production", "staging"),
     }
     return {"name": "Deploy site", "on": {"workflow_call": {}}, "permissions": {}, "jobs": jobs}
 
 
 def warm_workflow() -> dict[str, Any]:
-    """The only writer of gate build caches: it builds reviewed main, in the gate's layout, and saves what the gate may restore."""
+    """The only writer of gate build caches: it builds reviewed main in the gate's layout and saves a cache that does not exist yet.
+
+    A cache saved from a pull request run is scoped to that pull request, so only main's entries reach the gate.
+    """
     profile = "github.event.repository.name"
     sources = [checkout("product", "${{ github.sha }}"),
                run("Read main's reviewed dependency pins", python(source("prepare.py"), "warm-pins"), id="pins"),
@@ -334,17 +372,23 @@ def warm_workflow() -> dict[str, Any]:
                run("Match the gate's exported source layout", "rm -rf product/.git ejm-harness/.git ejm-ui/.git\n")]
 
     def job(name: str, steps: list[dict[str, Any]], extra: dict[str, Any]) -> dict[str, Any]:
-        condition, cache = rust_cache(name, profile, "github.sha")
+        condition, cache = rust_cache(name, profile)
+        # Toolchain and setup steps keep the gate's exact form, since the CLI setup hook must; only the build itself is skipped on a hit.
+        missing = "${{ steps.lookup.outputs.cache-hit != 'true' }}"
         return {"if": "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && " + condition + " }}", **extra, "permissions": {"contents": "read"},
-                "steps": [*sources, *steps, {"uses": CACHE_SAVE, "if": "${{ !cancelled() }}", "with": cache}]}
+                "steps": [*sources, {"uses": CACHE_RESTORE, "id": "lookup", "with": {**cache, "lookup-only": True}},
+                          *[{**step, "if": missing} if step in (GATE, REGISTRY) else step for step in steps],
+                          # Only a build that passed is saved, because a saved key is never replaced and a hit skips the next build.
+                          {"uses": CACHE_SAVE, "if": missing, "with": cache}]}
 
     quality = job("quality", build_steps(profile), {"runs-on": "${{ matrix.os }}", "timeout-minutes": 45, "strategy": {"fail-fast": False, "matrix": {"os": os_matrix(profile)}},
                                                      "env": {**CARGO_ENV, "PROFILE": "${{ " + profile + " }}", "CI": "true"}})
     registry = job("registry", [{"uses": NODE, "if": "${{ " + profile + " == 'ejm-harness' }}", "with": {"node-version": "24"}}, REGISTRY],
                    {"runs-on": "ubuntu-24.04", "timeout-minutes": 25, "env": {**CARGO_ENV, "PROFILE": "${{ " + profile + " }}"}})
-    # A newer main commit makes the older warm build useless, since the gate restores only the exact base it admits.
+    # Runs queue instead of cancelling each other: a cache is saved only by a build that finishes, and a queued run
+    # whose cache already exists finishes quickly. GitHub keeps only the newest queued run.
     return {"name": "Warm trusted gate build caches", "on": {"workflow_call": {}}, "permissions": {},
-            "concurrency": {"group": "warm-cache-${{ github.repository }}", "cancel-in-progress": True},
+            "concurrency": {"group": "warm-cache-${{ github.repository }}", "cancel-in-progress": False},
             "jobs": {"quality": quality, "registry": registry}}
 
 

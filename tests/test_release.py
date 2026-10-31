@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import tarfile
 import tempfile
 import unittest
@@ -11,7 +12,7 @@ from email.message import Message
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 namespace: dict[str, Any] = {"__name__": "release_test_library"}
@@ -19,7 +20,16 @@ for name in ("governance.py", "standards.py", "prepare.py", "release.py"):
     text = (ROOT / "scripts" / name).read_text().split('\nif __name__ == "__main__":')[0]
     exec(compile(text, name, "exec"), namespace)  # noqa: S102 - scripts run in one shared namespace, as embedded in the workflow
 release = namespace["release"]
-SHA, HEAD = "a" * 40, "b" * 40
+SHA, HEAD, LATER, PIN = "a" * 40, "b" * 40, "d" * 40, "c" * 40
+RELEASE_CALLER = "jobs:\n  release:\n    uses: ejmlabs/.github/.github/workflows/draft-release.yml@" + PIN + '\n    with:\n      standards-ref: "' + PIN + '"\n'
+
+
+def review(login: str | None, state: str, commit: str, at: str = "2026-10-19T10:00:00Z") -> dict[str, Any]:
+    return {"state": state, "commit_id": commit, "submitted_at": at, "user": None if login is None else {"login": login}}
+
+
+def pull(number: int, merge_commit: str, **changes: Any) -> dict[str, Any]:
+    return {"number": number, "merged_at": "2026-10-19", "merge_commit_sha": merge_commit, "base": {"ref": "main"}, "head": {"sha": HEAD}, **changes}
 
 
 class API:
@@ -27,8 +37,11 @@ class API:
 
     def __init__(self) -> None:
         self.main, self.tree = SHA, "same-tree"
+        self.relation, self.merge_base = "ahead", SHA
         self.existing: str | None = None
-        self.role, self.checks, self.approved = "maintain", True, True
+        self.role, self.checks = "maintain", True
+        self.reviews: list[dict[str, Any]] = [review("maintainer", "APPROVED", HEAD)]
+        self.pulls: list[dict[str, Any]] = [pull(4, SHA)]
         self.calls: list[str] = []
 
     def permission(self, _login: str) -> str:
@@ -40,6 +53,8 @@ class API:
             return {"login": "maintainer", "type": "User"}
         if path == "/branches/main":
             return {"commit": {"sha": self.main}}
+        if path == f"/compare/{SHA}...{self.main}?per_page=1":
+            return {"status": self.relation, "merge_base_commit": {"sha": self.merge_base}}
         if path.startswith(("/git/ref/tags/", "/releases/tags/")):
             if self.existing and self.existing in path:
                 return {}
@@ -51,9 +66,7 @@ class API:
         raise AssertionError(path)
 
     def pages(self, path: str) -> list[dict[str, Any]]:
-        if "reviews" in path:
-            return [{"state": "APPROVED", "commit_id": HEAD, "user": {"login": "maintainer"}}] if self.approved else []
-        return [{"number": 4, "merged_at": "2026-10-19", "merge_commit_sha": SHA, "base": {"ref": "main"}, "head": {"sha": HEAD}}]
+        return self.reviews if "reviews" in path else self.pulls
 
     def statuses(self, _sha: str) -> dict[str, dict[str, str]]:
         statuses = {key: {"state": "success", "description": "passed"} for key in ("Quality", "Repository standards")}
@@ -78,36 +91,23 @@ class ReleaseTests(unittest.TestCase):
         for name in namespace["DOCS"]:
             if not (self.root / name).exists():
                 (self.root / name).write_text("Release notice: " + name)
-        os.environ.update(GITHUB_OUTPUT=str(Path.cwd() / "output"), GITHUB_RUN_ID="123", GITHUB_RUN_ATTEMPT="1", GITHUB_ACTOR="maintainer", STANDARDS_REF="c" * 40)
+        (self.root / ".github/workflows").mkdir(parents=True)
+        (self.root / ".github/workflows/release.yml").write_text(RELEASE_CALLER)
+        # No GITHUB_OUTPUT: a release writes no step outputs.
+        os.environ.update(GITHUB_RUN_ID="123", GITHUB_RUN_ATTEMPT="1", GITHUB_ACTOR="maintainer")
+        os.environ.pop("GITHUB_OUTPUT", None)
 
     def restore_environment(self) -> None:
         os.environ.clear()
         os.environ.update(self.old_env)
 
-    def test_existing_tag_or_release_refuses_all_asset_creation(self) -> None:
-        for existing in ("/git/ref/tags/", "/releases/tags/"):
-            api = API()
-            api.existing = existing
-            with self.assertRaises(ValueError):
-                release(api, self.root, SHA, "0.1.0")
-            self.assertFalse(Path("release-assets").exists())
+    def refused(self, api: API, pattern: str, ref: str = PIN) -> None:
+        with self.assertRaisesRegex(ValueError, pattern):
+            release(api, self.root, SHA, "0.1.0", ref)
+        self.assertFalse(Path("release-assets").exists())
 
-    def test_changed_main_failed_checks_missing_approval_and_different_tree_block(self) -> None:
-        for field, value in (("main", HEAD), ("checks", False), ("approved", False), ("tree", "different"), ("role", "write")):
-            api = API()
-            setattr(api, field, value)
-            with self.assertRaises(ValueError):
-                release(api, self.root, SHA, "0.1.0")
-            self.assertFalse(Path("release-assets").exists())
-
-    def test_rerun_and_mismatched_requested_version_block(self) -> None:
-        with self.assertRaises(ValueError):
-            release(API(), self.root, SHA, "0.2.0")
-        os.environ["GITHUB_RUN_ATTEMPT"] = "2"
-        with self.assertRaises(ValueError):
-            release(API(), self.root, SHA, "0.1.0")
-
-    def test_validated_sources_produce_checksums_provenance_and_no_publication(self) -> None:
+    def draft(self, api: API) -> "MagicMock":
+        """Run a release that passes every check, with git and the archive export faked, and return the faked git call."""
         with patch("subprocess.run") as process, patch.dict(namespace, {"source_archive": lambda _root, _sha, _prefix, format_: self.archive(format_)}):
             def source_result(args: list[str], **_kwargs: Any) -> SimpleNamespace:
                 result = SimpleNamespace()
@@ -118,19 +118,124 @@ class ReleaseTests(unittest.TestCase):
                     result.stdout = self.archive(format_)
                 return result
             process.side_effect = source_result
+            release(api, self.root, SHA, "0.1.0", PIN)
+        return process
+
+    def test_existing_tag_or_release_refuses_all_asset_creation(self) -> None:
+        for existing in ("/git/ref/tags/", "/releases/tags/"):
             api = API()
-            release(api, self.root, SHA, "0.1.0")
-            self.assertEqual(process.call_count, 1)
-            for call in process.call_args_list:
-                self.assertEqual(call.args[0][:3], ["git", "-C", "product"])
-                self.assertEqual(call.args[0][-1], SHA)
+            api.existing = existing
+            self.refused(api, "already exists")
+
+    def test_failed_checks_different_tree_and_ordinary_writer_block(self) -> None:
+        for field, value, pattern in (("checks", False, "required check"), ("tree", "different", "differs from the checked PR"), ("role", "write", "human maintainer")):
+            with self.subTest(field=field):
+                api = API()
+                setattr(api, field, value)
+                self.refused(api, pattern)
+
+    def test_the_main_head_or_an_earlier_main_commit_is_accepted(self) -> None:
+        for main, relation in ((SHA, "identical"), (LATER, "ahead")):
+            with self.subTest(main=main):
+                api = API()
+                api.main, api.relation = main, relation
+                self.draft(api)
+                self.assertEqual(json.loads(Path("release-assets/provenance.json").read_text())["commit"], SHA)
+                self.assertEqual(("/compare/" + SHA + "..." + main + "?per_page=1" in api.calls), main != SHA)
+                shutil.rmtree("release-assets")
+
+    def test_a_commit_that_is_not_an_ancestor_of_main_is_refused(self) -> None:
+        for relation, merge_base in (("diverged", HEAD), ("behind", SHA), ("ahead", HEAD), ("identical", SHA), ("", SHA)):
+            with self.subTest(relation=relation, merge_base=merge_base):
+                api = API()
+                api.main, api.relation, api.merge_base = LATER, relation, merge_base
+                self.refused(api, "on protected main")
+
+    def test_standards_ref_must_equal_the_pin_in_the_release_commit(self) -> None:
+        caller = self.root / ".github/workflows/release.yml"
+        other = "e" * 40
+        for ref in (other, "main", "", PIN.upper()):
+            with self.subTest(ref=ref):
+                self.refused(API(), "standards-ref", ref)
+        for text in (RELEASE_CALLER.replace(PIN, other), RELEASE_CALLER + RELEASE_CALLER.replace(PIN, other), "jobs: {}\n"):
+            with self.subTest(text=text):
+                caller.write_text(text)
+                self.refused(API(), "standards-ref")
+        caller.unlink()
+        self.refused(API(), "Missing or unsafe file")
+        # A native release caller pins verify, release and attach alike.
+        caller.write_text("".join(RELEASE_CALLER.replace("draft-release", name) for name in ("verify-build", "draft-release", "attach-assets")))
+        self.draft(API())
+
+    def test_only_one_checked_merged_pr_may_own_the_commit(self) -> None:
+        cases = {
+            "two merged PRs": [pull(4, SHA), pull(5, SHA)],
+            "no PR": [],
+            "other merge commit": [pull(4, HEAD)],
+            "not merged": [pull(4, SHA, merged_at=None)],
+            "other base": [pull(4, SHA, base={"ref": "topic"})],
+        }
+        for name, pulls in cases.items():
+            with self.subTest(name):
+                api = API()
+                api.pulls = pulls
+                self.refused(api, "exactly one checked merged PR")
+        api = API()
+        api.pulls = [pull(4, SHA), pull(5, HEAD), pull(6, SHA, merged_at=None)]
+        self.draft(api)
+        self.assertEqual(json.loads(Path("release-assets/provenance.json").read_text())["checked_pr"], 4)
+
+    def test_only_an_approval_that_stands_on_the_merged_head_counts(self) -> None:
+        approve = review("maintainer", "APPROVED", HEAD, "2026-10-19T10:00:00Z")
+        cases = {
+            "no review": [],
+            "approval of an older commit": [review("maintainer", "APPROVED", SHA)],
+            "comment only": [review("maintainer", "COMMENTED", HEAD)],
+            "dismissed": [review("maintainer", "DISMISSED", HEAD)],
+            "changes requested after the approval": [approve, review("maintainer", "CHANGES_REQUESTED", HEAD, "2026-10-19T11:00:00Z")],
+            "pending review": [{"state": "PENDING", "commit_id": HEAD, "user": {"login": "maintainer"}}],
+            "reviewer without an account": [review(None, "APPROVED", HEAD)],
+        }
+        for name, reviews in cases.items():
+            with self.subTest(name):
+                api = API()
+                api.reviews = reviews
+                self.refused(api, "approving review")
+        for name, reviews in {
+            "approval then a comment": [approve, review("maintainer", "COMMENTED", HEAD, "2026-10-19T11:00:00Z")],
+            "changes requested then approval": [review("maintainer", "CHANGES_REQUESTED", HEAD, "2026-10-19T09:00:00Z"), approve],
+            "one reviewer's approval beside another's older rejection": [review("other", "CHANGES_REQUESTED", HEAD, "2026-10-19T09:00:00Z"), approve],
+            "out of order listing": [review("maintainer", "CHANGES_REQUESTED", HEAD, "2026-10-19T09:00:00Z"), approve][::-1],
+        }.items():
+            with self.subTest(name):
+                api = API()
+                api.reviews = reviews
+                self.draft(api)
+                shutil.rmtree("release-assets")
+
+    def test_rerun_and_mismatched_requested_version_block(self) -> None:
+        with self.assertRaises(ValueError):
+            release(API(), self.root, SHA, "0.2.0", PIN)
+        os.environ["GITHUB_RUN_ATTEMPT"] = "2"
+        with self.assertRaisesRegex(ValueError, "reruns"):
+            release(API(), self.root, SHA, "0.1.0", PIN)
+
+    def test_validated_sources_produce_checksums_provenance_and_no_publication(self) -> None:
+        api = API()
+        process = self.draft(api)
+        self.assertEqual(process.call_count, 1)
+        for call in process.call_args_list:
+            self.assertEqual(call.args[0][:3], ["git", "-C", "product"])
+            self.assertEqual(call.args[0][-1], SHA)
         manifest = json.loads(Path("release-assets/provenance.json").read_text())
         self.assertEqual(manifest["commit"], SHA)
+        self.assertEqual(manifest["standards_revision"], PIN)
         self.assertFalse(manifest["signed"])
         for line in Path("release-assets/SHA256SUMS").read_text().splitlines():
             digest, name = line.split("  ")
             self.assertEqual(digest, hashlib.sha256((Path("release-assets") / name).read_bytes()).hexdigest())
         self.assertFalse(any("POST" in path for path in api.calls))
+        self.assertFalse(Path("output").exists())
 
     def archive(self, format_: str, omit: str | None = None) -> bytes:
         buffer = io.BytesIO()
@@ -154,7 +259,8 @@ class ReleaseTests(unittest.TestCase):
 
     def test_ui_release_requires_package_metadata_and_exact_font_notice_bytes(self) -> None:
         paths = set(namespace["DOCS"]) | {"VERSION", "package.json", "package-lock.json", "crates/ejm-tui/Cargo.toml", "crates/ejm-tui/Cargo.lock", *namespace["UI_FONT_NOTICES"]}
-        paths.update(path + "/" + name for path in namespace["UI_PACKAGES"] for name in ("package.json", "LICENSE", "THIRD_PARTY_NOTICES.md"))
+        # Packages come from the commit tree, so one added after the last review is still required.
+        paths.update(path + "/" + name for path in ("packages/core", "packages/tokens", "packages/added-later") for name in ("package.json", "LICENSE", "THIRD_PARTY_NOTICES.md"))
         for name in paths:
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)

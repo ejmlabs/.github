@@ -59,6 +59,7 @@ there. A rule below or a repository skill may add to them, never relax them.
 | `.github/workflows/` | Generated reusable workflows and this repository's callers |
 | `docs/operations.md` | Permissions, admission, credentials, rollout, recovery |
 | `tests/` | Unit tests for every script, the strict lint test and fixtures |
+| `action.yml` | Action pins the generator embeds; Dependabot updates them with the workflows |
 
 ## Commands
 
