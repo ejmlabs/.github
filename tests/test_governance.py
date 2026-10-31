@@ -29,7 +29,7 @@ WORKFLOW = 7
 USER: dict[str, Any] = {"id": 1, "login": "maintainer", "type": "User"}
 OUTSIDER: dict[str, Any] = {"id": 2, "login": "contributor", "type": "User"}
 BOT: dict[str, Any] = {"id": 3, "login": "dependabot[bot]", "type": "Bot"}
-TOKEN = "test-token-not-used"  # noqa: S105 - a placeholder, never a credential
+TOKEN = "test-token-not-used"
 
 
 def run_url(run: int) -> str:
