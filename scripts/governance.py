@@ -218,6 +218,23 @@ def owns_checks(api: GitHub, sha: str) -> bool:
     return all(found.get(context, {}).get("target_url") == api.run_url for context in REQUIRED_CONTEXTS)
 
 
+def stopped_while_writing(api: GitHub, sha: str) -> bool:
+    """True when another run failed a required check between this run's previous status and its newest one.
+
+    GitHub lists a head's statuses newest first. This run owned the newest status of each context when it checked, so
+    any other run's failure between that status and the one just written is a stop that landed in the gap.
+    """
+    history = api.pages(f"/commits/{sha}/statuses")
+    for context in REQUIRED_CONTEXTS:
+        mine = [index for index, status in enumerate(history) if status.get("context") == context and status.get("target_url") == api.run_url]
+        if len(mine) < 2:
+            continue
+        between = history[mine[0] + 1:mine[1]]
+        if any(status.get("context") == context and status.get("state") == "failure" for status in between):
+            return True
+    return False
+
+
 def other_run_is_live(api: GitHub, found: dict[str, dict[str, Any]]) -> bool:
     """True when every required context is pending under another run that has not completed.
 
@@ -331,6 +348,11 @@ def admit(api: GitHub, event: dict[str, Any]) -> None:
         notice("Only a current human maintainer can rerun an admission")
         return
     if action == "converted_to_draft":
+        live = api.request(f"/pulls/{number}")
+        if live["state"] == "open" and not live.get("draft") and live["head"]["sha"] == sha:
+            # A delayed draft event must not stop a head that a later Ready admitted again.
+            notice("The PR is Ready again at this head, so this draft event is out of date; nothing to stop")
+            return
         stop(api, number, sha, "PR converted to draft; mark Ready to admit again")
     elif action == "labeled":
         handle_label(api, event, number, sha)
@@ -353,21 +375,29 @@ def verify(api: GitHub) -> None:
 
 
 def finish(api: GitHub) -> None:
+    """Publish the results, checking ownership last so a concurrent stop has only the write itself as its window.
+
+    After writing, the status history is read again: a stop by another run that landed between the ownership check and
+    the write is answered by failing the checks, so every ordering of finish and a stop ends in failure.
+    """
     number, sha = pull_request_from_environment()
-    if not owns_checks(api, sha):
-        notice("Another run owns the checks for this head; nothing is published")
-        return
     try:
         require_live_head(api, number, sha)
         results = json.loads(os.environ["JOB_RESULTS"])
         quality = all(results.get(job, {}).get("result") == "success" for job in ("quality", "registry"))
         standards = results.get("standards", {}).get("result") == "success"
     except HANDLED:
-        fail_checks(api, sha, "Admission could not be revalidated for this head")
-        dismiss_bot_approvals(api, number, sha, "Admission no longer valid")
+        if owns_checks(api, sha):
+            fail_checks(api, sha, "Admission could not be revalidated for this head")
+            dismiss_bot_approvals(api, number, sha, "Admission no longer valid")
         raise
+    if not owns_checks(api, sha):
+        notice("Another run owns the checks for this head; nothing is published")
+        return
     for context, ok in (("Quality", quality), ("Repository standards", standards)):
         api.status(sha, context, "success" if ok else "failure", "Passed for admitted commit" if ok else "Failed, cancelled, missing, or incomplete")
+    if stopped_while_writing(api, sha):
+        fail_checks(api, sha, "Stopped by a maintainer while results were published")
 
 
 def main() -> None:

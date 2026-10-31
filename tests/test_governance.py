@@ -68,10 +68,15 @@ class Server:
         self.writes: list[str] = []
         self.cancelled: list[int] = []
         self.faults: list[dict[str, Any]] = []
+        self.hooks: list[dict[str, Any]] = []
 
     def fail(self, method: str, prefix: str, failure: int | OSError, times: int = 1000, effect: Callable[[], object] | None = None) -> None:
         """Make matching calls fail. An effect runs when a failure fires, to model another writer winning a race."""
         self.faults.append({"method": method, "prefix": prefix, "failure": failure, "times": times, "effect": effect})
+
+    def on(self, method: str, prefix: str, effect: Callable[[], object], times: int = 1) -> None:
+        """Run an effect just before matching calls are answered, to model another writer acting in that gap."""
+        self.hooks.append({"method": method, "prefix": prefix, "effect": effect, "times": times})
 
     def add_run(self, run: int, status: str, workflow: int = WORKFLOW, head: str = SHA) -> None:
         self.runs[run] = {"id": run, "status": status, "workflow_id": workflow, "head_sha": head}
@@ -101,6 +106,10 @@ class Server:
                 if isinstance(fault["failure"], int):
                     raise urllib.error.HTTPError(url, fault["failure"], "injected", Message(), None)
                 raise fault["failure"]
+        for hook in self.hooks:
+            if hook["method"] == method and path.startswith(hook["prefix"]) and hook["times"] > 0:
+                hook["times"] -= 1
+                hook["effect"]()
         body = json.loads(req.data) if isinstance(req.data, bytes) else None
         code, payload = self.route(method, path, body)
         if code >= 400:
@@ -124,6 +133,8 @@ class Server:
             case "GET", ["users", login]:
                 name = urllib.parse.unquote(login)
                 return (200, self.users[name]) if name in self.users else (404, None)
+            case "GET", ["commits", sha, "statuses"]:
+                return 200, self.page([status for status in reversed(self.log) if status["sha"] == sha], params)
             case "GET", ["commits", sha, "status"]:
                 return 200, {"statuses": self.page(list(reversed(list(self.latest(sha).values()))), params)}
             case "POST", ["statuses", sha]:
@@ -456,8 +467,17 @@ class StopTests(GateCase):
         self.assertEqual(self.server.writes, ["status:failure", "status:failure", "cancel:401", "dismiss:1", "status:failure", "status:failure"])
         self.assertEqual(self.outputs()["run"], "false")
 
+    def test_a_draft_event_for_a_head_that_is_ready_again_stops_nothing(self) -> None:
+        self.admitted()
+        self.server.writes.clear()
+        out = self.admit(self.event("converted_to_draft"))
+        self.assertIn("Ready again", out)
+        self.assertEqual(self.server.writes, [])
+        self.assertEqual(set(self.states().values()), {"pending"})
+
     def test_stop_tolerates_a_review_without_a_user_and_cancel_conflicts(self) -> None:
         self.admitted()
+        self.server.pr["draft"] = True
         self.server.reviews.append({"id": 2, "state": "APPROVED", "user": None, "commit_id": SHA})
         self.server.add_run(401, "in_progress")
         self.server.fail("POST", "/actions/runs/401/cancel", 409)
@@ -467,6 +487,7 @@ class StopTests(GateCase):
 
     def test_stop_surfaces_list_errors_but_still_writes_the_final_failure(self) -> None:
         self.admitted()
+        self.server.pr["draft"] = True
         self.server.fail("GET", "/actions/workflows/", 403)
         with self.assertRaises(urllib.error.HTTPError):
             self.admit(self.event("converted_to_draft"))
@@ -483,6 +504,7 @@ class StopTests(GateCase):
 
     def test_dismissal_failures_are_tolerated_only_when_the_review_is_no_longer_approved(self) -> None:
         self.admitted()
+        self.server.pr["draft"] = True
         self.server.fail("PUT", "/pulls/1/reviews/1/dismissals", 422)
         with self.assertRaises(urllib.error.HTTPError):
             self.admit(self.event("converted_to_draft"))
@@ -572,6 +594,48 @@ class FinishTests(GateCase):
         with self.finishing():
             self.finish()
         self.assertEqual(self.server.writes, [])
+
+    def revoke_as(self, run: int) -> Callable[[], None]:
+        def effect() -> None:
+            self.server.add_run(run, "in_progress")
+            with self.as_run(run), contextlib.redirect_stdout(io.StringIO()):
+                governance.admit(self.api, self.event("labeled", label={"name": REVOKE_LABEL}))
+        return effect
+
+    def test_a_revoke_that_lands_while_finish_rechecks_the_pr_wins(self) -> None:
+        self.admit(self.event("opened"))
+        self.server.on("GET", "/pulls/1", self.revoke_as(501))
+        with self.finishing():
+            self.assertIn("Another run owns", self.finish())
+        self.assertEqual(self.states(), {"Quality": "failure", "Repository standards": "failure"})
+
+    def test_a_revoke_between_the_ownership_check_and_the_write_still_wins(self) -> None:
+        self.admit(self.event("opened"))
+        self.server.on("POST", "/statuses/", self.revoke_as(501))
+        with self.finishing():
+            self.finish()
+        self.assertEqual(self.states(), {"Quality": "failure", "Repository standards": "failure"})
+        self.assertEqual(self.server.writes[-2:], ["status:failure", "status:failure"])
+
+    def test_a_clean_finish_reads_the_history_and_leaves_its_result(self) -> None:
+        self.admit(self.event("opened"))
+        self.server.writes.clear()
+        with self.finishing():
+            self.finish()
+        self.assertEqual(self.server.writes, ["status:success", "status:success"])
+        self.assertIn(("GET", f"/commits/{SHA}/statuses?per_page=100&page=1"), self.server.calls)
+
+    def test_a_rerun_of_every_job_after_success_publishes_nothing(self) -> None:
+        # The admission writes run=false for a head that already passed, and finish runs only when run is true.
+        self.admit(self.event("opened"))
+        with self.finishing():
+            self.finish()
+        self.server.writes.clear()
+        with self.as_run(RUN, attempt="2"), mock.patch.dict(os.environ, {"GITHUB_TRIGGERING_ACTOR": USER["login"]}):
+            self.assertIn("already passed", self.admit(self.event("opened")))
+        self.assertEqual(self.outputs()["run"], "false")
+        self.assertEqual(self.server.writes, [])
+        self.assertEqual(set(self.states().values()), {"success"})
 
     def test_ownership_needs_both_contexts(self) -> None:
         self.admit(self.event("opened"))
