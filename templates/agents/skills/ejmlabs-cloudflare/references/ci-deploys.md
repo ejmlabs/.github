@@ -84,18 +84,26 @@ pin when the site has one, the run URL, and the `Current Version ID` each deploy
 
 ## Production ahead of main
 
-A deploy by hand from a branch leaves production serving files that main does not have, and the
-next production job from main rolls them back. Before you approve a production job, or before the
-owner removes a reviewer, check that production serves a build of main that the job moves forward
-from:
+A deploy by hand from a branch leaves production serving a build that main does not have, and the
+next production job from main rolls it back. Before you approve a production job, or before the
+owner removes a reviewer, confirm which main build is live:
 
-1. Download the `site` artifact of a recent deploy run on main
-   (`gh run download RUN_ID -n site`), unpack `site.tar` as data, and list its hashed assets.
-2. Request a few of them from production with curl. Hashed assets are not challenged, so a build
-   whose assets production serves byte for byte is the live one.
-3. If that build's commit is an ancestor of the job's commit, approving moves production forward.
-   If production serves no main build, stop and report it: the branch behind it lands through
-   the gate first. Never deploy by hand to close the gap.
+1. Find the last production job on main that succeeded
+   (`gh api repos/ejmlabs/REPO/deployments?environment=production`, then each deployment's
+   statuses), and read its commit and the `Current Version ID` in its log.
+2. Compare that id with the Worker's active version: `npx wrangler deployments list --config
+   wrangler.jsonc` with the owner's login, or the Worker's Deployments tab. The same id means
+   production is that commit's build. A different id means a deploy ran outside CI: stop and
+   report it.
+3. Approve only when that commit is an ancestor of the job's commit
+   (`git merge-base --is-ancestor`). If production is not a main build, the branch behind it
+   lands through the gate first. Never deploy by hand to close the gap.
+
+Matching files is supporting evidence, not proof. Download the build's `site` artifact
+(`gh run download RUN_ID -n site`, unpacked as data) and request its hashed assets from
+production with curl; they are not challenged. A mismatch proves production differs. A match
+cannot rule out a branch that changed the Worker or added files, so when you cannot read the
+active version, say it is unconfirmed and leave the approval to the user.
 
 ## When a run fails
 

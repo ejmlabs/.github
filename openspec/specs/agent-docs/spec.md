@@ -26,7 +26,7 @@ The Repository standards job SHALL fail when a repository's shared `ejmlabs-*` s
 - **THEN** the check still uses the fetched templates at the pin
 
 ### Requirement: One description of the CI deploy
-The shared `ejmlabs-cloudflare` skill SHALL describe the CI deploy pipeline in `references/ci-deploys.md`, updated in the same change as any change to the deploy. Repository docs SHALL keep only their own site facts and link to it. The reference SHALL tell an agent to approve a production deployment only when the user explicitly asks, and only after checking that production serves a build of main that the deployment moves forward from.
+The shared `ejmlabs-cloudflare` skill SHALL describe the CI deploy pipeline in `references/ci-deploys.md`, updated in the same change as any change to the deploy. Repository docs SHALL keep only their own site facts and link to it. The reference SHALL tell an agent to approve a production deployment only when the user explicitly asks, and only after confirming, from the Worker's active version and the version a recorded production job on main printed, that production serves a build of main that the deployment moves forward from.
 
 #### Scenario: A deploy change
 - **WHEN** a change alters `scripts/deploy.py` or the deploy workflow
