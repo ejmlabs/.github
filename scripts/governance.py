@@ -214,23 +214,31 @@ def stop(api: GitHub, number: int, sha: str, reason: str) -> None:
 
 def owns_checks(api: GitHub, sha: str) -> bool:
     """True when the newest status of each required context on this head was written by the current run."""
+    return owned_statuses(api, sha) is not None
+
+
+def owned_statuses(api: GitHub, sha: str) -> dict[str, int] | None:
+    """Map each required context to the id of its newest status when this run wrote all of them, else None."""
     found = api.statuses(sha)
-    return all(found.get(context, {}).get("target_url") == api.run_url for context in REQUIRED_CONTEXTS)
+    if any(found.get(context, {}).get("target_url") != api.run_url for context in REQUIRED_CONTEXTS):
+        return None
+    return {context: int(found[context]["id"]) for context in REQUIRED_CONTEXTS}
 
 
-def stopped_while_writing(api: GitHub, sha: str) -> bool:
-    """True when another run failed a required check between this run's previous status and its newest one.
+def stopped_since(api: GitHub, sha: str, owned: dict[str, int]) -> bool:
+    """True when another run failed a required check after the statuses this run owned when it checked.
 
-    GitHub lists a head's statuses newest first. This run owned the newest status of each context when it checked, so
-    any other run's failure between that status and the one just written is a stop that landed in the gap.
+    GitHub lists a head's statuses newest first, so everything listed before the owned status of a context is newer
+    than it. Counting from that exact status, not from this run's own later writes, keeps a retried duplicate write
+    from hiding a stop. If the owned status cannot be found, the answer is yes, so the checks fail closed.
     """
     history = api.pages(f"/commits/{sha}/statuses")
-    for context in REQUIRED_CONTEXTS:
-        mine = [index for index, status in enumerate(history) if status.get("context") == context and status.get("target_url") == api.run_url]
-        if len(mine) < 2:
-            continue
-        between = history[mine[0] + 1:mine[1]]
-        if any(status.get("context") == context and status.get("state") == "failure" for status in between):
+    for context, status_id in owned.items():
+        position = next((index for index, status in enumerate(history) if status.get("id") == status_id), None)
+        if position is None:
+            return True
+        if any(status.get("context") == context and status.get("state") == "failure" and status.get("target_url") != api.run_url
+               for status in history[:position]):
             return True
     return False
 
@@ -377,8 +385,8 @@ def verify(api: GitHub) -> None:
 def finish(api: GitHub) -> None:
     """Publish the results, checking ownership last so a concurrent stop has only the write itself as its window.
 
-    After writing, the status history is read again: a stop by another run that landed between the ownership check and
-    the write is answered by failing the checks, so every ordering of finish and a stop ends in failure.
+    After writing, the status history is read again: a stop by another run newer than the statuses this run owned is
+    answered by failing the checks, so every ordering of finish and a stop ends in failure.
     """
     number, sha = pull_request_from_environment()
     try:
@@ -391,12 +399,13 @@ def finish(api: GitHub) -> None:
             fail_checks(api, sha, "Admission could not be revalidated for this head")
             dismiss_bot_approvals(api, number, sha, "Admission no longer valid")
         raise
-    if not owns_checks(api, sha):
+    owned = owned_statuses(api, sha)
+    if owned is None:
         notice("Another run owns the checks for this head; nothing is published")
         return
     for context, ok in (("Quality", quality), ("Repository standards", standards)):
         api.status(sha, context, "success" if ok else "failure", "Passed for admitted commit" if ok else "Failed, cancelled, missing, or incomplete")
-    if stopped_while_writing(api, sha):
+    if stopped_since(api, sha, owned):
         fail_checks(api, sha, "Stopped by a maintainer while results were published")
 
 

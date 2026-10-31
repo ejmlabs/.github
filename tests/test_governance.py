@@ -70,9 +70,15 @@ class Server:
         self.faults: list[dict[str, Any]] = []
         self.hooks: list[dict[str, Any]] = []
 
-    def fail(self, method: str, prefix: str, failure: int | OSError, times: int = 1000, effect: Callable[[], object] | None = None) -> None:
-        """Make matching calls fail. An effect runs when a failure fires, to model another writer winning a race."""
-        self.faults.append({"method": method, "prefix": prefix, "failure": failure, "times": times, "effect": effect})
+    def fail(self, method: str, prefix: str, failure: int | OSError, times: int = 1000, effect: Callable[[], object] | None = None,
+             *, after_write: bool = False, context: str | None = None) -> None:
+        """Make matching calls fail. An effect runs when a failure fires, to model another writer winning a race.
+
+        With after_write the call takes effect first and only its response fails, as when GitHub stores a status and
+        the connection drops before the client reads the answer. A context limits the fault to status writes for it.
+        """
+        self.faults.append({"method": method, "prefix": prefix, "failure": failure, "times": times, "effect": effect,
+                            "after_write": after_write, "context": context})
 
     def on(self, method: str, prefix: str, effect: Callable[[], object], times: int = 1) -> None:
         """Run an effect just before matching calls are answered, to model another writer acting in that gap."""
@@ -98,20 +104,24 @@ class Server:
         path = url.removeprefix(ROOT) if url.startswith(ROOT) else url.removeprefix("https://api.github.com")
         assert path != url
         self.calls.append((method, path))
-        for fault in self.faults:
-            if fault["method"] == method and path.startswith(fault["prefix"]) and fault["times"] > 0:
-                fault["times"] -= 1
-                if fault["effect"] is not None:
-                    fault["effect"]()
-                if isinstance(fault["failure"], int):
-                    raise urllib.error.HTTPError(url, fault["failure"], "injected", Message(), None)
-                raise fault["failure"]
         for hook in self.hooks:
             if hook["method"] == method and path.startswith(hook["prefix"]) and hook["times"] > 0:
                 hook["times"] -= 1
                 hook["effect"]()
-        body = json.loads(req.data) if isinstance(req.data, bytes) else None
-        code, payload = self.route(method, path, body)
+        sent = json.loads(req.data) if isinstance(req.data, bytes) else None
+        for fault in self.faults:
+            if fault["context"] is not None and (sent or {}).get("context") != fault["context"]:
+                continue
+            if fault["method"] == method and path.startswith(fault["prefix"]) and fault["times"] > 0:
+                fault["times"] -= 1
+                if fault["effect"] is not None:
+                    fault["effect"]()
+                if fault["after_write"]:
+                    self.route(method, path, sent)
+                if isinstance(fault["failure"], int):
+                    raise urllib.error.HTTPError(url, fault["failure"], "injected", Message(), None)
+                raise fault["failure"]
+        code, payload = self.route(method, path, sent)
         if code >= 400:
             raise urllib.error.HTTPError(url, code, "not found", Message(), None)
         return Response(payload)
@@ -616,6 +626,33 @@ class FinishTests(GateCase):
             self.finish()
         self.assertEqual(self.states(), {"Quality": "failure", "Repository standards": "failure"})
         self.assertEqual(self.server.writes[-2:], ["status:failure", "status:failure"])
+
+    def test_a_retried_duplicate_write_cannot_hide_a_revoke(self) -> None:
+        # GitHub stores the first success but the answer is lost, so the retry writes a second, adjacent success.
+        self.admit(self.event("opened"))
+        revoke = self.revoke_as(501)
+
+        def revoke_then_drop_the_answers() -> None:
+            revoke()
+            # Registered after the revoke, so finish's own writes are the ones stored twice, in both contexts.
+            for context in REQUIRED_CONTEXTS:
+                self.server.fail("POST", "/statuses/", 502, times=1, after_write=True, context=context)
+
+        self.server.on("POST", "/statuses/", revoke_then_drop_the_answers)
+        with self.finishing():
+            self.finish()
+        for context in REQUIRED_CONTEXTS:
+            states = [status["state"] for status in self.server.log if status["context"] == context]
+            self.assertEqual(states[-3:-1], ["success", "success"], "the retry stored a second success")
+        self.assertEqual(self.states(), {"Quality": "failure", "Repository standards": "failure"})
+
+    def test_a_missing_owned_status_fails_closed(self) -> None:
+        self.admit(self.event("opened"))
+        with self.finishing():
+            owned = governance.owned_statuses(self.api, SHA)
+            assert owned is not None
+            self.assertFalse(governance.stopped_since(self.api, SHA, owned))
+            self.assertTrue(governance.stopped_since(self.api, SHA, dict.fromkeys(owned, 10**9)))
 
     def test_a_clean_finish_reads_the_history_and_leaves_its_result(self) -> None:
         self.admit(self.event("opened"))
