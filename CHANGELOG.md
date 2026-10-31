@@ -116,6 +116,10 @@ The net change since 0.1.0:
 - `ejmlabs-cloudflare` has `references/ci-deploys.md`: the deploy on merge, what a deploy refuses, failures and what to do, the owner setup, staging names and rollback. Site repositories keep only their own site facts and link to it.
 - A house rule: shared behavior is described in the synced skills, which move with the pin, and repository docs do not restate it.
 
+#### Fixed
+
+- The standards job reads `job.workflow_sha` in each step's env. Revision 9f7421b read it in the job's own env, where GitHub does not offer the job context, so no caller can start a run at that revision; never pin it. A test now holds every job-level key of the generated workflows to the contexts GitHub allows there.
+
 ## [0.1.0] - 2026-10-18
 
 - Initial development baseline. This entry documents source version metadata; it does not assert a published release or production readiness.
