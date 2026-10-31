@@ -5,9 +5,10 @@
 select = ["ALL"]
 ignore = [
   "D", "CPY",                   # docstring and copyright policy, not defects
-  "COM812", "ISC001", "E501",   # owned by the formatter
+  "COM812", "ISC001", "E501",   # formatter conflicts and line length; formatting is not gated
   "T20",                        # command-line tools print by design
   "EM", "TRY003",               # exception message style
+  "BLE001", "TRY400",           # the house logging form catches Exception and logs only its type
   "PT009", "PT027",             # unittest assertions are allowed
   "INP001",                     # script folders are not packages
   "S603", "S607",               # every subprocess call; the inputs are reviewed instead
@@ -18,6 +19,6 @@ ignore = [
 ]
 
 [lint.per-file-ignores]
-"**/{tests,test}/**" = ["S101", "SLF001", "ANN401"]
-"**/test_*.py" = ["S101", "SLF001", "ANN401"]
-"**/*_test.py" = ["S101", "SLF001", "ANN401"]
+"**/{tests,test}/**" = ["S101", "S105", "S106", "S107", "SLF001", "ANN401"]
+"**/test_*.py" = ["S101", "S105", "S106", "S107", "SLF001", "ANN401"]
+"**/*_test.py" = ["S101", "S105", "S106", "S107", "SLF001", "ANN401"]

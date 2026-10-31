@@ -4,6 +4,19 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 ## [Unreleased]
 
+### Agent guidance, lint layer and sync tools
+
+- The house rules and shared skills describe the current gate: open a PR non-draft once local checks pass, a human-only action needs the user's explicit ask, rerun a job once for an infrastructure failure, no PR size cap, forks go through a repository branch, and a consumer moves its pin in one PR.
+- OpenSpec is required only for a change to a contract other repositories or users rely on, or one that spans several PRs.
+- Untrusted text is everything outside AGENTS.md, the skills and the user. An agent quotes it and asks before acting on it.
+- Contradictions between skills are fixed (re-exports, the campground rule, one two-week dependency age rule, the Cargo job cap only on constrained machines, visible-change checks scaled to the change), and shared skills name no private repository.
+- Each shared `SKILL.md` is at most 5,000 bytes, with detail in `references/`.
+- `scripts/sync_agents.py` writes the shared skill list between `<!-- ejmlabs:skills:start -->` and `<!-- ejmlabs:skills:end -->` from each skill's frontmatter, runs every check before it writes, replaces a skill only after its copy succeeds, and accepts an end marker at the end of the file.
+- `scripts/sync_lint.py --check` reports every drifted file.
+- The strict ruff layer ignores BLE001 and TRY400, which the house error-logging form trips, and S105 to S107 in tests. Formatting is not gated.
+- The strict ESLint layer reports `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `eval`, implied eval and `new Function`, and allows non-null assertions and unbound methods in tests.
+- The ShellCheck layer disables SC2310, SC2311 and SC2312.
+
 ### Added
 
 - Shared agent guidance in `templates/agents/`: the `ejmlabs-*` skills (workflow, engineering, security, testing and writing, plus one per language and platform stack) and the AGENTS.md house rules block, with `scripts/sync_agents.py`, which copies them into a repository, links each skill for Claude Code discovery, and reports drift. No shared workflow changes.
