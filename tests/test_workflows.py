@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -701,6 +702,38 @@ class WorkflowSecurityTests(unittest.TestCase):
             self.assertIn("rustup default " + workflows.RUST_VERSION + "\n", script)
         self.assertIn("-rust" + workflows.RUST_VERSION + "-", workflows.cache_prefix("quality"))
 
+    def test_job_level_keys_use_only_the_contexts_github_allows_there(self) -> None:
+        # GitHub refuses to start a workflow whose job-level key reads a context it does not offer there, for
+        # example the job context in a job's env, and every caller of that revision then fails at startup.
+        default = {"github", "needs", "strategy", "matrix", "vars", "inputs"}
+        allowed = {"env": default | {"secrets"}, "if": {"github", "needs", "vars", "inputs"}, "strategy": {"github", "needs", "vars", "inputs"},
+                   "secrets": default | {"secrets"}}
+        for name in SHARED_WORKFLOWS:
+            document = generated_yaml((workflows.ROOT / ".github/workflows" / name).read_text())
+            for job_name, job in document["jobs"].items():
+                for key, value in job.items():
+                    if key in ("steps", "outputs"):
+                        continue
+                    with self.subTest(workflow=name, job=job_name, key=key):
+                        used = {match for expression in re.findall(r"\$\{\{(.*?)\}\}", json.dumps(value))
+                                for match in re.findall(r"(?<![\w.])([a-z_]+)\.", re.sub(r"'[^']*'", "", expression))}
+                        self.assertLessEqual(used, allowed.get(key, default))
+
+    def test_standards_check_the_agent_files_against_the_templates_at_the_pin(self) -> None:
+        job = self.governance["jobs"]["standards"]
+        fetch, check = job["steps"][-2:]
+        self.assertEqual((fetch, check), (workflows.SHARED_TEMPLATES, workflows.AGENT_SYNC))
+        self.assertEqual(job["env"], {"PROFILE": "${{ needs.admission.outputs.profile }}"})
+        # Plain git on the public repository: no checkout action, no token and no credential helper.
+        self.assertNotIn("uses", fetch)
+        self.assertEqual(fetch["if"], "${{ needs.admission.outputs.profile != '.github' }}")
+        self.assertEqual(fetch["env"], {"WORKFLOW_REPOSITORY": "${{ job.workflow_repository }}", "WORKFLOW_SHA": "${{ job.workflow_sha }}", "GIT_TERMINAL_PROMPT": "0"})
+        self.assertEqual(check["env"], {"WORKFLOW_SHA": "${{ job.workflow_sha }}"})
+        self.assertIn('-c credential.helper= fetch -q --depth 1 --no-tags https://github.com/ejmlabs/.github.git "$WORKFLOW_SHA"', fetch["run"])
+        self.assertNotIn("${{", fetch["run"] + check["run"].split("<<")[0])
+        self.assertEqual(embedded_source(check["run"]), workflows.source("sync_agents.py"))
+        self.assertIn('--check --templates "$templates" product', check["run"])
+
     def test_extraction_runs_the_tested_script_right_after_the_artifact_download(self) -> None:
         found = {name for name, job in self.governance["jobs"].items() if any(step.get("name") == "Extract source data safely" for step in job["steps"])}
         self.assertEqual(found, {"quality", "registry", "standards"})
@@ -977,6 +1010,61 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertEqual(embedded_source(script), source)
         result = subprocess.run(["bash", "-e", "-c", script], check=True, capture_output=True, text=True)
         self.assertEqual(result.stdout, literal + "\nfixture\n")
+
+
+def step_shell(step: dict[str, Any], cwd: Path, **env: str) -> subprocess.CompletedProcess[str]:
+    """Run a generated step's script the way GitHub runs a bash step, with only the named variables."""
+    return subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]], cwd=cwd, capture_output=True, text=True,
+                          check=False, env={"PATH": os.environ["PATH"], **env})
+
+
+class AgentSyncStepTests(unittest.TestCase):
+    def test_the_fetch_refuses_any_other_repository_or_revision_before_it_writes(self) -> None:
+        for repository, sha in (("someone/.github", "a" * 40), ("ejmlabs/.github", "a" * 39), ("ejmlabs/.github", ""), ("ejmlabs/.github", "A" * 40),
+                                ("ejmlabs/.github", "a" * 40 + "\n")):
+            with self.subTest(repository=repository, sha=sha), tempfile.TemporaryDirectory() as directory:
+                result = step_shell(workflows.SHARED_TEMPLATES, Path(directory), WORKFLOW_REPOSITORY=repository, WORKFLOW_SHA=sha)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("::error::The shared gate must run from ejmlabs/.github at a full commit SHA", result.stdout)
+                self.assertEqual(list(Path(directory).iterdir()), [])
+
+    def layout(self, directory: str) -> Path:
+        """This repository's agent files as the admitted product, and its templates as the fetched shared copy."""
+        work = Path(directory)
+        for name in ("AGENTS.md", ".agents", ".claude", "templates/agents"):
+            source, target = workflows.ROOT / name, work / "product" / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            (shutil.copytree(source, target, symlinks=True) if source.is_dir() else shutil.copy2(source, target))
+        shutil.copytree(workflows.ROOT / "templates/agents", work / "shared/templates/agents")
+        return work
+
+    def test_the_check_passes_in_sync_and_names_drift_with_the_fix(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            work = self.layout(directory)
+            for profile in (".github", "ejm-ui"):
+                with self.subTest(profile=profile):
+                    result = step_shell(workflows.AGENT_SYNC, work, PROFILE=profile, WORKFLOW_SHA="a" * 40)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            skill = work / "product/.agents/skills/ejmlabs-writing/SKILL.md"
+            skill.write_text(skill.read_text() + "A local edit.\n")
+            drift = step_shell(workflows.AGENT_SYNC, work, PROFILE="ejm-ui", WORKFLOW_SHA="a" * 40)
+            self.assertEqual(drift.returncode, 1)
+            self.assertIn("ejmlabs-writing: differs from the shared skill", drift.stderr)
+            self.assertIn("::error::Shared agent files differ from ejmlabs/.github at " + "a" * 40, drift.stdout)
+            self.assertIn("python3 scripts/sync_agents.py PATH_TO_THIS_REPOSITORY", drift.stdout)
+
+    def test_the_check_reads_the_pinned_templates_and_fails_closed_without_them(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            work = self.layout(directory)
+            # A consumer is held to the fetched templates, never to templates its own PR carries.
+            rules = work / "product/templates/agents/house-rules.md"
+            rules.write_text(rules.read_text() + "A rule the PR added.\n")
+            self.assertEqual(step_shell(workflows.AGENT_SYNC, work, PROFILE="ejm-ui", WORKFLOW_SHA="a" * 40).returncode, 0)
+            self.assertEqual(step_shell(workflows.AGENT_SYNC, work, PROFILE=".github", WORKFLOW_SHA="a" * 40).returncode, 1)
+            shutil.rmtree(work / "shared")
+            missing = step_shell(workflows.AGENT_SYNC, work, PROFILE="ejm-ui", WORKFLOW_SHA="a" * 40)
+            self.assertEqual(missing.returncode, 1)
+            self.assertIn("not a shared templates directory", missing.stderr)
 
 
 if __name__ == "__main__":
