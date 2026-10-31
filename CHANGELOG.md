@@ -96,6 +96,10 @@ The net change since 0.1.0:
 - SemVer checking moved to `scripts/versioning.py`. `verify-build.yml` and `attach-assets.yml` embed it and the API class instead of the whole standards check, which shrinks the generated files from 122,515 to 37,047 bytes (`verify-build.yml`) and from 245,200 to 111,398 bytes (`attach-assets.yml`, which gained a job).
 - The community templates and root files describe the current gate and release flow: no AI review, no fork admission, reruns allowed, no size cap, and a draft before the tag.
 
+#### Fixed
+
+- A stop waits, for at most 45 seconds, until the runs it cancelled have completed before its last write, so a finish job that was already running cannot post a success after it. A run still going then is named in a warning. A last write that fails prints an error that the head may still read success, and the job fails. The whole stop is bounded to 120 seconds, inside the admission job's 3 minutes, with a 10-second timeout per status attempt.
+
 #### Removed
 
 - The unused `XAI_API_KEY` declaration from `governance.yml`. The standards accept only the scaffold without it.
