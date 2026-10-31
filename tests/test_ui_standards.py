@@ -13,7 +13,8 @@ import standards
 from governance import GitHub
 from repo_tree import FONTS, UI_DIRS, UI_LICENSE, RepoTree, TreeCase
 
-# The manifests reviewed when the packing digests were retired. The structural rules must accept all of them.
+# The manifests reviewed when the packing digests were retired, with packages/ui as ejm-ui PR #59 packs it
+# (no public/static.css). The structural rules must accept all of them.
 REVIEWED: dict[str, dict[str, Any]] = {
     "packages/tokens": {
         "name": "@ejm/tokens", "main": "./src/index.ts", "types": "./src/index.ts",
@@ -33,10 +34,11 @@ REVIEWED: dict[str, dict[str, Any]] = {
     "packages/ui": {
         "name": "@ejm/ui", "main": "./src/index.ts", "types": "./src/index.ts",
         "exports": {".": "./src/index.ts", "./styles.css": "./src/styles.css", "./theme-boot.js": "./public/theme-boot.js", "./fonts/*": "./src/fonts/*",
-                    "./art/*": "./src/art/*", "./static.css": "./public/static.css",
+                    "./art/*": "./src/art/*", "./tsconfig.json": "./src/consumer.tsconfig.json",
+                    "./vite": {"types": "./src/vite.d.mts", "import": "./src/vite.mjs", "default": "./src/vite.mjs"},
                     "./control-recipes": {"types": "./src/control-recipes.d.mts", "import": "./src/control-recipes.mjs", "default": "./src/control-recipes.mjs"}},
         "files": ["src", "!src/**/*.test.*", "!src/components/test-setup.tsx", "!src/**/README.md", "public/theme-boot.js", "THEME.md", "COMPONENTS.md",
-                  "LICENSE", "THIRD_PARTY_NOTICES.md", "public/static.css"]},
+                  "LICENSE", "THIRD_PARTY_NOTICES.md"]},
 }
 
 
@@ -239,7 +241,7 @@ class UIStandardsTests(TreeCase):
                                 "exports": {".": "./src/other.ts", "./new": "./generated/new.css", "./art/*": "./assets/logos/*"}, "main": "src/other.ts",
                                 "scripts": {"build": "node build.mjs", "test": "node test.mjs", "check": "x"}},
             "packages/ssg": {"files": ["bin", "bin/extra.mjs", "src", "LICENSE", "THIRD_PARTY_NOTICES.md"], "bin": {"ejm-ssg": "bin/ejm-ssg.mjs", "other": "./bin/other.mjs"}},
-            "packages/ui": {"files": ["src", "public/theme-boot.js", "public/static.css", "THEME.md", "LICENSE", "THIRD_PARTY_NOTICES.md"], "types": "./src/other.d.ts",
+            "packages/ui": {"files": ["src", "public/theme-boot.js", "THEME.md", "LICENSE", "THIRD_PARTY_NOTICES.md"], "types": "./src/other.d.ts",
                             "browser": {"./src/node.ts": False, "./src/web.ts": "./src/browser.ts"}},
             "packages/core": {"files": ["src", "contract.json", "LICENSE", "THIRD_PARTY_NOTICES.md"], "directories": {"lib": "src"}},
         }
@@ -294,6 +296,14 @@ class UIStandardsTests(TreeCase):
                     base = list(standards.UI_PACKING_PREFIXES[path])
                     edit(tree, path, files=[*base, entry])
                     self.fails(tree, re.escape(path) + "/package.json: files entry " + re.escape(repr(entry)) + " is outside the reviewed set")
+
+    def test_the_ui_tarball_no_longer_packs_the_static_stylesheet(self) -> None:
+        ui = REVIEWED["packages/ui"]
+        for entry in ("public/static.css", "./public/static.css", "public", "public/*"):
+            with self.subTest(entry=entry):
+                problems = standards.ui_packing_problems("packages/ui", {**ui, "files": [*ui["files"], entry]})
+                self.assertEqual(len(problems), 1, problems)
+                self.assertIn("files entry " + repr(entry) + " is outside the reviewed set", problems[0])
 
     def test_the_tokens_tarball_cannot_gain_brand_logos_or_artwork(self) -> None:
         tokens = REVIEWED["packages/tokens"]
