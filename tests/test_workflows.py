@@ -453,7 +453,7 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertEqual(re.findall(r"(?m)^\s+default-days: (\d+)$", text), ["14"])
         self.assertEqual(re.findall(r'(?m)^  - package-ecosystem: "([^"]+)"$', text), ["github-actions"])
         # The shared workflows' own pins are bumped with their manifest in one pull request; the caller pin of this repository moves only by hand.
-        self.assertIn('dependency-name: "ejmlabs/.github"', text)
+        self.assertIn('dependency-name: "ejmlabs/.github*"', text)
 
     def test_attach_alone_holds_the_release_write_token_and_attestation_is_its_own_job(self) -> None:
         document = generated_yaml(workflows.yaml(workflows.attach_workflow()))

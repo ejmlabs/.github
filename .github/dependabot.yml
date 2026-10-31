@@ -16,4 +16,5 @@ updates:
         update-types: [minor, patch]
     ignore:
       # This repository's own caller pins move only by hand, with the release.yml pin and the community files in one pull request.
-      - dependency-name: "ejmlabs/.github"
+      # The star also matches reusable workflow paths such as ejmlabs/.github/.github/workflows/governance.yml.
+      - dependency-name: "ejmlabs/.github*"
