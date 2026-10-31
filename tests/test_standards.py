@@ -338,7 +338,8 @@ class StandardTests(TreeCase):
         self.assertLess(len(errors.getvalue().splitlines()), 200)
 
     def test_the_embedded_workflow_script_is_this_library_with_a_quiet_entry_point(self) -> None:
-        run = governance()["jobs"]["standards"]["steps"][-1]["run"]
+        steps = governance()["jobs"]["standards"]["steps"]
+        run = next(step["run"] for step in steps if step.get("name") == "Validate shared public standards and version metadata")
         match = re.search(r"b64decode\('([^']+)'\)", run)
         self.assertIsNotNone(match)
         assert match is not None

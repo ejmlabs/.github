@@ -291,9 +291,9 @@ step first reads the environment and fails closed unless it has exactly one depl
 policy, `main`, in staging and production alike. A required reviewer on `production` is allowed
 and never required.
 
-Before a site moves to the new pin, create `staging` and `production` with
-`configure_repositories.py`, set `CLOUDFLARE_API_TOKEN` as an
-environment secret in both, and read the result back with `--check`. Change `deploy.yml` to the
+Before a site moves to the new pin, run `set_deploy_token.py` to create `staging` and
+`production` and store `CLOUDFLARE_API_TOKEN` in both, and read the result back with
+`configure_repositories.py --check`. Change `deploy.yml` to the
 `secrets: inherit` form (the older form leaves the token empty) and give the Wrangler config
 `env.staging` with its own Worker name and routes. Staging is `staging.<production host>`, for
 example `staging.ide.ejmlabs.com` (Cloudflare issues the custom domain's certificate, deeper
@@ -302,6 +302,12 @@ Wrangler prompt, and CI cannot answer. A deploy that has started is
 never cancelled, so Wrangler is never stopped midway. The build, staging and production jobs each
 queue per repository in push order, and a newer main commit replaces an older one that has not
 started. Roll back by redeploying an earlier Worker version in Cloudflare.
+
+Agents in each site repository learn this pipeline from the synced
+`templates/agents/skills/ejmlabs-cloudflare/references/ci-deploys.md`, and the site's own docs add
+only its Worker names, hostnames, config path and checks. Update that reference in the same PR as
+any change to the deploy, so each repository gets the description with the behavior when it moves
+its pin.
 
 ## Releases and native build files
 
@@ -378,8 +384,12 @@ the house rules block) are copied into each repository by `scripts/sync_communit
 `scripts/sync_lint.py` and `scripts/sync_agents.py`, and this repository's own
 `.agents/skills/ejmlabs-*` copies come from the same templates. Each script's `--check` reports
 drift without writing, for example `python3 scripts/sync_agents.py ../REPOSITORY --check`. No
-template is embedded in a shared workflow, so changing one moves no pin. The tests hold the
-authoring rules. Edit a template, never a synced copy.
+template is embedded in a shared workflow. The Repository standards job fetches this repository
+at its own commit (`job.workflow_sha`, plain git with no token) and runs
+`sync_agents.py --check --templates` against that commit's `templates/agents`. A repository's
+shared skills, house rules and routing block must therefore match its pin, and an agent template
+change reaches it in the PR that moves its pins. This repository checks its copies against its
+own templates. The tests hold the authoring rules. Edit a template, never a synced copy.
 
 ## Adopting a new shared revision
 
@@ -391,7 +401,8 @@ authoring rules. Edit a template, never a synced copy.
 3. A `pull_request` run takes its workflow from the PR merge ref, so a consumer PR that moves its
    pin is checked by the new pin. Use one PR per consumer that moves every `ejmlabs/.github` pin,
    switches `deploy.yml` to the `secrets: inherit` form, and resyncs the community files and other
-   templates. The native `release.yml` caller is unchanged, so a consumer needs only the new pin
+   templates. Run `sync_agents.py` from a checkout of the new commit; the gate fails a PR whose
+   agent files differ from its pin. The native `release.yml` caller is unchanged, so a consumer needs only the new pin
    for the split attestation job.
 4. After each merge, run `configure_repositories.py --check --repository NAME`.
 5. Before claiming a path verified, see it work in GitHub: maintainer auto-admit, a Dependabot PR
