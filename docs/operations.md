@@ -74,7 +74,11 @@ Comments such as `/ready` or `/approve` do nothing. Draft PRs spend nothing.
   as the last write, so a finishing job cannot replace the failure with a success.
 - Ownership. Every status carries the URL of the run that wrote it. The verify and finish steps
   act only when the newest Quality and Repository standards statuses on the head belong to the
-  current run: otherwise verify stops the run and finish writes nothing.
+  current run and no other run has written one since this run's first. A stop therefore ends a
+  run's claim for good: its later writes and its reruns cannot take the head back. Finish reads
+  the history again after writing, fails the checks it wrote if a stop landed first, and fails
+  closed when that read is impossible. To admit a stopped head again, mark it Ready or add
+  `gate:approve`.
 - Reruns are allowed. Re-run failed jobs keeps the admission, and finish re-checks ownership and
   the live head. Re-running the admission job itself needs a current human maintainer as the
   actor. Rerun for infrastructure failures; fix code in a new commit.

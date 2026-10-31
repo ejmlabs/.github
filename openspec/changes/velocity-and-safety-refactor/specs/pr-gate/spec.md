@@ -20,7 +20,12 @@ Admission, approval and revoke SHALL act on the event's head SHA. When the live 
 
 ### Requirement: Status ownership and reruns
 
-Every status SHALL carry its run URL, and verify and finish SHALL act only when the newest required statuses on the head belong to the current run. Reruns SHALL be allowed, and re-running the admission job SHALL need a current human maintainer as the actor.
+Every status SHALL carry its run URL, and verify and finish SHALL act only when the newest required statuses on the head belong to the current run and no other run has written one since this run's first, so a stop ends a run's claim for good. Reruns SHALL be allowed, and re-running the admission job SHALL need a current human maintainer as the actor.
+
+#### Scenario: A rerun of a stopped run
+
+- **WHEN** a maintainer revokes a head and then reruns the original run's jobs
+- **THEN** the rerun publishes nothing and admits nothing, and the head stays failed until a new Ready or `gate:approve`
 
 #### Scenario: Another run owns the checks
 

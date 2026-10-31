@@ -95,7 +95,12 @@ A current human maintainer or admin SHALL be able to stop the current head with 
 
 ### Requirement: Status ownership and reruns
 
-Every status SHALL carry the URL of the run that wrote it. Verify and finish SHALL act only when the newest Quality and Repository standards statuses on the head belong to the current run. Reruns SHALL be allowed: re-running failed jobs keeps the admission, and re-running the admission job needs a current human maintainer as the actor. A pending pair whose run finished SHALL be stale and admitted again.
+Every status SHALL carry the URL of the run that wrote it. Verify and finish SHALL act only when the newest Quality and Repository standards statuses on the head belong to the current run and no other run has written one since this run's first, so a stop ends a run's claim for good. Reruns SHALL be allowed: re-running failed jobs keeps the admission, and re-running the admission job needs a current human maintainer as the actor. A pending pair whose run finished SHALL be stale and admitted again.
+
+#### Scenario: A rerun of a stopped run
+
+- **WHEN** a maintainer revokes a head and then reruns the original run's jobs
+- **THEN** the rerun publishes nothing and admits nothing, and the head stays failed until a new Ready or `gate:approve`
 
 #### Scenario: Another run owns the checks
 

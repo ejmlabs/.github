@@ -648,7 +648,8 @@ class FinishTests(GateCase):
 
     def test_an_unreadable_history_after_the_write_fails_closed_and_a_rerun_publishes(self) -> None:
         self.admit(self.event("opened"))
-        self.server.fail("GET", f"/commits/{SHA}/statuses", 503, times=3)
+        # The ownership read before the write succeeds; the read after the write fails every attempt.
+        self.server.on("POST", "/statuses/", lambda: self.server.fail("GET", f"/commits/{SHA}/statuses", 503, times=3))
         with self.finishing(), self.assertRaises(urllib.error.HTTPError):
             self.finish()
         self.assertEqual(self.states(), {"Quality": "failure", "Repository standards": "failure"})
@@ -656,13 +657,74 @@ class FinishTests(GateCase):
             self.finish()
         self.assertEqual(self.states(), {"Quality": "success", "Repository standards": "success"})
 
-    def test_a_missing_owned_status_fails_closed(self) -> None:
+    def test_an_unreadable_history_before_the_write_publishes_nothing(self) -> None:
         self.admit(self.event("opened"))
+        self.server.fail("GET", f"/commits/{SHA}/statuses", 503, times=3)
+        self.server.writes.clear()
+        with self.finishing(), self.assertRaises(urllib.error.HTTPError):
+            self.finish()
+        self.assertEqual(self.server.writes, [])
+        self.assertEqual(set(self.states().values()), {"pending"})
+
+    def test_a_stop_ends_a_runs_ownership_for_good(self) -> None:
+        mine, other = run_url(RUN), run_url(501)
+        history = [{"context": context, "target_url": url} for url in (other, mine) for context in REQUIRED_CONTEXTS]
+        self.assertTrue(governance.stopped(history, mine))
+        self.assertFalse(governance.owns(history, mine))
+        # This run writing again on top does not restore it.
+        newer = [{"context": context, "target_url": mine} for context in REQUIRED_CONTEXTS] + history
+        self.assertTrue(governance.stopped(newer, mine))
+        self.assertFalse(governance.owns(newer, mine))
+        # Statuses of an older run do not count against a newer one.
+        older = [{"context": context, "target_url": url} for url in (mine, other) for context in REQUIRED_CONTEXTS]
+        self.assertFalse(governance.stopped(older, mine))
+        self.assertTrue(governance.owns(older, mine))
+
+    def test_a_rerun_after_a_revoke_and_an_unreadable_history_cannot_undo_the_revoke(self) -> None:
+        self.admit(self.event("opened"))
+        revoke = self.revoke_as(501)
+
+        def revoke_then_break_the_history() -> None:
+            revoke()
+            # The ownership read before the write already succeeded; the read after it fails every attempt.
+            self.server.fail("GET", f"/commits/{SHA}/statuses", 503, times=3)
+
+        self.server.on("POST", "/statuses/", revoke_then_break_the_history)
+        with self.finishing(), self.assertRaises(urllib.error.HTTPError):
+            self.finish()
+        self.assertEqual(set(self.states().values()), {"failure"})
+        self.server.writes.clear()
+        with self.as_run(RUN, attempt="2"), self.finishing():
+            self.assertIn("Another run owns", self.finish())
+        self.assertEqual(self.server.writes, [])
+        self.assertEqual(set(self.states().values()), {"failure"})
+
+    def test_a_revoke_between_the_two_result_writes_fails_both(self) -> None:
+        self.admit(self.event("opened"))
+        revoke = self.revoke_as(501)
+        writes = {"count": 0}
+
+        def revoke_before_the_second_write() -> None:
+            writes["count"] += 1
+            if writes["count"] == 2:
+                revoke()
+
+        self.server.on("POST", "/statuses/", revoke_before_the_second_write, times=1000)
         with self.finishing():
-            owned = governance.owned_statuses(self.api, SHA)
-            assert owned is not None
-            self.assertFalse(governance.stopped_since(self.api, SHA, owned))
-            self.assertTrue(governance.stopped_since(self.api, SHA, dict.fromkeys(owned, 10**9)))
+            self.finish()
+        self.assertEqual(self.states(), {"Quality": "failure", "Repository standards": "failure"})
+
+    def test_a_rerun_of_a_stopped_runs_admission_does_not_admit_again(self) -> None:
+        self.admit(self.event("opened"))
+        self.server.add_run(501, "in_progress")
+        with self.as_run(501):
+            self.admit(self.event("labeled", label={"name": REVOKE_LABEL}))
+        self.server.runs[501]["status"] = "completed"
+        self.server.writes.clear()
+        with self.as_run(RUN, attempt="2"), mock.patch.dict(os.environ, {"GITHUB_TRIGGERING_ACTOR": USER["login"]}):
+            self.assertIn("stopped this run", self.admit(self.event("opened")))
+        self.assertEqual(self.outputs()["run"], "false")
+        self.assertEqual(self.server.writes, [])
 
     def test_a_clean_finish_reads_the_history_and_leaves_its_result(self) -> None:
         self.admit(self.event("opened"))

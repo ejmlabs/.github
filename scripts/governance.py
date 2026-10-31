@@ -212,35 +212,31 @@ def stop(api: GitHub, number: int, sha: str, reason: str) -> None:
         fail_checks(api, sha, reason)
 
 
-def owns_checks(api: GitHub, sha: str) -> bool:
-    """True when the newest status of each required context on this head was written by the current run."""
-    return owned_statuses(api, sha) is not None
+def check_history(api: GitHub, sha: str) -> list[dict[str, Any]]:
+    """The required checks' statuses on a head, newest first, as GitHub lists them."""
+    return [status for status in api.pages(f"/commits/{sha}/statuses") if status.get("context") in REQUIRED_CONTEXTS]
 
 
-def owned_statuses(api: GitHub, sha: str) -> dict[str, int] | None:
-    """Map each required context to the id of its newest status when this run wrote all of them, else None."""
-    found = api.statuses(sha)
-    if any(found.get(context, {}).get("target_url") != api.run_url for context in REQUIRED_CONTEXTS):
-        return None
-    return {context: int(found[context]["id"]) for context in REQUIRED_CONTEXTS}
+def stopped(history: list[dict[str, Any]], run_url: str) -> bool:
+    """True when another run wrote a required check after this run's first status on the head.
 
-
-def stopped_since(api: GitHub, sha: str, owned: dict[str, int]) -> bool:
-    """True when another run failed a required check after the statuses this run owned when it checked.
-
-    GitHub lists a head's statuses newest first, so everything listed before the owned status of a context is newer
-    than it. Counting from that exact status, not from this run's own later writes, keeps a retried duplicate write
-    from hiding a stop. If the owned status cannot be found, the answer is yes, so the checks fail closed.
+    That write is a stop or a later admission, and it ends this run's claim for good: neither this run's own later
+    writes nor a rerun of it can take the head back, so a stop is never undone by the run it stopped.
     """
-    history = api.pages(f"/commits/{sha}/statuses")
-    for context, status_id in owned.items():
-        position = next((index for index, status in enumerate(history) if status.get("id") == status_id), None)
-        if position is None:
-            return True
-        if any(status.get("context") == context and status.get("state") == "failure" and status.get("target_url") != api.run_url
-               for status in history[:position]):
-            return True
-    return False
+    mine = [index for index, status in enumerate(history) if status.get("target_url") == run_url]
+    return bool(mine) and any(status.get("target_url") != run_url for status in history[: max(mine)])
+
+
+def owns(history: list[dict[str, Any]], run_url: str) -> bool:
+    """True when this run wrote the newest status of each required check and nobody else wrote one since its first."""
+    newest: dict[str, dict[str, Any]] = {}
+    for status in history:
+        newest.setdefault(status["context"], status)
+    return all(newest.get(context, {}).get("target_url") == run_url for context in REQUIRED_CONTEXTS) and not stopped(history, run_url)
+
+
+def owns_checks(api: GitHub, sha: str) -> bool:
+    return owns(check_history(api, sha), api.run_url)
 
 
 def other_run_is_live(api: GitHub, found: dict[str, dict[str, Any]]) -> bool:
@@ -272,6 +268,9 @@ def other_run_is_live(api: GitHub, found: dict[str, dict[str, Any]]) -> bool:
 
 
 def admit_head(api: GitHub, number: int, sha: str, base: str) -> None:
+    if stopped(check_history(api, sha), api.run_url):
+        notice("A maintainer stopped this run for this head; mark the PR Ready or add gate:approve to admit it again")
+        return
     found = api.statuses(sha)
     if all(found.get(context, {}).get("state") == "success" for context in REQUIRED_CONTEXTS):
         notice("This commit already passed its checks; push a new commit to run them again")
@@ -383,10 +382,11 @@ def verify(api: GitHub) -> None:
 
 
 def finish(api: GitHub) -> None:
-    """Publish the results, checking ownership last so a concurrent stop has only the write itself as its window.
+    """Publish the results, checking ownership right before writing and the status history again right after.
 
-    After writing, the status history is read again: a stop by another run newer than the statuses this run owned is
-    answered by failing the checks, so every ordering of finish and a stop ends in failure.
+    A stop by another run ends this run's ownership for good, so every ordering of finish and a stop ends in failure:
+    before the check, finish writes nothing; in the gap, finish fails the checks it just wrote; after it, the stop's own
+    write is the newest. A history that cannot be read after the write fails closed.
     """
     number, sha = pull_request_from_environment()
     try:
@@ -399,20 +399,26 @@ def finish(api: GitHub) -> None:
             fail_checks(api, sha, "Admission could not be revalidated for this head")
             dismiss_bot_approvals(api, number, sha, "Admission no longer valid")
         raise
-    owned = owned_statuses(api, sha)
-    if owned is None:
+    if not owns_checks(api, sha):
         notice("Another run owns the checks for this head; nothing is published")
         return
     for context, ok in (("Quality", quality), ("Repository standards", standards)):
         api.status(sha, context, "success" if ok else "failure", "Passed for admitted commit" if ok else "Failed, cancelled, missing, or incomplete")
     try:
-        stopped = stopped_since(api, sha, owned)
+        after = check_history(api, sha)
     except HANDLED:
-        # A result that cannot be confirmed fails closed. This run still owns the checks, so rerunning it publishes again.
+        # A result that cannot be confirmed fails closed. A stop stays in the history, so a rerun of this job cannot undo it.
         fail_checks(api, sha, "Could not confirm the result; rerun the failed job")
         raise
-    if stopped:
-        fail_checks(api, sha, "Stopped by a maintainer while results were published")
+    if stopped(after, api.run_url):
+        # A stop landed before this run's write. Fail only the checks whose newest status is this run's, so a later
+        # writer's status stands.
+        newest: dict[str, dict[str, Any]] = {}
+        for status in after:
+            newest.setdefault(status["context"], status)
+        for context in REQUIRED_CONTEXTS:
+            if newest.get(context, {}).get("target_url") == api.run_url:
+                api.status(sha, context, "failure", "Stopped by a maintainer while results were published")
 
 
 def main() -> None:
