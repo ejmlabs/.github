@@ -7,7 +7,7 @@
 
 - [x] 2.1 Unit tests for config parsing, staging and build-command refusal, the reviewer check and the workflow's credential boundaries.
 - [x] 2.2 The pinned Wrangler dry-runs the current `ejmlabs` and `ejm-ide` configs.
-- [ ] 2.3 First staging deploy and approved production deploy for each adopting site.
+- [x] 2.3 First staging deploy and approved production deploy for each adopting site. Moved to `velocity-and-safety-refactor` task 2.3.
 
 ## 3. Documentation
 

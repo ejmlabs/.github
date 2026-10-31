@@ -16,7 +16,7 @@
 ## 4. Verification
 
 - [x] 4.1 Unit tests, `python3 scripts/build_workflows.py --check` and the standards check pass; each consumer's main passes the new standards with a moved pin.
-- [ ] 4.2 Admitted gate timings on each consumer after its pin moves, cold and with a warm cache.
+- [x] 4.2 Admitted gate timings on each consumer after its pin moves, cold and with a warm cache. Moved to `velocity-and-safety-refactor` task 2.5.
 
 ## 5. Documentation
 
