@@ -55,7 +55,7 @@ class Server:
 
     def __init__(self) -> None:
         self.pr: dict[str, Any] = {
-            "number": 1, "state": "open", "draft": False, "user": copy.deepcopy(USER),
+            "number": 1, "state": "open", "draft": False, "user": copy.deepcopy(USER), "labels": [],
             "head": {"sha": SHA, "ref": "feature", "repo": {"full_name": REPO}},
             "base": {"ref": "main", "sha": BASE, "repo": {"full_name": REPO}},
         }
@@ -87,8 +87,9 @@ class Server:
     def add_run(self, run: int, status: str, workflow: int = WORKFLOW, head: str = SHA) -> None:
         self.runs[run] = {"id": run, "status": status, "workflow_id": workflow, "head_sha": head}
 
-    def add_status(self, state: str, context: str, url: str, sha: str = SHA) -> None:
-        self.log.append({"id": len(self.log) + 1, "sha": sha, "context": context, "state": state, "description": "seeded", "target_url": url})
+    def add_status(self, state: str, context: str, url: str, sha: str = SHA, creator: str = "github-actions[bot]") -> None:
+        self.log.append({"id": len(self.log) + 1, "sha": sha, "context": context, "state": state, "description": "seeded", "target_url": url,
+                         "creator": {"login": creator}})
 
     def latest(self, sha: str = SHA) -> dict[str, dict[str, Any]]:
         found: dict[str, dict[str, Any]] = {}
@@ -150,10 +151,11 @@ class Server:
             case "POST", ["statuses", sha]:
                 assert body is not None
                 self.writes.append("status:" + body["state"])
-                self.log.append({"id": len(self.log) + 1, "sha": sha, **body})
+                self.log.append({"id": len(self.log) + 1, "sha": sha, **body, "creator": {"login": "github-actions[bot]"}})
                 return 201, {}
             case "DELETE", ["issues", "1", "labels", name]:
                 self.writes.append("label:" + urllib.parse.unquote(name))
+                self.pr["labels"] = [label for label in self.pr["labels"] if label["name"] != urllib.parse.unquote(name)]
                 return 200, []
             case "GET", ["pulls", "1", "reviews"]:
                 return 200, self.page(self.reviews, params)
@@ -201,6 +203,7 @@ class GateCase(unittest.TestCase):
         transport.start()
         self.addCleanup(transport.stop)
         self.sleeps: list[float] = []
+        self.notices = ""
         self.api = GitHub(sleep=self.sleeps.append)
 
     def event(self, action: str, sender: dict[str, Any] | None = None, **extra: Any) -> dict[str, Any]:
@@ -211,6 +214,31 @@ class GateCase(unittest.TestCase):
         with contextlib.redirect_stdout(out):
             governance.admit(self.api, event)
         return out.getvalue()
+
+    def labeled(self, name: str, sender: dict[str, Any] | None = None) -> dict[str, Any]:
+        """A labeled event for a label that is now on the PR."""
+        self.server.pr["labels"].append({"name": name})
+        return self.event("labeled", sender=sender, label={"name": name})
+
+    def admit_as(self, run: int, event: dict[str, Any], attempt: str = "1", actor: str = USER["login"]) -> dict[str, str]:
+        """Run one admission as its own Actions run, with its own output file, and return that run's outputs."""
+        self.server.runs.setdefault(run, {"id": run, "status": "in_progress", "workflow_id": WORKFLOW, "head_sha": SHA})
+        out = self.directory / f"output-{run}-{attempt}"
+        env = {"GITHUB_RUN_ID": str(run), "GITHUB_RUN_ATTEMPT": attempt, "GITHUB_OUTPUT": str(out), "GITHUB_TRIGGERING_ACTOR": actor}
+        text = io.StringIO()
+        try:
+            with mock.patch.dict(os.environ, env), contextlib.redirect_stdout(text):
+                governance.admit(self.api, event)
+        finally:
+            self.notices = text.getvalue()
+        return dict(line.split("=", 1) for line in out.read_text().splitlines()) if out.exists() else {}
+
+    def complete(self, *runs: int) -> None:
+        for run in runs:
+            self.server.runs[run]["status"] = "completed"
+
+    def approved(self) -> list[int]:
+        return [review["id"] for review in self.server.reviews if review["state"] == "APPROVED"]
 
     def outputs(self) -> dict[str, str]:
         path = Path(os.environ["GITHUB_OUTPUT"])
@@ -475,9 +503,11 @@ class StopTests(GateCase):
         self.server.add_run(403, "in_progress", head=OLD)
         self.server.add_run(404, "completed")
         self.server.add_run(600, "in_progress")
-        self.admit(self.event("labeled", label={"name": REVOKE_LABEL}))
+        self.admit(self.labeled(REVOKE_LABEL))
+        # The label is removed only after the stop has completed.
         self.assertEqual(self.server.writes, [
-            "label:" + REVOKE_LABEL, "status:failure", "status:failure", "cancel:400", "cancel:401", "dismiss:1", "status:failure", "status:failure"])
+            "status:failure", "status:failure", "cancel:400", "cancel:401", "dismiss:1", "status:failure", "status:failure", "label:" + REVOKE_LABEL])
+        self.assertEqual(self.server.pr["labels"], [])
         self.assertEqual(self.states(), {"Quality": "failure", "Repository standards": "failure"})
         self.assertEqual(self.server.reviews[0]["state"], "DISMISSED")
         self.assertEqual([self.server.runs[run]["status"] for run in (402, 403, 600, RUN)], ["in_progress"] * 4)
@@ -490,11 +520,12 @@ class StopTests(GateCase):
         self.assertEqual(self.server.writes, ["status:failure", "status:failure", "cancel:401", "dismiss:1", "status:failure", "status:failure"])
         self.assertEqual(self.outputs()["run"], "false")
 
-    def test_a_draft_event_for_a_head_that_is_ready_again_stops_nothing(self) -> None:
+    def test_a_draft_event_older_than_a_newer_admission_stops_nothing(self) -> None:
         self.admitted()
-        self.server.writes.clear()
-        out = self.admit(self.event("converted_to_draft"))
-        self.assertIn("Ready again", out)
+        self.server.add_run(502, "in_progress")
+        for context in REQUIRED_CONTEXTS:
+            self.server.add_status("pending", context, run_url(502))
+        self.assertIn("newer run already decided", self.admit(self.event("converted_to_draft")))
         self.assertEqual(self.server.writes, [])
         self.assertEqual(set(self.states().values()), {"pending"})
 
@@ -514,16 +545,17 @@ class StopTests(GateCase):
         self.server.fail("GET", "/actions/workflows/", 403)
         with self.assertRaises(urllib.error.HTTPError):
             self.admit(self.event("converted_to_draft"))
-        self.assertEqual(self.server.writes, ["status:failure"] * 4)
+        self.assertEqual(self.server.writes, ["status:failure", "status:failure", "dismiss:1", "status:failure", "status:failure"])
 
-    def test_stop_surfaces_cancel_errors_other_than_conflicts(self) -> None:
+    def test_stop_surfaces_cancel_errors_other_than_conflicts_but_still_dismisses_and_keeps_the_label(self) -> None:
         self.admitted()
         self.server.add_run(401, "in_progress")
         self.server.fail("POST", "/actions/runs/401/cancel", 403)
         with self.assertRaises(urllib.error.HTTPError):
-            self.admit(self.event("labeled", label={"name": REVOKE_LABEL}))
-        self.assertEqual(self.server.writes[-2:], ["status:failure", "status:failure"])
-        self.assertEqual(self.server.reviews[0]["state"], "APPROVED")
+            self.admit(self.labeled(REVOKE_LABEL))
+        self.assertEqual(self.server.writes[-3:], ["dismiss:1", "status:failure", "status:failure"])
+        self.assertEqual(self.server.reviews[0]["state"], "DISMISSED")
+        self.assertEqual(self.server.pr["labels"], [{"name": REVOKE_LABEL}])
 
     def test_dismissal_failures_are_tolerated_only_when_the_review_is_no_longer_approved(self) -> None:
         self.admitted()
@@ -754,8 +786,18 @@ class FinishTests(GateCase):
         self.server.runs[501]["status"] = "completed"
         self.server.writes.clear()
         with self.as_run(RUN, attempt="2"), mock.patch.dict(os.environ, {"GITHUB_TRIGGERING_ACTOR": USER["login"]}):
-            self.assertIn("stopped this run", self.admit(self.event("opened")))
+            self.assertIn("newer run already decided", self.admit(self.event("opened")))
         self.assertEqual(self.outputs()["run"], "false")
+        self.assertEqual(self.server.writes, [])
+
+    def test_a_rerun_of_a_run_that_an_older_id_stopped_does_not_admit_again(self) -> None:
+        # A stop whose run id is lower than the rerun's (so the rerun is not superseded) still ends the claim by history.
+        self.admit(self.event("opened"))
+        for context in REQUIRED_CONTEXTS:
+            self.server.add_status("failure", context, run_url(499))
+        self.server.writes.clear()
+        with self.as_run(RUN, attempt="2"), mock.patch.dict(os.environ, {"GITHUB_TRIGGERING_ACTOR": USER["login"]}):
+            self.assertIn("stopped this run", self.admit(self.event("opened")))
         self.assertEqual(self.server.writes, [])
 
     def test_a_clean_finish_reads_the_history_and_leaves_its_result(self) -> None:
@@ -827,6 +869,181 @@ class FinishTests(GateCase):
             with self.subTest(number=number, head=head), mock.patch.dict(os.environ, {"PR_NUMBER": number, "PR_HEAD": head}), self.assertRaises(ValueError):
                 governance.verify(self.api)
         self.assertEqual(self.server.calls, [])
+
+
+class DecisionOrderTests(GateCase):
+    """A later decision wins, a stop is durable until it completes, and only a maintainer's event admits."""
+
+    def test_an_older_admission_event_that_runs_after_a_newer_revoke_admits_nothing(self) -> None:
+        # Run 500 (Ready, the earlier event) reaches its job after run 501 (revoke, the later event).
+        self.admit_as(501, self.labeled(REVOKE_LABEL))
+        self.complete(501)
+        self.assertEqual(self.admit_as(500, self.event("ready_for_review")).get("run"), "false")
+        self.assertIn("newer run already decided", self.notices)
+        self.assertEqual(set(self.states().values()), {"failure"})
+
+    def test_a_rerun_of_an_approve_run_after_a_revoke_records_no_approval(self) -> None:
+        approve = self.labeled(APPROVE_LABEL)
+        self.assertEqual(self.admit_as(500, approve)["run"], "true")
+        self.admit_as(501, self.labeled(REVOKE_LABEL))
+        self.complete(500, 501)
+        self.assertEqual(self.approved(), [])
+        self.admit_as(500, approve, attempt="2")
+        self.assertEqual(self.approved(), [], "the replay posted an approval after the revoke dismissed it")
+        self.assertEqual(set(self.states().values()), {"failure"})
+
+    def test_a_superseded_approve_records_nothing_and_its_label_is_removed(self) -> None:
+        self.server.pr["user"] = copy.deepcopy(OUTSIDER)
+        approve = self.labeled(APPROVE_LABEL)
+        self.admit_as(501, self.labeled(REVOKE_LABEL))
+        self.assertEqual(self.admit_as(500, approve)["run"], "false")
+        self.assertEqual((self.approved(), self.server.pr["labels"]), ([], []))
+
+    def test_a_rerun_of_a_run_that_wrote_nothing_does_not_admit_after_a_stop(self) -> None:
+        self.server.fail("POST", "/statuses/", 503)  # run 500 never stores a status
+        with self.assertRaises(urllib.error.HTTPError):
+            self.admit_as(500, self.event("opened"))
+        self.server.faults.clear()
+        self.admit_as(501, self.labeled(REVOKE_LABEL))
+        self.complete(500, 501)
+        self.assertEqual(self.admit_as(500, self.event("opened"), attempt="2")["run"], "false")
+        self.assertEqual(set(self.states().values()), {"failure"})
+
+    def test_a_forged_newer_status_cannot_disarm_a_revoke(self) -> None:
+        # Statuses that name a higher run id but were not written by a real run of this workflow are ignored.
+        self.server.add_run(9000, "completed", workflow=WORKFLOW + 1)
+        forged = {
+            "by a person": (run_url(8000), "everettmorgan"),
+            "for a run that does not exist": (run_url(8000), "github-actions[bot]"),
+            "for a run of another workflow": (run_url(9000), "github-actions[bot]"),
+        }
+        for name, (url, creator) in forged.items():
+            with self.subTest(name):
+                self.setUp()
+                self.server.add_run(9000, "completed", workflow=WORKFLOW + 1)
+                self.assertEqual(self.admit_as(500, self.event("opened"))["run"], "true")
+                for context in REQUIRED_CONTEXTS:
+                    self.server.add_status("success", context, url, creator=creator)
+                self.admit_as(501, self.labeled(REVOKE_LABEL))
+                self.assertNotIn("newer run already decided", self.notices)
+                self.assertEqual(self.states(), {"Quality": "failure", "Repository standards": "failure"})
+                self.assertEqual(self.server.pr["labels"], [])
+
+    def test_a_superseded_revoke_is_skipped_and_its_label_is_removed(self) -> None:
+        revoke = self.labeled(REVOKE_LABEL)
+        self.admit_as(501, revoke)
+        self.complete(501)
+        self.assertEqual(self.admit_as(502, self.event("ready_for_review"))["run"], "true")
+        self.server.writes.clear()
+        self.admit_as(501, revoke, attempt="2")  # a maintainer reruns the old revoke after the newer admission
+        self.assertEqual(self.server.writes, ["label:" + REVOKE_LABEL])
+        self.assertEqual(set(self.states().values()), {"pending"})
+
+    def test_a_draft_stop_is_not_swallowed_because_someone_set_the_pr_ready_again(self) -> None:
+        self.server.pr["user"] = copy.deepcopy(OUTSIDER)
+        self.assertEqual(self.admit_as(500, self.labeled(APPROVE_LABEL))["run"], "true")
+        # The maintainer converts to draft. The author, who is not a maintainer, sets Ready before the draft event runs.
+        draft = self.event("converted_to_draft")
+        self.assertEqual(self.admit_as(501, self.event("ready_for_review", sender=OUTSIDER))["run"], "false")
+        self.admit_as(502, draft)
+        self.assertEqual(set(self.states().values()), {"failure"})
+        with self.finishing():
+            self.assertIn("Another run owns", self.finish())
+        self.assertEqual(set(self.states().values()), {"failure"})
+
+    def test_only_a_maintainers_event_admits_a_head_a_maintainer_stopped(self) -> None:
+        self.assertEqual(self.admit_as(500, self.event("opened"))["run"], "true")
+        self.admit_as(501, self.labeled(REVOKE_LABEL))
+        self.complete(500, 501)
+        for run, action in enumerate(("reopened", "ready_for_review", "synchronize"), 502):
+            with self.subTest(action=action):
+                out = self.admit_as(run, self.event(action, sender=OUTSIDER, before=OLD), actor=OUTSIDER["login"])
+                self.assertEqual(out["run"], "false")
+                self.assertIn("not admitted yet", self.notices)
+        self.assertEqual(set(self.states().values()), {"failure"})
+        self.assertEqual(self.admit_as(510, self.event("ready_for_review"))["run"], "true")
+
+    def test_a_revoke_whose_stop_fails_keeps_its_label_and_finish_and_verify_fail_closed(self) -> None:
+        self.assertEqual(self.admit_as(500, self.event("opened"))["run"], "true")
+        revoke = self.labeled(REVOKE_LABEL)
+        self.server.fail("POST", "/statuses/", 503)
+        with self.assertRaises(urllib.error.HTTPError):
+            self.admit_as(501, revoke)
+        self.server.faults.clear()
+        self.assertEqual(self.server.pr["labels"], [{"name": REVOKE_LABEL}])
+        self.complete(501)
+        with self.finishing():
+            with self.assertRaises(ValueError):
+                governance.verify(self.api)
+            with self.assertRaises(ValueError):
+                self.finish()
+        self.assertEqual(set(self.states().values()), {"failure"})
+
+    def test_a_revoke_label_that_no_job_processed_still_blocks_admission_approval_and_finish(self) -> None:
+        # The revoke job was cancelled while it waited, so nothing but the label records the maintainer's decision.
+        self.server.pr["user"] = copy.deepcopy(OUTSIDER)
+        self.assertEqual(self.admit_as(500, self.labeled(APPROVE_LABEL))["run"], "true")
+        self.server.pr["labels"].append({"name": REVOKE_LABEL})
+        with self.finishing(), self.assertRaises(ValueError):
+            self.finish()
+        self.assertEqual(set(self.states().values()), {"failure"})
+        self.complete(500)
+        self.server.writes.clear()
+        self.assertEqual(self.admit_as(501, self.event("ready_for_review"))["run"], "false")
+        self.assertIn("gate:revoke is on this PR; remove it to admit again", self.notices)
+        self.assertEqual(self.admit_as(502, self.labeled(APPROVE_LABEL))["run"], "false")
+        self.assertIn("gate:revoke is on this PR", self.notices)
+        self.assertEqual(self.server.writes, ["label:" + APPROVE_LABEL])
+        self.assertEqual(self.approved(), [])
+
+    def test_a_failed_stop_blocks_a_ready_with_a_notice_until_the_stop_is_rerun(self) -> None:
+        self.assertEqual(self.admit_as(500, self.event("opened"))["run"], "true")
+        revoke = self.labeled(REVOKE_LABEL)
+        self.server.fail("POST", "/statuses/", 503, context="Repository standards")  # Quality fails, Standards cannot be written
+        with self.assertRaises(urllib.error.HTTPError):
+            self.admit_as(501, revoke)
+        self.server.faults.clear()
+        self.complete(501)
+        self.assertEqual(self.admit_as(502, self.event("ready_for_review"))["run"], "false")
+        self.assertIn("gate:revoke is on this PR", self.notices)
+        self.admit_as(501, revoke, attempt="2")
+        self.assertEqual(self.server.pr["labels"], [])
+        self.complete(500, 501)
+        self.assertEqual(self.admit_as(503, self.event("ready_for_review"))["run"], "true")
+
+    def test_a_non_maintainer_revoke_label_is_removed_and_stops_nothing(self) -> None:
+        self.assertEqual(self.admit_as(500, self.event("opened"))["run"], "true")
+        self.server.writes.clear()
+        with self.assertRaises(ValueError):
+            self.admit_as(501, self.labeled(REVOKE_LABEL, sender=OUTSIDER), actor=OUTSIDER["login"])
+        self.assertEqual(self.server.writes, ["label:" + REVOKE_LABEL])
+        self.assertEqual(self.server.pr["labels"], [])
+        self.assertEqual(set(self.states().values()), {"pending"})
+
+    def test_a_stop_survives_a_burst_of_status_failures(self) -> None:
+        self.assertEqual(self.admit_as(500, self.event("opened"))["run"], "true")
+        with self.finishing():
+            self.finish()
+        self.complete(500)
+        self.server.fail("POST", "/statuses/", 503, times=4)
+        self.admit_as(501, self.labeled(REVOKE_LABEL))
+        self.assertEqual(self.sleeps, [1, 2, 4, 8])
+        self.assertEqual(set(self.states().values()), {"failure"})
+
+    def test_a_failed_cancel_does_not_leave_the_revoked_approval_standing(self) -> None:
+        self.assertEqual(self.admit_as(500, self.labeled(APPROVE_LABEL))["run"], "true")
+        self.server.add_run(499, "in_progress")
+        self.server.fail("POST", "/actions/runs/499/cancel", 403)
+        with self.assertRaises(urllib.error.HTTPError):
+            self.admit_as(501, self.labeled(REVOKE_LABEL))
+        self.assertEqual(self.approved(), [])
+        self.assertEqual(set(self.states().values()), {"failure"})
+
+    def test_the_approval_is_bound_to_the_labelled_head_even_if_the_head_moves_during_the_call(self) -> None:
+        self.server.pr["user"] = copy.deepcopy(OUTSIDER)
+        self.server.on("POST", "/pulls/1/reviews", lambda: self.server.pr["head"].update(sha="d" * 40))
+        self.admit_as(500, self.labeled(APPROVE_LABEL))
+        self.assertEqual({review["commit_id"] for review in self.server.reviews}, {SHA})
 
 
 class CommandTests(GateCase):

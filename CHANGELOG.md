@@ -89,6 +89,7 @@ The net change since 0.1.0:
 
 #### Changed
 
+- The gate orders decisions by run id, so an older event or a rerun of an older run cannot undo a newer decision. `gate:revoke` stays on the PR until its stop completes, and finish, verify, admission and approval honor it meanwhile. Only a maintainer's event admits a head. A stop dismisses approvals even when cancelling fails, status writes retry five times, admission is serialized per head across PRs, and a cancelled run starts no finish job.
 - Attestation runs in its own `attest` job of `attach-assets.yml`, only when `attest` is set. It holds `id-token`, `attestations`, `actions: read` and `contents: read`, downloads the same artifact, recomputes every digest and requires them to equal the digests the `attach` job attached before it attests. The `attach` job no longer holds `id-token` or `attestations`. The native `release.yml` caller is unchanged.
 - A draft release is created with `--target <commit>` and no tag ref, so GitHub creates the tag only when a human publishes the draft and a failed run uses up no version. The run refuses a version that already has a tag, a published release or a draft.
 - Attach binds to the draft's `tag_name` and `target_commitish` instead of a tag ref. It refuses any existing tag ref, two releases for the tag and a replaced asset, and it reads the draft again right before the first upload.

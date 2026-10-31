@@ -20,12 +20,16 @@ REVOKE_LABEL = "gate:revoke"
 GATE_LABELS = (APPROVE_LABEL, REVOKE_LABEL)
 ACTIONS = ("opened", "reopened", "synchronize", "ready_for_review", "converted_to_draft", "labeled")
 RETRY_DELAYS = (1, 2)
+# A status write is the gate's only way to stop or publish a head, so it gets a longer budget than the other calls.
+STATUS_RETRY_DELAYS = (1, 2, 4, 8)
 MAX_RESPONSE_BYTES = 8_000_000
 FULL_SHA = re.compile(r"[0-9a-f]{40}")
 NETWORK_ERRORS = (OSError, http.client.HTTPException)
 # Failures a command reports as one clean line: bad input, an unexpected payload shape, or an API or network error.
 HANDLED = (ValueError, KeyError, TypeError, *NETWORK_ERRORS)
 STALE_HEAD = "The PR head changed, or the PR is closed, a draft, or no longer targets main; a newer event handles it"
+SUPERSEDED = "A newer run already decided this head; nothing to do"
+REVOKE_PENDING = "gate:revoke is on this PR; remove it to admit again"
 
 
 def human(user: dict[str, Any], permission: str) -> bool:
@@ -54,8 +58,9 @@ class GitHub:
     def run_url(self) -> str:
         return f"https://github.com/{self.repo}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
 
-    def request(self, path: str, method: str = "GET", data: dict[str, Any] | None = None, *, retry: bool | None = None) -> dict[str, Any]:
-        """Call the API once, or up to three times on 429, 5xx and network errors when the call is safe to repeat.
+    def request(self, path: str, method: str = "GET", data: dict[str, Any] | None = None, *, retry: bool | None = None,
+                delays: tuple[int, ...] = RETRY_DELAYS) -> dict[str, Any]:
+        """Call the API once, or again after each delay on 429, 5xx and network errors when the call is safe to repeat.
 
         GET, PUT and DELETE repeat by default. A POST repeats only when the caller says it is idempotent (statuses, cancel),
         so a review is never posted twice.
@@ -66,7 +71,7 @@ class GitHub:
             "Authorization": "Bearer " + self.token, "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json",
         })
-        last = len(RETRY_DELAYS) if (method != "POST" if retry is None else retry) else 0
+        last = len(delays) if (method != "POST" if retry is None else retry) else 0
         attempt = 0
         while True:
             try:
@@ -82,7 +87,7 @@ class GitHub:
                 if len(raw) > MAX_RESPONSE_BYTES:
                     raise ValueError("GitHub response exceeds the size limit")
                 return cast("dict[str, Any]", json.loads(raw or b"null"))
-            self.sleep(RETRY_DELAYS[attempt])
+            self.sleep(delays[attempt])
             attempt += 1
 
     def pages(self, path: str, limit: int = 10) -> list[dict[str, Any]]:
@@ -120,7 +125,7 @@ class GitHub:
         # The target URL names the run that wrote the status; ownership checks compare it with the current run.
         self.request(f"/statuses/{sha}", "POST", {
             "context": context, "state": state, "description": description[:140], "target_url": self.run_url,
-        }, retry=True)
+        }, retry=True, delays=STATUS_RETRY_DELAYS)
 
 
 def outputs(**items: str | int) -> None:
@@ -202,19 +207,30 @@ def fail_checks(api: GitHub, sha: str, reason: str) -> None:
 def stop(api: GitHub, number: int, sha: str, reason: str) -> None:
     """Authoritative stop: fail the checks, cancel runs, dismiss approvals, then fail the checks again as the last write.
 
-    The last write goes out even when a step above fails, so a finish job that wrote success while this ran cannot win.
+    Approvals are dismissed even when cancelling fails, and the last write goes out even when a step above fails, so a
+    finish job that wrote success while this ran cannot win.
     """
     fail_checks(api, sha, reason)
     try:
-        cancel_runs(api, sha)
-        dismiss_bot_approvals(api, number, sha, reason)
+        try:
+            cancel_runs(api, sha)
+        finally:
+            dismiss_bot_approvals(api, number, sha, reason)
     finally:
         fail_checks(api, sha, reason)
 
 
+# Every status the gate writes comes from a workflow token, which GitHub records as this account.
+GATE_WRITER = "github-actions[bot]"
+
+
 def check_history(api: GitHub, sha: str) -> list[dict[str, Any]]:
-    """The required checks' statuses on a head, newest first, as GitHub lists them."""
-    return [status for status in api.pages(f"/commits/{sha}/statuses") if status.get("context") in REQUIRED_CONTEXTS]
+    """The gate's own required-check statuses on a head, newest first, as GitHub lists them.
+
+    A status another account or app created for the same context never counts for ownership, stops or ordering.
+    """
+    return [status for status in api.pages(f"/commits/{sha}/statuses")
+            if status.get("context") in REQUIRED_CONTEXTS and (status.get("creator") or {}).get("login") == GATE_WRITER]
 
 
 def stopped(history: list[dict[str, Any]], run_url: str) -> bool:
@@ -239,6 +255,40 @@ def owns_checks(api: GitHub, sha: str) -> bool:
     return owns(check_history(api, sha), api.run_url)
 
 
+def run_id(api: GitHub, url: object) -> int | None:
+    """The id of the run of this repository that a status URL names, or None for any other URL."""
+    match = re.fullmatch(re.escape(f"https://github.com/{api.repo}/actions/runs/") + "([0-9]{1,20})", url if isinstance(url, str) else "")
+    return None if match is None else int(match[1])
+
+
+def superseded(api: GitHub, sha: str) -> bool:
+    """True when a run newer than this one has written a required status for the head, so this event is an older decision.
+
+    Run ids grow with the order events were created, so a higher id is a later decision. That is an assumption: queueing and
+    delivery are not strictly ordered, and a rerun keeps its old id. A skipped decision is safe, because a newer run writing
+    a status already ends the claim of every older run, and a maintainer can act again.
+    """
+    current = int(os.environ["GITHUB_RUN_ID"])
+    newer = {owner for status in check_history(api, sha) if (owner := run_id(api, status.get("target_url"))) is not None and owner > current}
+    if not newer:
+        return False
+    # Only a real run of this same workflow counts, so a status naming a made-up or unrelated run cannot skip a stop.
+    workflow = api.request(f"/actions/runs/{current}")["workflow_id"]
+    for owner in sorted(newer):
+        try:
+            if api.request(f"/actions/runs/{owner}").get("workflow_id") == workflow:
+                return True
+        except urllib.error.HTTPError as error:
+            if error.code != 404:
+                raise
+    return False
+
+
+def revoked(pr: dict[str, Any]) -> bool:
+    """True when the live PR carries gate:revoke, which stays until a stop has completed."""
+    return any((label or {}).get("name") == REVOKE_LABEL for label in pr.get("labels") or [])
+
+
 def other_run_is_live(api: GitHub, found: dict[str, dict[str, Any]]) -> bool:
     """True when another run that has not completed wrote the newest status of any required context, in any state.
 
@@ -246,12 +296,7 @@ def other_run_is_live(api: GitHub, found: dict[str, dict[str, Any]]) -> bool:
     the other, so a second admission cannot start beside it. Statuses of a completed or missing run, or with no run
     URL for this repository, are stale, as are this run's own (a rerun of the admission job).
     """
-    prefix = re.escape(f"https://github.com/{api.repo}/actions/runs/")
-    owners = set()
-    for context in REQUIRED_CONTEXTS:
-        match = re.fullmatch(prefix + "([0-9]{1,20})", found.get(context, {}).get("target_url") or "")
-        if match is not None:
-            owners.add(int(match[1]))
+    owners = {owner for context in REQUIRED_CONTEXTS if (owner := run_id(api, found.get(context, {}).get("target_url"))) is not None}
     owners.discard(int(os.environ["GITHUB_RUN_ID"]))
     for owner in owners:
         try:
@@ -263,9 +308,12 @@ def other_run_is_live(api: GitHub, found: dict[str, dict[str, Any]]) -> bool:
     return False
 
 
-def admit_head(api: GitHub, number: int, sha: str, base: str) -> None:
+def admit_head(api: GitHub, number: int, sha: str, live: dict[str, Any]) -> None:
     if stopped(check_history(api, sha), api.run_url):
         notice("A maintainer stopped this run for this head; mark the PR Ready or add gate:approve to admit it again")
+        return
+    if revoked(live):
+        notice(REVOKE_PENDING)
         return
     found = api.statuses(sha)
     if all(found.get(context, {}).get("state") == "success" for context in REQUIRED_CONTEXTS):
@@ -276,13 +324,15 @@ def admit_head(api: GitHub, number: int, sha: str, base: str) -> None:
         return
     for context in REQUIRED_CONTEXTS:
         api.status(sha, context, "pending", "Admitted checks queued")
-    outputs(run="true", pr=number, head=sha, base=checked_sha(base), profile=api.repo.split("/")[1])
+    outputs(run="true", pr=number, head=sha, base=checked_sha(live["base"]["sha"]), profile=api.repo.split("/")[1])
 
 
 def require_live_head(api: GitHub, number: int, sha: str) -> dict[str, Any]:
     pr = api.request(f"/pulls/{number}")
     if not current_head(pr, sha):
         raise ValueError("PR head changed, PR is a draft or closed, or PR no longer targets main")
+    if revoked(pr):
+        raise ValueError("gate:revoke is on this PR")
     return pr
 
 
@@ -294,28 +344,44 @@ def rerun_allowed(api: GitHub) -> bool:
     return bool(actor) and is_maintainer(api, api.request("https://api.github.com/users/" + actor))
 
 
+def approve_head(api: GitHub, number: int, sha: str, live: dict[str, Any], sender: dict[str, Any]) -> None:
+    if revoked(live):
+        notice(REVOKE_PENDING)
+        return
+    # The approval is bound to the event head, which the live check in the caller just matched.
+    api.request(f"/pulls/{number}/reviews", "POST", {
+        "commit_id": sha, "event": "APPROVE",
+        "body": f"Maintainer self-approve by @{sender['login']} via label `{APPROVE_LABEL}` for `{sha}`. Required checks still apply.",
+    })
+    admit_head(api, number, sha, live)
+
+
 def handle_label(api: GitHub, event: dict[str, Any], number: int, sha: str) -> None:
     label = (event.get("label") or {}).get("name")
     if label not in GATE_LABELS:
         notice("Not a gate label; nothing to do")
         return
     sender = event.get("sender") or {}
-    remove_label(api, number, label)
+    approve = label == APPROVE_LABEL
+    if approve:
+        remove_label(api, number, label)
     if not is_maintainer(api, sender):
+        if not approve:
+            remove_label(api, number, label)
         raise ValueError("Only a current human maintainer may apply gate labels")
     live = api.request(f"/pulls/{number}")
     if not current_head(live, sha):
         notice(STALE_HEAD)
-        return
-    if label == REVOKE_LABEL:
+    elif superseded(api, sha):
+        notice(SUPERSEDED)
+    elif approve:
+        approve_head(api, number, sha, live, sender)
+    else:
         stop(api, number, sha, "Revoked by a current human maintainer")
-        return
-    # The approval is bound to the event head, which the live check above just matched.
-    api.request(f"/pulls/{number}/reviews", "POST", {
-        "commit_id": sha, "event": "APPROVE",
-        "body": f"Maintainer self-approve by @{sender['login']} via label `{APPROVE_LABEL}` for `{sha}`. Required checks still apply.",
-    })
-    admit_head(api, number, sha, live["base"]["sha"])
+    if not approve:
+        # gate:revoke stays on the PR until its stop has completed, so a stop that fails, or whose job never runs,
+        # still blocks admission and finish. Every path that settles it, including a stale or superseded one, ends here.
+        remove_label(api, number, label)
 
 
 def handle_admission(api: GitHub, event: dict[str, Any], number: int, sha: str) -> None:
@@ -326,11 +392,14 @@ def handle_admission(api: GitHub, event: dict[str, Any], number: int, sha: str) 
     if not current_head(live, sha):
         notice(STALE_HEAD)
         return
-    # A maintainer's own PR admits itself. Any other PR waits for a maintainer to mark it Ready or add gate:approve.
-    if is_maintainer(api, live.get("user") or {}) or (action == "ready_for_review" and is_maintainer(api, event.get("sender") or {})):
-        admit_head(api, number, sha, live["base"]["sha"])
-    else:
+    # A maintainer's own PR admits itself on an event by a maintainer. Any other PR waits for a maintainer to mark it
+    # Ready or add gate:approve. Nobody else's reopen, push or Ready admits a head.
+    if not ((action == "ready_for_review" or is_maintainer(api, live.get("user") or {})) and is_maintainer(api, event.get("sender") or {})):
         notice("This PR is not admitted yet; a maintainer marks it Ready or adds gate:approve")
+    elif superseded(api, sha):
+        notice(SUPERSEDED)
+    else:
+        admit_head(api, number, sha, live)
 
 
 def admit(api: GitHub, event: dict[str, Any]) -> None:
@@ -351,10 +420,9 @@ def admit(api: GitHub, event: dict[str, Any]) -> None:
         notice("Only a current human maintainer can rerun an admission")
         return
     if action == "converted_to_draft":
-        live = api.request(f"/pulls/{number}")
-        if live["state"] == "open" and not live.get("draft") and live["head"]["sha"] == sha:
+        if superseded(api, sha):
             # A delayed draft event must not stop a head that a later Ready admitted again.
-            notice("The PR is Ready again at this head, so this draft event is out of date; nothing to stop")
+            notice(SUPERSEDED)
             return
         stop(api, number, sha, "PR converted to draft; mark Ready to admit again")
     elif action == "labeled":
