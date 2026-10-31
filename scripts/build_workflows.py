@@ -98,6 +98,7 @@ fi
 # The shared agent skills and house rules a repository must hold are the templates at the commit of this workflow,
 # the caller's pin, so they move only when the pin does. The repository is public: plain git, no token, no credential
 # helper. This repository checks its own copies against its own templates, which the same PR may change.
+# GitHub reads the job context in step env, never in a job's own env, so each step sets WORKFLOW_SHA itself.
 SHARED_TEMPLATES = run("Fetch the shared agent templates at this workflow's commit", """if [[ "$WORKFLOW_REPOSITORY" != ejmlabs/.github || ! "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]; then
   echo "::error::The shared gate must run from ejmlabs/.github at a full commit SHA"
   exit 1
@@ -105,14 +106,14 @@ fi
 git init -q shared
 git -C shared -c credential.helper= fetch -q --depth 1 --no-tags https://github.com/ejmlabs/.github.git "$WORKFLOW_SHA"
 git -C shared -c advice.detachedHead=false checkout -q --detach FETCH_HEAD
-""", env={"WORKFLOW_REPOSITORY": "${{ job.workflow_repository }}", "GIT_TERMINAL_PROMPT": "0"})
+""", env={"WORKFLOW_REPOSITORY": "${{ job.workflow_repository }}", "WORKFLOW_SHA": "${{ job.workflow_sha }}", "GIT_TERMINAL_PROMPT": "0"})
 SHARED_TEMPLATES["if"] = "${{ needs.admission.outputs.profile != '.github' }}"
 AGENT_SYNC = run("Check the shared agent skills and house rules", """templates=shared/templates/agents
 if [[ "$PROFILE" == .github ]]; then
   templates=product/templates/agents
 fi
 trap 'echo "::error::Shared agent files differ from ejmlabs/.github at $WORKFLOW_SHA. From a checkout of that commit, run: python3 scripts/sync_agents.py PATH_TO_THIS_REPOSITORY"' ERR
-""" + python(source("sync_agents.py"), '--check --templates "$templates" product'))
+""" + python(source("sync_agents.py"), '--check --templates "$templates" product'), env={"WORKFLOW_SHA": "${{ job.workflow_sha }}"})
 
 
 def owned(command: str) -> str:
@@ -256,7 +257,7 @@ def governance() -> dict[str, Any]:
     }
     standards = {
         "needs": ["admission", "prepare"], "runs-on": "ubuntu-24.04", "timeout-minutes": 3, "permissions": {},
-        "env": {"PROFILE": "${{ needs.admission.outputs.profile }}", "WORKFLOW_SHA": "${{ job.workflow_sha }}"},
+        "env": {"PROFILE": "${{ needs.admission.outputs.profile }}"},
         "steps": [ARTIFACT, EXTRACT, run("Validate shared public standards and version metadata", python(standards_check, 'product "$PROFILE"')),
                   SHARED_TEMPLATES, AGENT_SYNC],
     }

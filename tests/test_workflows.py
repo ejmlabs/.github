@@ -702,15 +702,33 @@ class WorkflowSecurityTests(unittest.TestCase):
             self.assertIn("rustup default " + workflows.RUST_VERSION + "\n", script)
         self.assertIn("-rust" + workflows.RUST_VERSION + "-", workflows.cache_prefix("quality"))
 
+    def test_job_level_keys_use_only_the_contexts_github_allows_there(self) -> None:
+        # GitHub refuses to start a workflow whose job-level key reads a context it does not offer there, for
+        # example the job context in a job's env, and every caller of that revision then fails at startup.
+        default = {"github", "needs", "strategy", "matrix", "vars", "inputs"}
+        allowed = {"env": default | {"secrets"}, "if": {"github", "needs", "vars", "inputs"}, "strategy": {"github", "needs", "vars", "inputs"},
+                   "secrets": default | {"secrets"}}
+        for name in SHARED_WORKFLOWS:
+            document = generated_yaml((workflows.ROOT / ".github/workflows" / name).read_text())
+            for job_name, job in document["jobs"].items():
+                for key, value in job.items():
+                    if key in ("steps", "outputs"):
+                        continue
+                    with self.subTest(workflow=name, job=job_name, key=key):
+                        used = {match for expression in re.findall(r"\$\{\{(.*?)\}\}", json.dumps(value))
+                                for match in re.findall(r"(?<![\w.])([a-z_]+)\.", re.sub(r"'[^']*'", "", expression))}
+                        self.assertLessEqual(used, allowed.get(key, default))
+
     def test_standards_check_the_agent_files_against_the_templates_at_the_pin(self) -> None:
         job = self.governance["jobs"]["standards"]
         fetch, check = job["steps"][-2:]
         self.assertEqual((fetch, check), (workflows.SHARED_TEMPLATES, workflows.AGENT_SYNC))
-        self.assertEqual(job["env"]["WORKFLOW_SHA"], "${{ job.workflow_sha }}")
+        self.assertEqual(job["env"], {"PROFILE": "${{ needs.admission.outputs.profile }}"})
         # Plain git on the public repository: no checkout action, no token and no credential helper.
         self.assertNotIn("uses", fetch)
         self.assertEqual(fetch["if"], "${{ needs.admission.outputs.profile != '.github' }}")
-        self.assertEqual(fetch["env"], {"WORKFLOW_REPOSITORY": "${{ job.workflow_repository }}", "GIT_TERMINAL_PROMPT": "0"})
+        self.assertEqual(fetch["env"], {"WORKFLOW_REPOSITORY": "${{ job.workflow_repository }}", "WORKFLOW_SHA": "${{ job.workflow_sha }}", "GIT_TERMINAL_PROMPT": "0"})
+        self.assertEqual(check["env"], {"WORKFLOW_SHA": "${{ job.workflow_sha }}"})
         self.assertIn('-c credential.helper= fetch -q --depth 1 --no-tags https://github.com/ejmlabs/.github.git "$WORKFLOW_SHA"', fetch["run"])
         self.assertNotIn("${{", fetch["run"] + check["run"].split("<<")[0])
         self.assertEqual(embedded_source(check["run"]), workflows.source("sync_agents.py"))
