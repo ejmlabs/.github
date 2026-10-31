@@ -23,6 +23,7 @@ def digest(data: bytes) -> str:
 
 class API:
     repo = "ejmlabs/ejm-cli"
+    releases: list[dict[str, Any]] | None = None
 
     def __init__(self, **changes: Any) -> None:
         self.run = {"path": ".github/workflows/build.yml@refs/heads/main", "event": "push", "head_branch": "main", "head_sha": SHA,
@@ -49,7 +50,7 @@ class API:
 
     def pages(self, path: str) -> list[dict[str, Any]]:
         assert path == "/releases"
-        return [self.release]
+        return self.releases if self.releases is not None else [self.release]
 
 
 class RunTests(unittest.TestCase):
@@ -97,6 +98,20 @@ class RunTests(unittest.TestCase):
         for name, change in cases.items():
             with self.subTest(name), self.assertRaises(ValueError):
                 verify(API(**change), "v0.1.0", SHA)
+
+    def test_two_releases_for_one_tag_are_refused_even_when_both_are_drafts(self) -> None:
+        verify = namespace["verify_draft"]
+        draft = {"tag_name": "v0.1.0", "draft": True, "assets": []}
+        other = {"tag_name": "v0.2.0", "draft": True, "assets": []}
+        for name, releases in {
+            "two drafts": [draft, {**draft, "assets": [{"name": "source.zip"}]}],
+            "a draft and a published release": [draft, {**draft, "draft": False}],
+            "a published release first": [{**draft, "draft": False}, draft],
+        }.items():
+            with self.subTest(name), self.assertRaisesRegex(ValueError, "exactly one draft"):
+                verify(API(releases=releases), "v0.1.0", SHA)
+        # Drafts for other tags do not matter.
+        self.assertEqual(verify(API(releases=[other, draft]), "v0.1.0", SHA), draft)
 
 
 class DigestTests(unittest.TestCase):
@@ -240,6 +255,18 @@ class DispatchTests(unittest.TestCase):
         self.api.run["head_sha"], self.api.tag = SHA, {"object": {"type": "commit", "sha": OTHER}}
         with self.assertRaisesRegex(ValueError, "Tag"):
             self.run_main("attach")
+        self.assertEqual(self.calls, [])
+
+    def test_two_drafts_for_the_tag_stop_check_and_attach_before_any_upload(self) -> None:
+        built = Path("built")
+        built.mkdir()
+        (built / "tool.tar.gz").write_bytes(b"x")
+        (built / "build-sha256.txt").write_text(f"{digest(b'x')}  tool.tar.gz\n")
+        draft = {"tag_name": "v0.1.0", "draft": True, "assets": []}
+        self.api.releases = [draft, dict(draft)]
+        for mode in ("check", "attach"):
+            with self.subTest(mode=mode), self.assertRaisesRegex(ValueError, "exactly one draft"):
+                self.run_main(mode)
         self.assertEqual(self.calls, [])
 
     def test_attach_uploads_verified_files_and_bad_modes_or_versions_are_refused(self) -> None:

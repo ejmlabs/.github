@@ -1,13 +1,19 @@
 version: 2
 updates:
+  # action.yml holds the action pins that scripts/build_workflows.py embeds. Dependabot scans it with the
+  # generated workflows, so one pull request bumps both and needs no regeneration.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: weekly
       day: monday
     open-pull-requests-limit: 3
+    # Matches the two-week dependency age rule. Security updates ignore the cooldown.
     cooldown:
-      default-days: 7
+      default-days: 14
     groups:
       compatible-updates:
         update-types: [minor, patch]
+    ignore:
+      # This repository's own caller pins move only by hand, with the release.yml pin and the community files in one pull request.
+      - dependency-name: "ejmlabs/.github"
