@@ -29,7 +29,7 @@ WORKFLOW = 7
 USER: dict[str, Any] = {"id": 1, "login": "maintainer", "type": "User"}
 OUTSIDER: dict[str, Any] = {"id": 2, "login": "contributor", "type": "User"}
 BOT: dict[str, Any] = {"id": 3, "login": "dependabot[bot]", "type": "Bot"}
-TOKEN = "test-token-not-used"
+FAKE_AUTH = "placeholder-not-a-credential"
 
 
 def run_url(run: int) -> str:
@@ -88,7 +88,7 @@ class Server:
 
     def urlopen(self, req: urllib.request.Request, timeout: float | None = None) -> Response:
         assert timeout == 30
-        assert req.get_header("Authorization") == "Bearer " + TOKEN
+        assert req.get_header("Authorization") == "Bearer " + FAKE_AUTH
         url, method = req.full_url, req.get_method()
         path = url.removeprefix(ROOT) if url.startswith(ROOT) else url.removeprefix("https://api.github.com")
         assert path != url
@@ -170,7 +170,7 @@ class GateCase(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         self.directory = Path(directory.name)
         environment = mock.patch.dict(os.environ, {
-            "GITHUB_REPOSITORY": REPO, "GH_TOKEN": TOKEN, "GITHUB_RUN_ID": str(RUN), "GITHUB_RUN_ATTEMPT": "1",
+            "GITHUB_REPOSITORY": REPO, "GH_TOKEN": FAKE_AUTH, "GITHUB_RUN_ID": str(RUN), "GITHUB_RUN_ATTEMPT": "1",
             "GITHUB_OUTPUT": str(self.directory / "output"), "GITHUB_EVENT_PATH": str(self.directory / "event.json"),
         })
         environment.start()
