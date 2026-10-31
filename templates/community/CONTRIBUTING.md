@@ -1,6 +1,6 @@
 # Contributing
 
-Start with the [README](README.md) and [development guide]({{development_guide}}). Use small PRs, clear titles, and tests for changed behavior. Follow the existing formatting, architecture, and accessibility rules. If `openspec/` exists, plan and apply feature or bug fixes through OpenSpec, then sync and archive completed changes.
+Start with the [README](README.md) and [development guide]({{development_guide}}). Use small PRs, clear titles, and tests for changed behavior. Follow the existing formatting, architecture, and accessibility rules. If `openspec/` exists, use OpenSpec for a change to a contract other repositories or users rely on, or one that spans several PRs, and archive it in the PR that finishes it. Bug fixes with a regression test, dependency bumps, docs and refactors go straight to a PR.
 
 ## Human admission and review
 
