@@ -107,6 +107,16 @@ The net change since 0.1.0:
 
 - The unused `XAI_API_KEY` declaration from `governance.yml`. The standards accept only the scaffold without it.
 
+### The systemic ejm-ui kit
+
+#### Changed
+
+- The `ejmlabs-typescript` and `ejmlabs-design` skills describe ejm-ui at PR #59: one stylesheet, `@import "@ejm/ui/styles.css";`, with no `source(none)` or `@source`; the `ejmlabs({ project })` preset from `@ejm/site/vite` for a site and `ejmUi()` from `@ejm/ui/vite` for an app; a tsconfig that extends `@ejm/ui/tsconfig.json` after strictest, with no React `paths` or `resolve.dedupe`; `vite` as a consumer dependency and no Tailwind or Vite React plugin; and a type scale of six sizes without `text-display-lg` or `text-stat`.
+
+#### Removed
+
+- `public/static.css` from the reviewed packing set of `@ejm/ui`, which no longer packs it.
+
 ## [0.1.0] - 2026-10-18
 
 - Initial development baseline. This entry documents source version metadata; it does not assert a published release or production readiness.
