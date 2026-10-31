@@ -15,7 +15,7 @@
 
 - [ ] 2.1 Hosted gate run after the pins move: a maintainer PR in each consumer is admitted and merges; a Dependabot PR is admitted by `gate:approve`; a fork PR prints the notice; `gate:revoke` and conversion to draft stop a head; a rerun of failed jobs keeps the admission
 - [ ] 2.2 A Dependabot actions PR passes `python3 scripts/build_workflows.py --check`
-- [ ] 2.3 First staging deploy and approved production deploy for each adopting site, with its environments configured
+- [ ] 2.3 First staging and production deploy for each adopting site, with its environments configured
 - [ ] 2.4 `python3 scripts/configure_repositories.py --check` passes for every repository
 - [ ] 2.5 Admitted gate timings on each consumer after its pin moves, cold and with a warm cache
 - [ ] 2.6 First native draft release with `attest`: the draft exists with no tag, `target_commitish` is the commit, `attach` and `attest` run with their own permissions, and publishing the draft creates the tag
@@ -32,6 +32,6 @@
 
 ## 4. Owner tasks
 
-- [ ] 4.1 Add a human required reviewer to the `production` environment of each site repository
+- [x] 4.1 No production reviewer is required: the merge is the human decision, and a reviewer is allowed
 - [ ] 4.2 Delete the `legacy-review` environment in each repository (from `remove-ai-review` 4.1)
 - [ ] 4.3 Delete the stored model key and close or empty the prepaid provider account, after every caller is on a pin without `XAI_API_KEY` (from `remove-ai-review` 4.2)

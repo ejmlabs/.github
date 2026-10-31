@@ -344,8 +344,9 @@ def deploy_workflow() -> dict[str, Any]:
         return {"needs": needs, "if": push, "runs-on": "ubuntu-24.04", "timeout-minutes": 10, "environment": environment,
                 # contents reads the reviewed config; actions reads the environment's rules. Both fit within the caller's grant.
                 "permissions": {"contents": "read", "actions": "read"},
-                # A newer main commit replaces a production deploy still waiting for approval; staging deploys run in order.
-                "concurrency": {"group": "deploy-" + environment + "-${{ github.repository }}", "cancel-in-progress": environment == "production"},
+                # A run that has started is never cancelled, so Wrangler is never stopped mid-deploy. A newer main commit waits behind it,
+                # and GitHub keeps only the newest waiting run, so an older commit that never started is replaced.
+                "concurrency": {"group": "deploy-" + environment + "-${{ github.repository }}", "cancel-in-progress": False},
                 "env": {"PROFILE": "${{ " + profile + " }}"},
                 "steps": [{"uses": DOWNLOAD, "with": {"name": "site", "path": "artifact"}},
                           # The Wrangler config and any Worker source come from this reviewed commit, as data. Nothing from it runs.
@@ -358,7 +359,9 @@ def deploy_workflow() -> dict[str, Any]:
                               env={"CLOUDFLARE_API_TOKEN": "${{ secrets.CLOUDFLARE_API_TOKEN }}"})]}
 
     jobs = {
+        # Builds queue in push order too, so a slow build of an older commit cannot reach staging and production after a newer one.
         "build": {"if": push, "runs-on": "ubuntu-24.04", "timeout-minutes": 20, "permissions": {"contents": "read"}, "env": {"PROFILE": "${{ " + profile + " }}"},
+                  "concurrency": {"group": "deploy-build-${{ github.repository }}", "cancel-in-progress": False},
                   "steps": [checkout("product", "${{ github.sha }}"),
                             run("Read main's reviewed dependency pins", python(source("prepare.py"), "warm-pins"), id="pins"),
                             {"uses": CHECKOUT, "if": "${{ steps.pins.outputs.ui != '' }}",
