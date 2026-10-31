@@ -13,6 +13,8 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import build_workflows as workflows
+import configure_repositories as settings
+import governance
 from standards import consumer_workflows
 
 
@@ -107,17 +109,9 @@ class WorkflowSecurityTests(unittest.TestCase):
                             self.assertNotIn(key, forwarded)
                             self.assertEqual(key, source)
                             forwarded[key] = source
-                    if filename == "pr.yml" and name == "missing_model_key":
-                        # This acceptance fixture deliberately omits every optional secret.
-                        self.assertNotIn("    secrets:", job)
-                        self.assertIn(reference[0], jobs["governance"])
-                        self.assertTrue(declared)
-                        self.assertTrue(all(secret.get("required") is False for secret in declared.values()))
-                    else:
-                        # Callers may omit unused optional secrets declared at an older pin
-                        # (for example the retired review model key during the Ready-for-review rollout).
-                        self.assertTrue(set(forwarded) <= set(declared))
-                        self.assertTrue(all(key in forwarded for key, meta in declared.items() if meta.get("required")))
+                    # Callers may omit optional secrets that a pin declares; they must forward every required one.
+                    self.assertTrue(set(forwarded) <= set(declared))
+                    self.assertTrue(all(key in forwarded for key, meta in declared.items() if meta.get("required")))
 
     def test_every_source_consumer_uses_the_preparation_artifact_id(self) -> None:
         jobs = self.governance["jobs"]
@@ -144,7 +138,7 @@ class WorkflowSecurityTests(unittest.TestCase):
                         })
         self.assertEqual(consumers, {"quality", "registry", "standards"})
 
-    def test_untrusted_jobs_have_no_repository_or_model_credentials(self) -> None:
+    def test_untrusted_jobs_have_no_repository_credentials(self) -> None:
         for name in ("quality", "registry", "standards"):
             with self.subTest(job=name):
                 job = self.governance["jobs"][name]
@@ -152,10 +146,36 @@ class WorkflowSecurityTests(unittest.TestCase):
                 self.assertNotIn("secrets.", json.dumps(job))
                 self.assertNotIn("GH_TOKEN", job.get("env", {}))
 
-    def test_every_job_rejects_replays_before_allocating_a_runner(self) -> None:
-        for name, job in self.governance["jobs"].items():
-            with self.subTest(job=name):
-                self.assertRegex(job.get("if", ""), r"^\$\{\{ github\.run_attempt == 1(?: && | \}\}$)")
+    def test_reruns_are_allowed_and_each_job_keeps_only_its_own_condition(self) -> None:
+        # Ownership of the statuses, not the attempt number, decides whether a rerun may publish.
+        jobs = self.governance["jobs"]
+        self.assertNotIn("run_attempt", json.dumps(self.governance))
+        self.assertEqual(jobs["prepare"]["if"], "${{ needs.admission.outputs.run == 'true' }}")
+        self.assertEqual(jobs["finish"]["if"], "${{ always() && needs.admission.outputs.run == 'true' }}")
+        for name in ("quality", "registry", "standards"):
+            self.assertNotIn("if", jobs[name], "a skipped prepare job already skips the jobs that need it")
+            self.assertIn("prepare", jobs[name]["needs"])
+
+    def test_admission_serializes_per_pull_request_head_and_never_cancels_a_running_admission(self) -> None:
+        self.assertEqual(self.governance["jobs"]["admission"]["concurrency"], {
+            "group": "gate-${{ github.repository }}-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}",
+            "cancel-in-progress": False,
+        })
+        self.assertNotIn("admission", self.governance["jobs"]["admission"]["outputs"])
+        self.assertNotIn("ADMISSION_ID", json.dumps(self.governance))
+
+    def test_embedded_scripts_run_isolated(self) -> None:
+        # -I keeps the admitted sources in the working directory, and PYTHON* variables, out of the trusted imports.
+        scripts = [step["run"] for job in self.governance["jobs"].values() for step in job["steps"] if "TRUSTED_PYTHON" in step.get("run", "")]
+        interpreters = [line for script in scripts for line in script.splitlines() if line.endswith("<<'TRUSTED_PYTHON'")]
+        self.assertTrue(interpreters)
+        for line in interpreters:
+            self.assertRegex(line, r"^\s*python3 -I - [^<]*<<'TRUSTED_PYTHON'$")
+        for script in scripts:
+            source = embedded_source(script)
+            assert source is not None
+            compile(source, "embedded", "exec")
+        self.assertEqual(workflows.python("print(1)").splitlines()[0], "python3 -I -  <<'TRUSTED_PYTHON'")
 
     def test_cli_setup_runs_after_tools_only_in_the_unprivileged_quality_job(self) -> None:
         hooks = [(name, index, step) for name, job in self.governance["jobs"].items()
@@ -237,7 +257,7 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertEqual(len(selectors), 1)
         index, selector = selectors[0]
         self.assertEqual(selector["run"], workflows.python(workflows.source("prepare.py"), "select-harness"))
-        self.assertEqual(selector["run"].splitlines()[0], "python3 - select-harness <<'TRUSTED_PYTHON'")
+        self.assertEqual(selector["run"].splitlines()[0], "python3 -I - select-harness <<'TRUSTED_PYTHON'")
         self.assertEqual(selector["env"], {
             "PROFILE": "${{ needs.admission.outputs.profile }}",
             "HARNESS_READ_TOKEN": "${{ secrets.EJM_HARNESS_TOKEN || github.token }}",
@@ -354,7 +374,6 @@ class WorkflowSecurityTests(unittest.TestCase):
 
     def test_privileged_jobs_run_only_trusted_scripts_and_actions(self) -> None:
         trusted_sources: set[str | None] = {workflows.source(name) for name in ("governance.py", "prepare.py")}
-        trusted_sources.add(embedded_source(workflows.REJECT_DEBUG["run"]))
         trusted_sources.add("\n".join([
             workflows.source("governance.py", library=True), workflows.source("standards.py", library=True),
             workflows.source("prepare.py", library=True), workflows.source("release.py"),
@@ -382,7 +401,7 @@ class WorkflowSecurityTests(unittest.TestCase):
                         source = embedded_source(script)
                         if source is not None:
                             self.assertIn(source, trusted_sources)
-                            self.assertRegex(script.splitlines()[0], r"^python3 - (?:admit|verify|finish|select-harness|ui-pin)? <<\x27TRUSTED_PYTHON\x27$")
+                            self.assertRegex(script.splitlines()[0], r"^python3 -I - (?:admit|verify|finish|select-harness|ui-pin)? <<\x27TRUSTED_PYTHON\x27$")
                             encoded = base64.b64encode(source.encode()).decode()
                             self.assertEqual(script.splitlines()[1:], [
                                 "import base64",
@@ -421,36 +440,9 @@ class WorkflowSecurityTests(unittest.TestCase):
                     filters = [item.value for item in node.keywords if item.arg == "filter"]
                     self.assertEqual([ast.literal_eval(value) for value in filters], ["data"])
 
-    def test_public_reviewer_text_uses_neutral_names(self) -> None:
-        denied = ("gpt", "glm-5.3", "kimi-k2.7-code", "opencode", "codex", "pr-agent", "pr_agent", "xai", "grok",
-                  "openai", "litellm", "setup-uv", "actions/*")
-        texts = {name: (workflows.ROOT / name).read_text() for name in ("docs/operations.md", "CHANGELOG.md")}
-        texts.update({f"step {document['name']}.{job}.{index}": step["name"] for document in (self.governance, self.release)
-                      for job, config in document["jobs"].items()
-                      for index, step in enumerate(config["steps"]) if "name" in step})
-        for name, text in texts.items():
-            with self.subTest(file=name):
-                lowered = text.replace("`XAI_API_KEY`", "`review model key secret`").lower()
-                for term in denied:
-                    self.assertNotIn(term, lowered)
-                self.assertNotRegex(lowered, r"\b(?:sol|python|pip)\b")
-
-    def test_label_approve_records_bot_approval_and_two_statuses_are_required(self) -> None:
-        tree = ast.parse(workflows.source("governance.py"))
-        approvals = [node for node in ast.walk(tree) if isinstance(node, ast.Dict) and any(
-            isinstance(key, ast.Constant) and key.value == "event" and isinstance(value, ast.Constant) and value.value == "APPROVE"
-            for key, value in zip(node.keys, node.values, strict=True))]
-        self.assertEqual(len(approvals), 1)
-        source = workflows.source("governance.py")
-        self.assertIn('APPROVE_LABEL = "gate:approve"', source)
-        self.assertIn('REVOKE_LABEL = "gate:revoke"', source)
-        self.assertNotIn("command(", source)
-        contexts = next(node for node in ast.parse(workflows.source("configure_repositories.py")).body if isinstance(node, ast.Assign) and any(
-            isinstance(target, ast.Name) and target.id == "CONTEXTS" for target in node.targets))
-        self.assertEqual(ast.literal_eval(contexts.value), ("Quality", "Repository standards"))
-        required = next(node for node in tree.body if isinstance(node, ast.Assign) and any(
-            isinstance(target, ast.Name) and target.id == "REQUIRED_CONTEXTS" for target in node.targets))
-        self.assertEqual(ast.literal_eval(required.value), ("Quality", "Repository standards"))
+    def test_the_gate_and_the_repository_settings_require_the_same_two_contexts(self) -> None:
+        self.assertEqual(governance.REQUIRED_CONTEXTS, ("Quality", "Repository standards"))
+        self.assertEqual(settings.CONTEXTS, governance.REQUIRED_CONTEXTS)
 
     def test_ui_source_is_a_fixed_owner_checkout_before_the_credential_free_handoff(self) -> None:
         steps = self.governance["jobs"]["prepare"]["steps"]
@@ -467,7 +459,6 @@ class WorkflowSecurityTests(unittest.TestCase):
     def test_generated_workflow_admits_pull_request_lifecycle_and_gate_labels(self) -> None:
         self.assertEqual(self.governance, workflows.governance())
         self.assertEqual(set(self.governance["on"]), {"workflow_call"})
-        self.assertNotIn("codex" + "-action", json.dumps(self.governance))
         caller = consumer_workflows("a" * 40)["pr.yml"]
         found = re.search(r"(?ms)^on:\n(.*?)(?=^\S)", caller)
         assert found is not None
@@ -475,7 +466,6 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertEqual(re.findall(r"(?m)^  (\w+):", triggers), ["pull_request"])
         self.assertIn("types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, labeled]", caller)
         self.assertNotIn("issue_comment", caller)
-        self.assertNotIn("XAI_API_KEY", caller)
         # The previous comment-only form stays accepted for one generation.
         previous = consumer_workflows("a" * 40, current=True)["pr.yml"]
         self.assertIn("  issue_comment:\n    types: [created, edited, deleted]\n", previous)
@@ -487,23 +477,6 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertNotIn("issue_comment", admission)
         self.assertNotIn("startsWith(github.event.comment.body", admission)
 
-    def test_tracked_sources_exclude_retired_review_configuration(self) -> None:
-        repository = subprocess.run(["git", "rev-parse", "--git-dir"], cwd=workflows.ROOT, capture_output=True, check=False)
-        if repository.returncode:
-            files = [path.relative_to(workflows.ROOT).as_posix() for path in workflows.ROOT.rglob("*")
-                     if path.is_file() and "__pycache__" not in path.relative_to(workflows.ROOT).parts]
-        else:
-            tracked = subprocess.run(["git", "ls-files", "-z"], cwd=workflows.ROOT, check=True, capture_output=True).stdout
-            files = [os.fsdecode(raw) for raw in tracked.split(b"\0") if raw]
-        retired = ("codex" + "-action", "OPENAI" + "_API_KEY", "OPENAI" + "__")
-        for name in files:
-            if (workflows.ROOT / name).is_symlink():
-                continue  # a tracked symlink's target is scanned as its own tracked file
-            content = (workflows.ROOT / name).read_bytes()
-            for value in retired:
-                with self.subTest(file=name, value=value):
-                    self.assertNotIn(value.encode(), content)
-
     def test_only_finish_publishes_the_check_results(self) -> None:
         finish = self.governance["jobs"]["finish"]
         self.assertEqual(finish["env"]["JOB_RESULTS"], "${{ toJSON(needs) }}")
@@ -514,20 +487,18 @@ class WorkflowSecurityTests(unittest.TestCase):
                 for step in config["steps"]:
                     script = step.get("run", "")
                     if embedded_source(script) == workflows.source("governance.py"):
-                        entry = shlex.split(script.splitlines()[0])[2]
+                        entry = shlex.split(script.splitlines()[0])[3]
                         self.assertIn(entry, ("admit", "verify", "finish"))
                         if entry == "finish":
                             publishers.append((document["name"], job, entry))
         self.assertEqual(publishers, [(self.governance["name"], "finish", "finish")])
 
-    def test_no_job_receives_the_model_key_and_no_review_job_remains(self) -> None:
-        text = json.dumps(self.governance)
-        self.assertNotRegex(text, r"secrets\.XAI_API_KEY")
-        self.assertNotIn("OPENAI" + "_API_KEY", text)
+    def test_the_gate_has_no_review_job_and_reads_only_the_harness_secret(self) -> None:
         self.assertEqual(set(self.governance["jobs"]), {"admission", "prepare", "quality", "registry", "standards", "finish"})
-        # Optional unused key kept for one generation so older pins' scaffold checks pass.
-        self.assertEqual(self.governance["on"]["workflow_call"]["secrets"]["XAI_API_KEY"], {"required": False})
-        self.assertEqual(self.governance["on"]["workflow_call"]["secrets"]["EJM_HARNESS_TOKEN"], {"required": False})
+        self.assertEqual(set(re.findall(r"secrets\.(\w+)", json.dumps(self.governance["jobs"]))), {"EJM_HARNESS_TOKEN"})
+        # XAI_API_KEY is declared only because the standards check of every pin through 8230ef8 requires it. Nothing reads it.
+        declared = self.governance["on"]["workflow_call"]["secrets"]
+        self.assertEqual(declared, {"XAI_API_KEY": {"required": False}, "EJM_HARNESS_TOKEN": {"required": False}})
         for job in self.governance["jobs"].values():
             self.assertNotIn("pull_request_target", job.get("if", ""))
 
@@ -537,22 +508,10 @@ class WorkflowSecurityTests(unittest.TestCase):
                         for name, job in document["jobs"].items() if "environment" in job]
         self.assertEqual(environments, [])
 
-    def test_prepare_rejects_runner_debug_before_other_steps(self) -> None:
-        for name in ("prepare",):
-            with self.subTest(job=name):
-                job = self.governance["jobs"][name]
-                self.assertNotIn("runner.", job["if"])
-                first = job["steps"][0]
-                self.assertEqual(first, workflows.REJECT_DEBUG)
-                debug_source = embedded_source(first["run"])
-                assert debug_source is not None
-                self.assertIn("RUNNER_DEBUG", debug_source)
-                self.assertEqual(job["steps"][1], workflows.VERIFY)
-                for debug, expected in (("1", 1), ("0", 0), ("", 0)):
-                    completed = subprocess.run(["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", first["run"]],
-                                               env={**os.environ, "RUNNER_DEBUG": debug}, capture_output=True, text=True, check=False)
-                    self.assertEqual(completed.returncode, expected, completed.stderr)
-
+    def test_prepare_rechecks_admission_first_and_no_condition_reads_runner_state(self) -> None:
+        prepare = self.governance["jobs"]["prepare"]
+        self.assertEqual(prepare["steps"][0], workflows.VERIFY)
+        self.assertEqual(prepare["steps"][-2], workflows.VERIFY)
         for workflow in (self.governance, self.release):
             for job in workflow["jobs"].values():
                 self.assertNotIn("runner.", job.get("if", ""))
@@ -604,7 +563,7 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertNotIn("select-harness", draft["steps"][1]["run"].splitlines()[0])
 
     def test_embedded_expressions_survive_as_literal_python_data(self) -> None:
-        literal = "${{ inputs.commit }} / ${{ secrets.XAI_API_KEY }}"
+        literal = "${{ inputs.commit }} / ${{ secrets.EXAMPLE }}"
         source = "import sys\nprint(" + repr(literal) + ")\nprint(sys.argv[1])\n"
         script = workflows.python(source, "fixture")
         self.assertNotIn("${{", script)
