@@ -295,8 +295,10 @@ Before a site moves to the new pin, create `staging` and `production` with
 `configure_repositories.py`, set `CLOUDFLARE_API_TOKEN` as an
 environment secret in both, and read the result back with `--check`. Change `deploy.yml` to the
 `secrets: inherit` form (the older form leaves the token empty) and give the Wrangler config
-`env.staging` with its own Worker name and routes, on fresh staging hostnames: a custom domain
-whose DNS record exists makes Wrangler prompt, and CI cannot answer. A deploy that has started is
+`env.staging` with its own Worker name and routes. Staging is `staging.<production host>`, for
+example `staging.ide.ejmlabs.com` (Cloudflare issues the custom domain's certificate, deeper
+subdomains included). Use a fresh hostname: a custom domain whose DNS record exists makes
+Wrangler prompt, and CI cannot answer. A deploy that has started is
 never cancelled, so Wrangler is never stopped midway. The build, staging and production jobs each
 queue per repository in push order, and a newer main commit replaces an older one that has not
 started. Roll back by redeploying an earlier Worker version in Cloudflare.
