@@ -23,8 +23,8 @@ CONTEXTS = ("Quality", "Repository standards")
 # GitHub Actions. Pinning the required checks to it keeps another app from publishing them.
 ACTIONS_APP_ID = 15368
 GATE_LABELS = (
-    {"name": "gate:approve", "color": "0E8A16", "description": "Maintainer self-approve for the current head"},
-    {"name": "gate:revoke", "color": "B60205", "description": "Cancel admission and dismiss bot approvals for the current head"},
+    {"name": "gate:approve", "color": "0E8A16", "description": "Maintainer approval that also admits the current head"},
+    {"name": "gate:revoke", "color": "B60205", "description": "Stop the current head: fail checks, cancel runs, dismiss bot approvals"},
 )
 ALLOWED_ACTIONS = {"github_owned_allowed": False, "verified_allowed": False,
                    "patterns_allowed": ["actions/*@*", "astral-sh/setup-uv@*", "ejmlabs/.github/*@*"]}

@@ -246,7 +246,7 @@ class ApplyTests(GhCase):
         settings.configure("ejm-cli", protect=False, hold=True)
         self.assertEqual(gh.written("POST", "/labels"), [])
         self.assertEqual(gh.written("PATCH", "/labels/gate%3Aapprove"), [{"new_name": "gate:approve", "color": "0E8A16",
-                                                                          "description": "Maintainer self-approve for the current head"}])
+                                                                          "description": "Maintainer approval that also admits the current head"}])
         self.assertEqual(len(gh.written("PATCH", "/labels/gate%3Arevoke")), 1)
 
     def test_a_label_lookup_error_is_not_read_as_a_missing_label(self) -> None:
