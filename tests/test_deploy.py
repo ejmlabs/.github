@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import deploy
 
 PRODUCTION: dict[str, Any] = {"name": "ejmlabs-cli", "routes": [{"pattern": "cli.ejmlabs.com", "custom_domain": True}], "assets": {"directory": "./dist"}}
-STAGING: dict[str, Any] = {"name": "ejmlabs-cli-staging", "routes": [{"pattern": "cli-staging.ejmlabs.com", "custom_domain": True}], "assets": {"directory": "./dist"}}
+STAGING: dict[str, Any] = {"name": "ejmlabs-cli-staging", "routes": [{"pattern": "staging.cli.ejmlabs.com", "custom_domain": True}], "assets": {"directory": "./dist"}}
 CONFIG = json.dumps({**PRODUCTION, "env": {"staging": STAGING}}, indent=2) + "\n"
 # The ejmlabs studio's site/wrangler.jsonc as committed in ejmlabs/ejmlabs at 0289c47: a third `preview` environment beside staging.
 STUDIO = """{
