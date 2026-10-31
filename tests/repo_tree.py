@@ -43,7 +43,7 @@ class RepoTree:
         for name, text in consumer_workflows(REVISION, native=native, cache=cache, deploy=deploy).items():
             self.write(".github/workflows/" + name, text)
         {"ejm-cli": self.build_cli, "ejm-harness": self.build_harness, "ejm-ide": self.build_ide, "ejmlabs": self.build_studio,
-         ".github": self.build_shared, "ejm-ui": self.build_ui}[profile]()
+         ".github": self.build_shared, "ejm-ui": self.build_ui, "ejm-calm": self.build_calm}[profile]()
 
     def write(self, path: str, text: str | bytes) -> Path:
         file = self.root / path
@@ -103,6 +103,10 @@ class RepoTree:
     def build_studio(self) -> None:
         self.write("site/package.json", json.dumps({"version": "0.1.0", "license": "SEE LICENSE IN ../LICENSE"}))
 
+    def build_calm(self) -> None:
+        self.write("package.json", json.dumps({"version": "0.1.0", "license": "MIT"}))
+        self.write("package-lock.json", json.dumps({"version": "0.1.0", "packages": {"": {"version": "0.1.0"}}}))
+
     def build_shared(self) -> None:
         """The shared standards repository has no manifest besides VERSION."""
 
@@ -154,5 +158,5 @@ class TreeCase(unittest.TestCase):
         return problems
 
 
-if set(PROFILES) != {".github", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui", "ejmlabs"}:
+if set(PROFILES) != {".github", "ejm-calm", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui", "ejmlabs"}:
     raise AssertionError("RepoTree must build every profile in the table")

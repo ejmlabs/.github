@@ -18,6 +18,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import build_workflows
 import governance
+import standards
 from governance import APPROVE_LABEL, REQUIRED_CONTEXTS, REVOKE_LABEL, GitHub, human
 
 SHA = "a" * 40
@@ -1386,6 +1387,9 @@ class TransportTests(GateCase):
     def test_only_adopted_repositories_use_the_client(self) -> None:
         with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "ejmlabs/other"}), self.assertRaises(ValueError):
             GitHub()
+
+    def test_every_profile_repository_is_adopted(self) -> None:
+        self.assertEqual(governance.REPOS, {"ejmlabs/" + name for name in standards.PROFILES})
 
 
 if __name__ == "__main__":
