@@ -13,7 +13,7 @@ runs:
     - if: ${{ false }}
       uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
     - if: ${{ false }}
-      uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+      uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
     - if: ${{ false }}
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
     - if: ${{ false }}
