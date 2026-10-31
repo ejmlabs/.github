@@ -6,7 +6,9 @@ import re
 import shlex
 import subprocess
 import sys
+import tarfile
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from typing import Any
@@ -61,6 +63,46 @@ def generated_yaml(text: str) -> Any:
     if end != len(lines):
         raise ValueError("Unexpected generated YAML")
     return parsed
+
+
+# Every command a gate script may run is a stub that only records itself, and a product's own gate is a script that does the same.
+RECORDER = """import json, os, sys
+sys.stdin.read()
+with open(os.environ['COMMAND_LOG'], 'a') as log:
+    log.write(json.dumps({'command': [os.path.basename(sys.argv[0]), *sys.argv[1:]], 'cwd': os.path.basename(os.getcwd()), 'ignore_scripts': os.environ.get('npm_config_ignore_scripts')}) + '\\n')
+sys.exit(19 if os.path.basename(sys.argv[0]) == os.environ.get('FAIL_AT') else 0)
+"""
+OWNED_GATE = """#!/bin/sh
+printf '{"command": ["%s"], "cwd": "%s", "ignore_scripts": "%s"}\\n' "$(basename "$0")" "$(basename "$PWD")" "$npm_config_ignore_scripts" >> "$COMMAND_LOG"
+[ "$FAIL_AT" = "$(basename "$0")" ] && exit 19
+exit 0
+"""
+
+
+def run_gate(script: str, profile: str, files: dict[str, str], fail_at: str = "") -> tuple[int, list[dict[str, Any]]]:
+    """Run a gate script in a fresh workspace. `files` maps a path to "file", "executable", "directory" or "-> target"."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        (root / "bin").mkdir()
+        (root / "product").mkdir()
+        for name in ("npm", "node", "rustup", "cargo", "python3"):
+            stub = root / "bin" / name
+            stub.write_text("#!" + sys.executable + "\n" + RECORDER)
+            stub.chmod(0o755)
+        for path, kind in files.items():
+            target = root / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if kind == "directory":
+                target.mkdir()
+            elif kind.startswith("-> "):
+                target.symlink_to(kind[3:])
+            else:
+                target.write_text(OWNED_GATE)
+                target.chmod(0o755 if kind == "executable" else 0o644)
+        log = root / "commands.jsonl"
+        env = {**os.environ, "PROFILE": profile, "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"], "COMMAND_LOG": str(log), "FAIL_AT": fail_at}
+        result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", script], cwd=root, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=False)
+        return result.returncode, [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
 
 class WorkflowSecurityTests(unittest.TestCase):
@@ -171,6 +213,8 @@ class WorkflowSecurityTests(unittest.TestCase):
 
     def test_warm_cache_builds_reviewed_main_like_the_gate_and_is_the_only_cache_writer(self) -> None:
         warm = generated_yaml(workflows.yaml(workflows.warm_workflow()))
+        as_gate = "github.event.repository.name", "needs.admission.outputs.profile"
+        miss = "${{ steps.lookup.outputs.cache-hit != 'true' }}"
         for name, job in warm["jobs"].items():
             with self.subTest(job=name):
                 gate = self.governance["jobs"][name]
@@ -178,19 +222,33 @@ class WorkflowSecurityTests(unittest.TestCase):
                 self.assertNotIn("secrets.", json.dumps(job))
                 self.assertIn("github.event_name == 'push' && github.ref == 'refs/heads/main'", job["if"])
                 # Same environment and build steps as the gate, so the saved artifacts are the ones the gate reuses.
-                self.assertEqual({key: value.replace("github.event.repository.name", "needs.admission.outputs.profile") for key, value in job["env"].items()}, gate["env"])
-                steps = [step for step in gate["steps"] if step not in (workflows.ARTIFACT, workflows.EXTRACT) and not step.get("uses", "").startswith("actions/cache/")
-                         and step.get("name") != "Discard any cache that is not main's exact build"]
-                self.assertEqual(json.dumps(job["steps"][-1 - len(steps):-1]).replace("github.event.repository.name", "needs.admission.outputs.profile"), json.dumps(steps))
-                save, restore = job["steps"][-1], next(step for step in gate["steps"] if step.get("id") == "cache")
-                self.assertTrue(save["uses"].startswith("actions/cache/save@"))
-                self.assertEqual(save["with"]["path"].replace("github.event.repository.name", "needs.admission.outputs.profile"), restore["with"]["path"])
-                self.assertEqual(save["with"]["key"].replace("github.sha", "needs.admission.outputs.base"), restore["with"]["key"])
+                self.assertEqual({key: value.replace(*as_gate) for key, value in job["env"].items()}, gate["env"])
+                steps = [step for step in gate["steps"] if step not in (workflows.ARTIFACT, workflows.EXTRACT) and not step.get("uses", "").startswith("actions/cache/")]
+                # Only the build is skipped on a hit. The setup hook and toolchain steps keep the gate's exact form.
+                expected = [{**step, "if": miss} if step.get("name") in (workflows.GATE["name"], workflows.REGISTRY["name"]) else step for step in steps]
+                lookup = next(index for index, step in enumerate(job["steps"]) if step.get("id") == "lookup")
+                self.assertEqual(json.dumps(job["steps"][lookup + 1:-1]).replace(*as_gate), json.dumps(expected))
                 checkouts = [step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@")]
                 self.assertEqual([step["with"]["path"] for step in checkouts], ["product", "ejm-harness", "ejm-ui"])
                 self.assertTrue(all(step["with"]["persist-credentials"] is False for step in checkouts))
-        self.assertEqual(warm["jobs"]["quality"]["strategy"]["matrix"]["os"].replace("github.event.repository.name", "needs.admission.outputs.profile"),
-                         self.governance["jobs"]["quality"]["strategy"]["matrix"]["os"])
+                # The key hashes lockfiles, so the checkout and the exported-layout step come first.
+                layout = next(index for index, step in enumerate(job["steps"]) if step.get("name") == "Match the gate's exported source layout")
+                self.assertLess(layout, lookup)
+                restore = next(step for step in gate["steps"] if step.get("uses", "").startswith("actions/cache/"))
+                probe, save = job["steps"][lookup], job["steps"][-1]
+                self.assertTrue(probe["uses"].startswith("actions/cache/restore@"))
+                self.assertTrue(save["uses"].startswith("actions/cache/save@"))
+                self.assertIs(probe["with"]["lookup-only"], True)
+                self.assertEqual(probe["with"].keys() - {"lookup-only"}, {"path", "key"})
+                self.assertEqual(save["with"].keys(), {"path", "key"})
+                for step in (probe, save):
+                    self.assertEqual(step["with"]["path"].replace(*as_gate), restore["with"]["path"])
+                    self.assertEqual(step["with"]["key"].replace(*as_gate), restore["with"]["key"])
+                # Saved only by a build that passed and found no cache: a saved key is never replaced.
+                self.assertEqual(save["if"], miss)
+                self.assertEqual(job["steps"].index(save), len(job["steps"]) - 1)
+        self.assertEqual(warm["jobs"]["quality"]["strategy"]["matrix"]["os"].replace(*as_gate), self.governance["jobs"]["quality"]["strategy"]["matrix"]["os"])
+        self.assertFalse(warm["concurrency"]["cancel-in-progress"])
 
     def test_site_deploy_builds_without_credentials_and_holds_the_token_only_in_trusted_steps(self) -> None:
         document = generated_yaml(workflows.yaml(workflows.deploy_workflow()))
@@ -336,21 +394,132 @@ class WorkflowSecurityTests(unittest.TestCase):
                 self.assertNotIn("max-parallel", job.get("strategy", {}))
         self.assertNotIn("--jobs", workflows.REGISTRY["run"])
 
-    def test_gate_restores_only_an_exact_main_build_and_discards_anything_else(self) -> None:
-        for name, cache_id in (("quality", "cache"), ("registry", "cache")):
+    def test_gate_restores_main_caches_keyed_by_toolchain_and_lockfile_and_never_saves(self) -> None:
+        for name in ("quality", "registry"):
             with self.subTest(job=name):
                 steps = self.governance["jobs"][name]["steps"]
-                restore = next(step for step in steps if step.get("uses", "").startswith("actions/cache/"))
+                caches = [step for step in steps if step.get("uses", "").startswith("actions/cache")]
+                self.assertEqual(len(caches), 1)
+                restore = caches[0]
                 self.assertTrue(restore["uses"].startswith("actions/cache/restore@"), "the admitted gate must never save a cache")
-                self.assertEqual(restore["id"], cache_id)
-                self.assertNotIn("restore-keys", restore["with"])
-                self.assertEqual(restore["with"]["key"], "gate-" + name + "-${{ runner.os }}-${{ needs.admission.outputs.base }}")
-                discard = steps[steps.index(restore) + 1]
-                self.assertIn("steps.cache.outputs.cache-hit != 'true'", discard["if"])
-                self.assertEqual(discard["env"]["TARGET_DIR"], restore["with"]["path"].splitlines()[-1])
+                prefix = "gate-" + name + "-${{ runner.os }}-rust" + workflows.RUST_VERSION + "-"
+                self.assertEqual(restore["with"].keys(), {"path", "key", "restore-keys"})
+                self.assertEqual(restore["with"]["restore-keys"], prefix)
+                lookup = re.fullmatch(re.escape(prefix) + r"\$\{\{ hashFiles\(fromJSON\('(\{.*\})'\)\[needs\.admission\.outputs\.profile\]\) \}\}", restore["with"]["key"])
+                self.assertIsNotNone(lookup, restore["with"]["key"])
+                assert lookup is not None
+                locks = json.loads(lookup[1])
+                self.assertEqual(locks.keys(), workflows.RUST_TARGETS[name].keys())
+                for profile, target in workflows.RUST_TARGETS[name].items():
+                    # The lockfile sits beside the cached target directory, in the layout the gate extracts and the warm job checks out.
+                    self.assertEqual(locks[profile], target.removesuffix("target") + "Cargo.lock")
+                    self.assertTrue(locks[profile].startswith("product/"))
+                # Nothing is deleted after a restore, and an exact main commit is no longer the key.
+                self.assertFalse(any("rm -rf" in step.get("run", "") for step in steps))
+                self.assertNotIn("needs.admission.outputs.base", json.dumps(restore))
                 # The restore follows extraction, which marks every admitted source newer than any cached build.
                 self.assertLess(steps.index(next(step for step in steps if step.get("name") == "Extract source data safely")), steps.index(restore))
-                self.assertFalse(any(step.get("uses", "").startswith("actions/cache/save") for step in steps))
+
+    def test_gate_jobs_never_save_any_cache(self) -> None:
+        for name, job in self.governance["jobs"].items():
+            for step in job["steps"]:
+                with self.subTest(job=name, step=step.get("name") or step.get("uses")):
+                    self.assertFalse(step.get("uses", "").startswith("actions/cache/save"))
+                    if step.get("uses", "").startswith("astral-sh/setup-uv@"):
+                        self.assertIs(step["with"]["enable-cache"], False)
+                    if step.get("uses", "").startswith("actions/setup-node@"):
+                        self.assertNotIn("cache", step["with"])
+
+    def test_one_toolchain_version_feeds_every_install_and_cache_key(self) -> None:
+        self.assertEqual(workflows.RUST_VERSION, "1.99.1")
+        for script in (workflows.RUST_TOOLS["run"], workflows.REGISTRY["run"]):
+            self.assertIn("rustup toolchain install " + workflows.RUST_VERSION + " ", script)
+            self.assertIn("rustup default " + workflows.RUST_VERSION + "\n", script)
+        self.assertIn("-rust" + workflows.RUST_VERSION + "-", workflows.cache_prefix("quality"))
+
+    def test_extraction_runs_the_tested_script_right_after_the_artifact_download(self) -> None:
+        found = {name for name, job in self.governance["jobs"].items() if any(step.get("name") == "Extract source data safely" for step in job["steps"])}
+        self.assertEqual(found, {"quality", "registry", "standards"})
+        for name in found:
+            with self.subTest(job=name):
+                steps = self.governance["jobs"][name]["steps"]
+                index = next(i for i, step in enumerate(steps) if step.get("name") == "Extract source data safely")
+                self.assertTrue(steps[index - 1]["uses"].startswith("actions/download-artifact@"))
+                self.assertEqual(steps[index]["run"].split()[:3], ["python3", "-I", "-"])
+                self.assertEqual(embedded_source(steps[index]["run"]), workflows.source("extract.py"))
+                self.assertEqual(steps[index], workflows.EXTRACT)
+
+    def test_generated_extraction_step_rejects_hostile_archives_and_accepts_the_prepared_form(self) -> None:
+        script = workflows.EXTRACT["run"]
+        for hostile in (False, True):
+            with self.subTest(hostile=hostile), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "prepared").mkdir()
+                (root / "bin").mkdir()
+                (root / "bin/python3").symlink_to(sys.executable)
+                names = ["product/", "product/ok.txt"] + (["product/../../escape.txt"] if hostile else [])
+                with tarfile.open(root / "prepared/product.tar", "w") as archive:
+                    for name in names:
+                        info = tarfile.TarInfo(name)
+                        info.type = tarfile.DIRTYPE if name.endswith("/") else tarfile.REGTYPE
+                        info.mtime = 0
+                        archive.addfile(info)
+                env = {**os.environ, "PATH": str(root / "bin") + os.pathsep + os.environ["PATH"]}
+                result = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", script], cwd=root, env=env, capture_output=True, text=True, check=False)
+                self.assertEqual(result.returncode == 0, not hostile, result.stderr)
+                self.assertEqual((root / "product/ok.txt").exists(), not hostile)
+                self.assertFalse((root.parent / "escape.txt").exists())
+                if not hostile:
+                    self.assertGreater((root / "product/ok.txt").stat().st_mtime, time.time() - 60)
+
+    def test_product_owned_quality_replaces_the_built_in_gate_and_runs_from_the_product_root(self) -> None:
+        self.assertIn(workflows.GATE, self.governance["jobs"]["quality"]["steps"])
+        for profile in ("ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui", "ejmlabs", ".github"):
+            with self.subTest(profile=profile):
+                status, calls = run_gate(workflows.GATE["run"], profile, {"product/.github/quality": "executable"})
+                self.assertEqual(status, 0)
+                self.assertEqual(calls, [{"command": ["quality"], "cwd": "product", "ignore_scripts": "true"}])
+        # The shared sibling install stays first, and the product's failure fails the gate.
+        files = {"product/.github/quality": "executable", "ejm-ui": "directory"}
+        status, calls = run_gate(workflows.GATE["run"], "ejm-cli", files)
+        self.assertEqual((status, [call["command"] for call in calls]), (0, [["npm", "--prefix", "../ejm-ui", "ci", "--ignore-scripts"], ["quality"]]))
+        status, calls = run_gate(workflows.GATE["run"], "ejm-cli", files, fail_at="quality")
+        self.assertEqual((status, calls[-1]["command"]), (19, ["quality"]))
+
+    def test_anything_but_a_regular_executable_quality_file_falls_back_to_the_built_in_commands(self) -> None:
+        cases = {
+            "absent": {},
+            "not executable": {"product/.github/quality": "file"},
+            "directory": {"product/.github/quality": "directory"},
+            "symlink": {"product/.github/real": "executable", "product/.github/quality": "-> real"},
+            "symlinked directory": {"product/elsewhere/quality": "executable", "product/.github": "-> elsewhere"},
+            "the registry gate only": {"product/.github/quality-registry": "executable"},
+        }
+        expected = [["node", "scripts/check.mjs"], ["npm", "--prefix", "site", "test"], ["npm", "--prefix", "site", "run", "build"]]
+        for name, files in cases.items():
+            with self.subTest(case=name):
+                status, calls = run_gate(workflows.GATE["run"], "ejmlabs", files)
+                self.assertEqual((status, [call["command"] for call in calls]), (0, expected))
+
+    def test_product_owned_registry_gate_replaces_only_the_registry_commands(self) -> None:
+        self.assertIn(workflows.REGISTRY, self.governance["jobs"]["registry"]["steps"])
+        shared = [["rustup", "toolchain", "install", workflows.RUST_VERSION, "--profile", "minimal", "--component", "clippy,rustfmt", "--target", "wasm32-unknown-unknown"],
+                  ["rustup", "default", workflows.RUST_VERSION], ["python3", "-I", "-", "cargo-deny", "cargo-machete"],
+                  ["cargo", "install", "worker-build", "--version", "0.8.7", "--locked"], ["npm", "--prefix", "../ejm-ui", "ci", "--ignore-scripts"]]
+        status, calls = run_gate(workflows.REGISTRY["run"], "ejm-harness", {"product/.github/quality-registry": "executable", "ejm-ui": "directory"})
+        self.assertEqual(status, 0)
+        self.assertEqual([call["command"] for call in calls], [*shared, ["quality-registry"]])
+        self.assertEqual((calls[-1]["cwd"], calls[-1]["ignore_scripts"]), ("product", "true"))
+        self.assertTrue(all(call["ignore_scripts"] is None for call in calls[:-1]))
+        fallback = {"product/.github/quality": "executable", "product/scripts/check-registry": "executable", "ejm-ui": "directory"}
+        status, calls = run_gate(workflows.REGISTRY["run"], "ejm-harness", fallback)
+        self.assertEqual(status, 0)
+        self.assertEqual([call["command"] for call in calls], [*shared, ["npm", "ci", "--ignore-scripts"], ["npm", "--prefix", "registry", "ci", "--ignore-scripts"], ["check-registry"]])
+        status, calls = run_gate(workflows.REGISTRY["run"], "ejm-cli", {"product/.github/quality-registry": "executable"})
+        self.assertEqual((status, calls), (0, []))
+        status, calls = run_gate(workflows.REGISTRY["run"], "ejm-harness", {"product/.github/quality-registry": "executable"}, fail_at="quality-registry")
+        self.assertEqual((status, calls[-1]["command"]), (19, ["quality-registry"]))
+
 
     def test_privileged_jobs_run_only_trusted_scripts_and_actions(self) -> None:
         trusted_sources: set[str | None] = {workflows.source(name) for name in ("governance.py", "prepare.py")}
