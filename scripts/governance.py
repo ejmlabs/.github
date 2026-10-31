@@ -270,9 +270,14 @@ def stop(api: GitHub, number: int, sha: str, reason: str) -> None:
     runs: list[int] = []
     api.deadline = api.clock() + STOP_STEPS_SECONDS
     try:
-        fail_checks(api, sha, reason)
         try:
             try:
+                try:
+                    fail_checks(api, sha, reason)
+                except HANDLED as error:
+                    # The last write has its own time and fences the head on its own, so a first write that fails or
+                    # spends the steps' time skips nothing: the cancels, the dismissals and the last write still run.
+                    print(f"::warning::The first failure status could not be written ({type(error).__name__}); the stop goes on")
                 runs = older_runs(api, sha)
                 cancel_runs(api, runs)
             finally:

@@ -82,7 +82,9 @@ Comments such as `/ready` or `/approve` do nothing. Draft PRs spend nothing.
   dismissals and the wait, then 40 seconds for the last write, 120 seconds at most. No request
   starts and no sleep runs past it, so the stop always ends inside the admission job's 3 minutes,
   with 60 seconds left for the job's start, the reads before the stop and the label removal after
-  it. A test computes this from the constants and the generated job's `timeout-minutes`.
+  it. A test computes this from the constants and the generated job's `timeout-minutes`. A first
+  write that fails or uses up its time skips nothing: a `::warning::` says so, and the cancels, the
+  dismissals and the last write, in its own 40 seconds, still run.
 - A failed last write. If the last status writes still fail after their retries, the head can
   keep an earlier success. The `gate:revoke` label stays and blocks finish and admission, but it
   does not block a merge on green statuses. The job fails with an `::error::` saying so. Do not

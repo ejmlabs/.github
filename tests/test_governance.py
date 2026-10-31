@@ -737,6 +737,36 @@ class StopTimingTests(GateCase):
         self.assertIn("::error::", out.getvalue())
         self.assertIsNone(api.deadline)
 
+    def test_a_first_write_that_hangs_still_leaves_the_cancels_and_the_last_write(self) -> None:
+        self.admit(self.event("opened"))
+        self.server.add_run(400, "in_progress")
+        now = [0.0]
+        hung_writes: list[float] = []
+
+        def sleep(seconds: float) -> None:
+            now[0] += seconds
+
+        def first_write_hangs(req: urllib.request.Request, timeout: float | None = None) -> Response:
+            assert timeout is not None
+            assert timeout > 0
+            if req.get_method() == "POST" and req.full_url.removeprefix(ROOT).startswith("/statuses/") and len(hung_writes) < 5:
+                hung_writes.append(now[0])  # every attempt of the first write hangs until its timeout
+                now[0] += timeout
+                raise TimeoutError("hung")
+            return self.server.urlopen(req, timeout)
+
+        api = GitHub(sleep=sleep, clock=lambda: now[0])
+        out = io.StringIO()
+        with mock.patch("urllib.request.urlopen", first_write_hangs), contextlib.redirect_stdout(out):
+            governance.stop(api, 1, SHA, "stop")
+        self.assertEqual(len(hung_writes), 1 + len(governance.STATUS_RETRY_DELAYS))
+        self.assertIn("::warning::The first failure status could not be written (TimeoutError); the stop goes on", out.getvalue())
+        self.assertNotIn("::error::", out.getvalue())
+        self.assertEqual(self.server.cancelled, [400])
+        self.assertEqual(self.states(), {"Quality": "failure", "Repository standards": "failure"})
+        self.assertLessEqual(now[0], governance.STOP_STEPS_SECONDS + governance.FINAL_WRITE_SECONDS)
+        self.assertIsNone(api.deadline)
+
     def test_no_request_starts_or_sleeps_past_the_deadline(self) -> None:
         self.api.deadline = self.api.clock() - 1
         with self.assertRaises(TimeoutError):
