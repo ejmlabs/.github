@@ -243,12 +243,13 @@ def check_environment(environment: str) -> None:
 def wrangler_environment() -> dict[str, str]:
     """Only what Wrangler needs. The repository token and every other runner variable stay out of its reach."""
     if not os.environ.get("CLOUDFLARE_API_TOKEN"):
-        raise ValueError("CLOUDFLARE_API_TOKEN is not set")
+        raise ValueError("CLOUDFLARE_API_TOKEN is empty: set it on the environment and pass secrets: inherit in deploy.yml")
     kept = {name: os.environ[name] for name in ("PATH", "HOME", "RUNNER_TEMP", "CLOUDFLARE_API_TOKEN", "CI") if name in os.environ}
     return {**kept, "CLOUDFLARE_ACCOUNT_ID": ACCOUNT_ID, "WRANGLER_SEND_METRICS": "false"}
 
 
 def deploy(environment: str, profile: str) -> None:
+    env = wrangler_environment()
     _, config_path, paths = SITES[profile]
     source = source_path(profile)
     built = Path("built")
@@ -264,7 +265,7 @@ def deploy(environment: str, profile: str) -> None:
     arguments = check(config, environment)
     check_paths(config, config_path, source, paths)
     wrangler = Path(os.environ["RUNNER_TEMP"], "deployer/node_modules/.bin/wrangler")
-    subprocess.run([str(wrangler), "deploy", "--config", str(built / config_path), *arguments], check=True, env=wrangler_environment())
+    subprocess.run([str(wrangler), "deploy", "--config", str(built / config_path), *arguments], check=True, env=env)
 
 
 def main(argv: "Sequence[str]") -> None:

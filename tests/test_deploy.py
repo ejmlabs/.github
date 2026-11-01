@@ -500,8 +500,9 @@ class DeployTests(unittest.TestCase):
 
     def test_a_missing_deploy_token_stops_before_wrangler(self) -> None:
         del os.environ["CLOUDFLARE_API_TOKEN"]
-        with self.assertRaisesRegex(ValueError, "CLOUDFLARE_API_TOKEN"):
+        with self.assertRaisesRegex(ValueError, "CLOUDFLARE_API_TOKEN.*environment.*secrets: inherit"):
             deploy.main(["deploy", "production"])
+        self.assertFalse(Path("built").exists())
         self.assertIsNone(self.wrangler.call())
 
     def test_a_config_changed_by_the_build_is_refused(self) -> None:
