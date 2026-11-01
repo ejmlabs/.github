@@ -1,0 +1,7 @@
+# Shared strict shell lint layer. Synced from ejmlabs/.github templates/lint; edit it there.
+enable=all
+# Braces around every variable are style only.
+disable=SC2250
+# Notes that fire on every `if func` and `[[ "$(cmd)" ]]`. Check a status yourself where it matters.
+disable=SC2310,SC2311,SC2312
+external-sources=true

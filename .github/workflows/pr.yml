@@ -1,27 +1,16 @@
 name: Human-admitted PR checks
 on:
-  issue_comment:
-    types: [created, edited, deleted]
-  pull_request_target:
-    types: [unlabeled]
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, labeled]
 permissions: {}
 jobs:
   governance:
-    if: ${{ (github.event.issue.pull_request || github.event_name == 'pull_request_target') && github.repository == 'ejmlabs/.github' && !contains(github.event.issue.labels.*.name, 'acceptance:missing-model-key') }}
+    if: ${{ github.event_name == 'pull_request' }}
     permissions:
       contents: read
       pull-requests: write
       statuses: write
       actions: write
-    uses: ejmlabs/.github/.github/workflows/governance.yml@02036a015ee7df65e1205dc20ed113a042431cdf
+    uses: ejmlabs/.github/.github/workflows/governance.yml@90287bb91b735a9d29706e604c8142917ab7ffd6
     secrets:
-      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
       EJM_HARNESS_TOKEN: ${{ secrets.EJM_HARNESS_TOKEN }}
-  missing_model_key:
-    if: ${{ (github.event.issue.pull_request || github.event_name == 'pull_request_target') && github.repository == 'ejmlabs/.github' && contains(github.event.issue.labels.*.name, 'acceptance:missing-model-key') }}
-    permissions:
-      contents: read
-      pull-requests: write
-      statuses: write
-      actions: write
-    uses: ejmlabs/.github/.github/workflows/governance.yml@02036a015ee7df65e1205dc20ed113a042431cdf
