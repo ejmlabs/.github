@@ -43,7 +43,8 @@ class RepoTree:
         for name, text in consumer_workflows(REVISION, native=native, cache=cache, deploy=deploy).items():
             self.write(".github/workflows/" + name, text)
         {"ejm-cli": self.build_cli, "ejm-rightkit-fs": self.build_rightkit, "ejm-harness": self.build_harness, "ejm-ide": self.build_ide, "ejmlabs": self.build_studio,
-         ".github": self.build_shared, "ejm-ui": self.build_ui, "ejm-calm": self.build_calm, "ejm-chess": self.build_chess}[profile]()
+         ".github": self.build_shared, "ejm-ui": self.build_ui, "ejm-calm": self.build_calm, "ejm-chess": self.build_chess,
+         "ejm-agents": self.build_calm}[profile]()
 
     def write(self, path: str, text: str | bytes) -> Path:
         file = self.root / path
@@ -166,5 +167,5 @@ class TreeCase(unittest.TestCase):
         return problems
 
 
-if set(PROFILES) != {".github", "ejm-calm", "ejm-chess", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-rightkit-fs", "ejm-ui", "ejmlabs"}:
+if set(PROFILES) != {".github", "ejm-agents", "ejm-calm", "ejm-chess", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-rightkit-fs", "ejm-ui", "ejmlabs"}:
     raise AssertionError("RepoTree must build every profile in the table")

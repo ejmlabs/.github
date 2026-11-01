@@ -13,7 +13,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
-REPOS = {"ejmlabs/" + name for name in (".github", "ejmlabs", "ejm-calm", "ejm-chess", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-rightkit-fs", "ejm-ui")}
+REPOS = {"ejmlabs/" + name for name in (".github", "ejmlabs", "ejm-agents", "ejm-calm", "ejm-chess", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-rightkit-fs", "ejm-ui")}
 REQUIRED_CONTEXTS = ("Quality", "Repository standards")
 APPROVE_LABEL = "gate:approve"
 REVOKE_LABEL = "gate:revoke"
