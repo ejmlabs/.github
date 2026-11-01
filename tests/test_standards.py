@@ -731,6 +731,12 @@ class WorkflowTests(unittest.TestCase):
                 (self.directory / "cache.yml").write_text(canonical)
                 workflows(self.root, repository)
 
+    def test_code_scan_caller_matches_harness_prettier_output(self) -> None:
+        # Fixture formatted with Prettier 3.9.10 and the harness configuration.
+        expected = (ROOT / "tests/fixtures/prettier-code-scan.yml").read_text()
+        caller = consumer_workflows("a" * 40, codeql_languages="python")["code-scan.yml"]
+        self.assertEqual(caller, expected)
+
     def test_code_scan_caller_is_optional_and_pinned_to_the_profile(self) -> None:
         for repository, profile in standards.PROFILES.items():
             if repository == ".github":

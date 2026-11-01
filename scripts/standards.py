@@ -128,7 +128,7 @@ on:
   push:
     branches: [main]
   schedule:
-    - cron: '23 6 * * 1'
+    - cron: "23 6 * * 1"
 permissions: {}
 jobs:
   code-scan:
