@@ -500,3 +500,9 @@ For a failed shared revision, re-pin callers to the previous shared revision
 through an ordinary reviewed PR. Do not move a revision or release tag. Keep
 budget notifications enabled. Source-release jobs make drafts and do not deploy or
 publish packages.
+
+## PR next-action guidance
+
+The governance workflow maintains a marked next-action section in same-repository PR descriptions after admission and after check finalization. It reads the live head and the Quality and Repository standards statuses. It points to Ready, the gate labels, review and other checks as appropriate; CodeQL runs separately when configured. Guidance is advisory and does not admit, approve or merge a PR. Fork tokens cannot write it. Existing callers receive it after their reviewed pin moves.
+
+The renderer preserves text outside its markers, refuses ambiguous markers and oversized descriptions, and retries observed changes before writing. GitHub offers no atomic PR body update, so an external edit after the final read can still race. The next gate event refreshes the section; edits, closure and independent check completion alone do not trigger it.

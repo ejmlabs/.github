@@ -871,6 +871,7 @@ class WorkflowSecurityTests(unittest.TestCase):
     def test_privileged_jobs_run_only_trusted_scripts_and_actions(self) -> None:
         trusted_sources: set[str | None] = {workflows.source(name) for name in ("governance.py", "prepare.py")}
         trusted_sources.add(workflows.libraries("governance.py", "versioning.py", "standards.py", "prepare.py") + "\n" + workflows.source("release.py"))
+        trusted_sources.add(workflows.libraries("governance.py") + "\n" + workflows.source("pr_guidance.py").replace("from governance import REQUIRED_CONTEXTS, GitHub, checked_sha, same_repository\n", ""))
         trusted_actions = {"actions/checkout", "actions/download-artifact", "actions/upload-artifact"}
         for document in (self.governance, self.release):
             self.assertNotIn("defaults", document)
@@ -982,7 +983,7 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertEqual(publishers, [(self.governance["name"], "finish", "finish")])
 
     def test_the_gate_has_no_review_job_and_reads_only_the_harness_secret(self) -> None:
-        self.assertEqual(set(self.governance["jobs"]), {"admission", "prepare", "quality", "registry", "standards", "finish"})
+        self.assertEqual(set(self.governance["jobs"]), {"admission", "prepare", "quality", "registry", "standards", "finish", "guidance", "guidance_finish"})
         self.assertEqual(set(re.findall(r"secrets\.(\w+)", json.dumps(self.governance["jobs"]))), {"EJM_HARNESS_TOKEN"})
         # The retired model key is no longer declared, because no caller passes it and nothing reads it.
         declared = self.governance["on"]["workflow_call"]["secrets"]

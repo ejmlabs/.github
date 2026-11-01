@@ -6,6 +6,8 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 The net change since 0.1.0:
 
+- Generate advisory PR next actions from live gate metadata after admission and check finalization.
+
 - Member code scans request Actions read access. The settings tool requires the CodeQL subdirectory actions in the repository allowlist.
 - Add an `ejm-rightkit-fs` standards and admission profile for its dual-licensed Cargo package.
 
