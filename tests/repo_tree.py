@@ -42,7 +42,7 @@ class RepoTree:
             self.write(path, "placeholder\n")
         for name, text in consumer_workflows(REVISION, native=native, cache=cache, deploy=deploy).items():
             self.write(".github/workflows/" + name, text)
-        {"ejm-cli": self.build_cli, "ejm-harness": self.build_harness, "ejm-ide": self.build_ide, "ejmlabs": self.build_studio,
+        {"ejm-cli": self.build_cli, "ejm-rightkit-fs": self.build_rightkit, "ejm-harness": self.build_harness, "ejm-ide": self.build_ide, "ejmlabs": self.build_studio,
          ".github": self.build_shared, "ejm-ui": self.build_ui, "ejm-calm": self.build_calm}[profile]()
 
     def write(self, path: str, text: str | bytes) -> Path:
@@ -78,6 +78,10 @@ class RepoTree:
         self.write("crates/cli/Cargo.toml", '[package]\nname = "cli"\nlicense.workspace = true\n')
         self.write("Cargo.lock", '[[package]]\nname = "ejm-cli"\nversion = "0.1.0"\n\n[[package]]\nname = "serde"\nversion = "1.0.0"\n')
         self.write(".github/harness-revision", "a" * 40 + "\n")
+
+    def build_rightkit(self) -> None:
+        self.write("Cargo.toml", '[package]\nname = "ejm-rightkit-fs"\nversion = "0.1.0"\nlicense = "MIT OR Apache-2.0"\n')
+        self.write("Cargo.lock", '[[package]]\nname = "ejm-rightkit-fs"\nversion = "0.1.0"\n')
 
     def build_harness(self) -> None:
         self.write("Cargo.toml", '[workspace]\nmembers = ["crates/*"]\n[workspace.package]\nversion = "0.1.0"\nlicense = "MIT"\n')
@@ -158,5 +162,5 @@ class TreeCase(unittest.TestCase):
         return problems
 
 
-if set(PROFILES) != {".github", "ejm-calm", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui", "ejmlabs"}:
+if set(PROFILES) != {".github", "ejm-calm", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-rightkit-fs", "ejm-ui", "ejmlabs"}:
     raise AssertionError("RepoTree must build every profile in the table")

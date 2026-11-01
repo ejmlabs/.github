@@ -458,7 +458,7 @@ def warm_workflow() -> dict[str, Any]:
 def codeql_workflow() -> dict[str, Any]:
     return {"name": "codeql-analysis", "on": {"workflow_call": {"inputs": {"languages": {"type": "string", "default": "javascript-typescript"}}}},
             "permissions": {}, "jobs": {"codeql-analysis": {"runs-on": "ubuntu-24.04", "timeout-minutes": 60,
-                "permissions": {"contents": "read", "security-events": "write"},
+                "permissions": {"contents": "read", "actions": "read", "security-events": "write"},
                 "steps": [{"name": "checkout", "uses": CHECKOUT, "with": {"persist-credentials": False}},
                           {"name": "initialize-codeql", "uses": CODEQL_INIT, "with": {"languages": "${{ inputs.languages }}", "queries": "security-extended"}},
                           {"name": "autobuild", "uses": CODEQL_AUTOBUILD}, {"name": "analyze", "uses": CODEQL_ANALYZE}]}}}

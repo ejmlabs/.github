@@ -64,10 +64,19 @@ class StandardTests(TreeCase):
         self.assertEqual(standards.NATIVE_RELEASE, ("ejm-cli", "ejm-harness"))
         self.assertEqual(standards.WARM_CACHE, ("ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui"))
         self.assertEqual(sorted(standards.SITE_DEPLOY), ["ejm-calm", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui", "ejmlabs"])
-        self.assertEqual(sorted(PROFILES), [".github", "ejm-calm", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui", "ejmlabs"])
+        self.assertEqual(sorted(PROFILES), [".github", "ejm-calm", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-rightkit-fs", "ejm-ui", "ejmlabs"])
         self.assertEqual({name: profile.harness_pin for name, profile in PROFILES.items()}["ejm-cli"], True)
         self.assertEqual([name for name, profile in PROFILES.items() if profile.harness_pin], ["ejm-cli", "ejm-ide"])
         self.assertEqual([name for name, profile in PROFILES.items() if profile.publish], ["ejm-ui"])
+
+    def test_rightkit_profile_checks_the_single_crate_and_dual_license(self) -> None:
+        tree = self.tree("ejm-rightkit-fs")
+        self.assertEqual(tree.check(), "0.1.0")
+        tree.replace("Cargo.toml", "MIT OR Apache-2.0", "MIT")
+        self.fails(tree, "fork license must remain MIT OR Apache-2.0")
+        tree.replace("Cargo.toml", "MIT", "MIT OR Apache-2.0")
+        tree.replace("Cargo.lock", "0.1.0", "0.2.0")
+        self.fails(tree, "owned Cargo lock package versions differ")
 
     def test_mismatched_version_and_missing_notes_block_release(self) -> None:
         tree = self.tree("ejmlabs")
@@ -719,6 +728,7 @@ class WorkflowTests(unittest.TestCase):
             with self.subTest(repository=repository):
                 canonical = consumer_workflows(self.revision, codeql_languages=profile.codeql_languages)["code-scan.yml"]
                 path = self.directory / "code-scan.yml"
+                self.assertIn("actions: read", canonical)
                 path.write_text(canonical)
                 workflows(self.root, repository)
                 for changed in (canonical.replace(self.revision, self.other_revision),
@@ -728,6 +738,7 @@ class WorkflowTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "differs from the canonical consumer: code-scan.yml"):
                         workflows(self.root, repository)
                 path.unlink()
+        self.assertEqual(standards.PROFILES["ejm-rightkit-fs"].codeql_languages, "rust")
         self.assertEqual(standards.PROFILES["ejm-cli"].codeql_languages, "rust")
         self.assertEqual(standards.PROFILES["ejm-harness"].codeql_languages, "python")
 
