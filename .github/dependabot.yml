@@ -18,3 +18,25 @@ updates:
       # This repository's own caller pins move only by hand, with the release.yml pin and the community files in one pull request.
       # The star also matches reusable workflow paths such as ejmlabs/.github/.github/workflows/governance.yml.
       - dependency-name: "ejmlabs/.github*"
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 14
+    groups:
+      compatible-updates:
+        update-types: [minor, patch]
+  - package-ecosystem: "npm"
+    directory: "/deploy"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 14
+    groups:
+      compatible-updates:
+        update-types: [minor, patch]

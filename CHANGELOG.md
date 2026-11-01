@@ -6,6 +6,8 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 The net change since 0.1.0:
 
+- Check the root uv development tools and npm deployer for Dependabot updates.
+
 - Format the canonical member code-scan caller for the harness Prettier check.
 
 - Generate advisory PR next actions from live gate metadata after admission and check finalization.

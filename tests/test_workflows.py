@@ -516,8 +516,8 @@ class WorkflowSecurityTests(unittest.TestCase):
 
     def test_dependabot_waits_two_weeks_like_the_dependency_age_rule(self) -> None:
         text = (workflows.ROOT / ".github/dependabot.yml").read_text()
-        self.assertEqual(re.findall(r"(?m)^\s+default-days: (\d+)$", text), ["14"])
-        self.assertEqual(re.findall(r'(?m)^  - package-ecosystem: "([^"]+)"$', text), ["github-actions"])
+        self.assertEqual(re.findall(r"(?m)^\s+default-days: (\d+)$", text), ["14"] * 3)
+        self.assertEqual(re.findall(r'(?m)^  - package-ecosystem: "([^"]+)"$', text), ["github-actions", "uv", "npm"])
         # The shared workflows' own pins are bumped with their manifest in one pull request; the caller pin of this repository moves only by hand.
         self.assertIn('dependency-name: "ejmlabs/.github*"', text)
 

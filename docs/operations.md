@@ -437,9 +437,9 @@ workflows use once, pinned to a full SHA. `scripts/build_workflows.py` reads it,
 scans it beside the generated workflows, so one PR is meant to bump both and pass `--check`; the
 first Dependabot actions PR must confirm that. Updates are weekly and grouped (minor and patch)
 with a 14-day cooldown that security updates ignore. Dependabot ignores this repository's own
-`ejmlabs/.github` caller pins, which move by hand. Wrangler in `deploy/` is also updated by hand:
-edit `deploy/package.json`, run `npm install --package-lock-only --ignore-scripts` there, then
-regenerate the workflows.
+`ejmlabs/.github` caller pins, which move by hand. Dependabot also checks the root uv lock and
+the npm deployer in `deploy/`. After a deployer update, regenerate the workflows and include
+them in the PR, because the generated deploy workflow embeds its manifest and lock.
 
 ## Synced templates
 
