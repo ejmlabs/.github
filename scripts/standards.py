@@ -112,7 +112,7 @@ UI_PACKING_PREFIXES = {
     "packages/ssg": ("bin", "src", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"),
     "packages/tokens": ("src", "generated", "rust", "theme.json", "README.md", "assets/fonts", "assets/brand", "assets/icons",
                         "LICENSE", "THIRD_PARTY_NOTICES.md"),
-    "packages/ui": ("src", "public/theme-boot.js", "public/static.css", "THEME.md", "COMPONENTS.md", "LICENSE", "THIRD_PARTY_NOTICES.md"),
+    "packages/ui": ("src", "public/theme-boot.js", "THEME.md", "COMPONENTS.md", "LICENSE", "THIRD_PARTY_NOTICES.md"),
 }
 # The reviewed ejm-ui publish workflow, the privileged publishing path; the error prints the actual digest so a reviewed update is one copy.
 UI_PUBLISH_SHA256 = "b28800bd599a24b07f385202bad0e8ef53bc5f503bdd600b51fbd4f461f656e9"

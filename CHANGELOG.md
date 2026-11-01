@@ -122,6 +122,16 @@ The net change since 0.1.0:
 
 - The standards job reads `job.workflow_sha` in each step's env. Revision 9f7421b read it in the job's own env, where GitHub does not offer the job context, so no caller can start a run at that revision; never pin it. A test now holds every job-level key of the generated workflows to the contexts GitHub allows there.
 
+### The systemic ejm-ui kit
+
+#### Changed
+
+- The `ejmlabs-typescript` and `ejmlabs-design` skills describe ejm-ui at PR #59: one stylesheet, `@import "@ejm/ui/styles.css";`, with no `source(none)` or `@source`; the `ejmlabs({ project })` preset from `@ejm/site/vite` for a site and `ejmUi()` from `@ejm/ui/vite` for an app; a tsconfig that extends `@ejm/ui/tsconfig.json` after strictest, with no React `paths` or `resolve.dedupe`; `vite` as a consumer dependency and no Tailwind or Vite React plugin; and a type scale of six sizes without `text-display-lg` or `text-stat`.
+
+#### Removed
+
+- `public/static.css` from the reviewed packing set of `@ejm/ui`, which no longer packs it.
+
 ### Site builds that link ejm-ui
 
 #### Changed
