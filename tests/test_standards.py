@@ -712,20 +712,19 @@ class WorkflowTests(unittest.TestCase):
                 (self.directory / "cache.yml").write_text(canonical)
                 workflows(self.root, repository)
 
-    def test_site_deploy_caller_is_exact_with_or_without_inherited_secrets(self) -> None:
+    def test_site_deploy_caller_passes_no_secrets(self) -> None:
         canonical = standards.SITE_DEPLOY_CALLER.replace("STANDARDS_REVISION", self.revision)
-        older = standards.SITE_DEPLOY_CALLER_WITHOUT_SECRETS.replace("STANDARDS_REVISION", self.revision)
-        self.assertTrue(canonical.endswith("    uses: ejmlabs/.github/.github/workflows/deploy-site.yml@" + self.revision + "\n    secrets: inherit\n"))
-        self.assertEqual(canonical, older + "    secrets: inherit\n")
+        older = canonical + "    secrets: inherit\n"
+        self.assertTrue(canonical.endswith("    uses: ejmlabs/.github/.github/workflows/deploy-site.yml@" + self.revision + "\n"))
         self.assertEqual(consumer_workflows(self.revision, deploy=True)["deploy.yml"], canonical)
         for repository in standards.SITE_DEPLOY:
             for text in (canonical, older):
-                with self.subTest(repository=repository, inherit=text is canonical):
+                with self.subTest(repository=repository, inherit=text is older):
                     (self.directory / "deploy.yml").write_text(text)
                     workflows(self.root, repository)
-        for changed in (canonical.replace("contents: read", "contents: write"), canonical + "    secrets: inherit\n", older + "    secrets:\n      X: y\n",
+        for changed in (canonical.replace("contents: read", "contents: write"), older + "    secrets: inherit\n", canonical + "    secrets:\n      X: y\n",
                         canonical.replace(self.revision, self.other_revision), older.replace(self.revision, self.other_revision),
-                        canonical.replace("    secrets: inherit\n", "    secrets: inherit"), canonical.replace("actions: read", "actions: write")):
+                        older.replace("    secrets: inherit\n", "    secrets: inherit"), canonical.replace("actions: read", "actions: write")):
             with self.subTest(content=changed), self.assertRaisesRegex(ValueError, "differs from the canonical consumer: deploy.yml"):
                 (self.directory / "deploy.yml").write_text(changed)
                 workflows(self.root, "ejmlabs")

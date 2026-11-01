@@ -6,7 +6,8 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 The net change since 0.1.0:
 
-- Site deploys report a missing Cloudflare token before extracting the build, with the environment secret and caller configuration to check.
+- The canonical site deploy caller passes no secrets. The inherited-secrets caller remains accepted during rollout.
+- Site deploys report a missing Cloudflare token before extracting the build.
 
 - A reusable CodeQL workflow with security-extended queries and a scheduled Python and Actions scan for this repository.
 - A human-gated PR pipeline as reusable workflows: a maintainer's PR admits itself, any other PR is admitted by a maintainer's Ready or `gate:approve`, and comments control nothing.
@@ -56,7 +57,7 @@ The net change since 0.1.0:
 - Gate API calls retry 429, 5xx and network errors (three attempts in all), and embedded trusted Python runs as `python3 -I`.
 - Rust gate caches are keyed by toolchain and the hash of the profile's `Cargo.lock`, restored with a prefix fallback, and only restored by gate jobs. The warm job on main checks the exact key first and saves only when it is missing.
 - `ejm-ide` selects its harness pin from the admitted head, with the same protected-main ancestry check as `ejm-cli`.
-- The canonical `deploy.yml` passes `secrets: inherit`, so the environment's `CLOUDFLARE_API_TOKEN` reaches the deploy jobs. The older form is still accepted.
+- The canonical `deploy.yml` passes no secrets; the inherited-secrets form remains accepted during rollout.
 - Deploy jobs validate tar members before extraction and run Wrangler with a minimal environment that holds no GitHub token.
 - Production deploys wait for a maintainer. The deploy check fails closed unless `production` has a required reviewer, and a production job deploys only while its commit is main's head, so approving an older run fails instead of rolling production back. `configure_repositories.py --check` fails, and its apply and `set_deploy_token.py` warn, when production has no reviewer. Both tools keep the reviewers a human set and never add one.
 - Deploy jobs never cancel a running deploy. The build, staging and production jobs queue per repository, and only an older run that has not started is replaced.
