@@ -23,7 +23,7 @@
           "persist-credentials": false
       -
         "name": "initialize-codeql"
-        "uses": "github/codeql-action/init@793b778da9c9275a0f276522b27cb5fc14bba279"
+        "uses": "github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370"
         "with":
           "languages": "${{ inputs.languages }}"
           "queries": "security-extended"
