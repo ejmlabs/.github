@@ -742,6 +742,7 @@ class WorkflowTests(unittest.TestCase):
                 path.write_text(canonical)
                 workflows(self.root, repository)
                 for changed in (canonical.replace(self.revision, self.other_revision),
+                                canonical.replace("      actions: read\n", ""),
                                 canonical.replace("security-events: write", "contents: write"),
                                 canonical.replace("languages: " + profile.codeql_languages, "languages: actions")):
                     path.write_text(changed)
