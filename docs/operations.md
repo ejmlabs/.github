@@ -10,11 +10,12 @@ caller from `consumer_workflows` in `scripts/standards.py`. Its pin must match
 `pr.yml`; its language input comes from the repository profile. The caller runs
 on pull requests, pushes to main and weekly. Adoption and required-check settings
 are managed in each member repository. Before opening an adoption PR, allow
-`github/codeql-action@*` under Settings, Actions, General when the repository
+`github/codeql-action/*@*` under Settings, Actions, General when the repository
 uses a selected-actions policy. Otherwise GitHub may reject the workflow before
-any job starts. The settings tool checks this requirement. Rust uses the same
-caller and the pinned CodeQL v4 action supports it. Public repositories can use
-code scanning; private repositories also need GitHub Code Security enabled.
+any job starts. The pattern covers the `init`, `autobuild` and `analyze`
+subdirectory actions. The settings tool checks this requirement. Rust uses the
+same caller and the pinned CodeQL v4 action supports it. Public repositories can
+use code scanning; private repositories also need GitHub Code Security enabled.
 
 The `ejm-rightkit-fs` profile checks its single Cargo package and its
 `MIT OR Apache-2.0` license metadata. It must adopt the shared community files,
@@ -48,7 +49,7 @@ it is up to date with main.
 
 Default workflow tokens are read-only. Allow only full-SHA actions from
 `actions/*`, `astral-sh/setup-uv`, `ejmlabs/.github` and
-`github/codeql-action` for member code scanning. Enable bot review
+`github/codeql-action/*` for member code scanning. Enable bot review
 recording so an explicit human self-approve can be represented as a native
 review via the `gate:approve` label. Fork PR workflows get no secrets or write
 tokens. Re-enabling any model review needs the security review's sign-off first.

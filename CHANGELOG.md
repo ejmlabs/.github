@@ -6,7 +6,7 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 The net change since 0.1.0:
 
-- Member code scans request Actions read access. The settings tool requires the CodeQL action in the repository allowlist.
+- Member code scans request Actions read access. The settings tool requires the CodeQL subdirectory actions in the repository allowlist.
 - Add an `ejm-rightkit-fs` standards and admission profile for its dual-licensed Cargo package.
 
 - The canonical site deploy caller passes no secrets. The inherited-secrets caller remains accepted during rollout.
