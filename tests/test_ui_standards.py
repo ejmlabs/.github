@@ -1,7 +1,6 @@
-import copy
-import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -12,131 +11,180 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import standards
 from governance import GitHub
+from repo_tree import FONTS, UI_DIRS, UI_LICENSE, RepoTree, TreeCase
 
-# The recorded digests before any test patches them.
-RECORDED_PACKING = dict(standards.UI_PACKING_SHA256)
+# The manifests reviewed when the packing digests were retired, with packages/ui as ejm-ui PR #59 packs it
+# (no public/static.css). The structural rules must accept all of them.
+REVIEWED: dict[str, dict[str, Any]] = {
+    "packages/tokens": {
+        "name": "@ejm/tokens", "main": "./src/index.ts", "types": "./src/index.ts",
+        "exports": {".": "./src/index.ts", "./tailwind.css": "./generated/tailwind.css", "./window.css": "./generated/window.css",
+                    "./neutral.css": "./generated/neutral.css", "./theme.css": "./generated/theme.css", "./theme.json": "./theme.json",
+                    "./generated/*": "./generated/*", "./assets/*": "./assets/*", "./rust/*": "./rust/*"},
+        "files": ["src", "!src/**/*.test.*", "generated", "rust", "theme.json", "README.md", "assets/fonts", "assets/brand",
+                  "assets/icons", "LICENSE", "THIRD_PARTY_NOTICES.md"]},
+    "packages/core": {
+        "name": "@ejm/core", "main": "./src/index.ts", "types": "./src/index.ts",
+        "exports": {".": "./src/index.ts", "./contract.json": "./contract.json"},
+        "files": ["src", "!src/**/*.test.*", "contract.json", "LICENSE", "THIRD_PARTY_NOTICES.md"]},
+    "packages/ssg": {
+        "name": "@ejm/ssg", "main": "./src/index.ts", "types": "./src/index.ts", "bin": {"ejm-ssg": "./bin/ejm-ssg.mjs"},
+        "exports": {".": "./src/index.ts", "./server": "./src/server.ts", "./vite": "./src/vite.mjs", "./ssg.css": "./src/ssg.css"},
+        "files": ["bin", "src", "!src/**/*.test.*", "!src/perf", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"]},
+    "packages/ui": {
+        "name": "@ejm/ui", "main": "./src/index.ts", "types": "./src/index.ts",
+        "exports": {".": "./src/index.ts", "./styles.css": "./src/styles.css", "./theme-boot.js": "./public/theme-boot.js", "./fonts/*": "./src/fonts/*",
+                    "./art/*": "./src/art/*", "./tsconfig.json": "./src/consumer.tsconfig.json",
+                    "./vite": {"types": "./src/vite.d.mts", "import": "./src/vite.mjs", "default": "./src/vite.mjs"},
+                    "./control-recipes": {"types": "./src/control-recipes.d.mts", "import": "./src/control-recipes.mjs", "default": "./src/control-recipes.mjs"}},
+        "files": ["src", "!src/**/*.test.*", "!src/components/test-setup.tsx", "!src/**/README.md", "public/theme-boot.js", "THEME.md", "COMPONENTS.md",
+                  "LICENSE", "THIRD_PARTY_NOTICES.md"]},
+}
 
 
-class UIStandardsTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.directory = tempfile.TemporaryDirectory()
-        self.addCleanup(self.directory.cleanup)
-        self.root = Path(self.directory.name)
-        self.font = "Copyright fixture\r\nOriginal OFL fixture bytes.\r\n"
-        self.hashes = patch.dict(standards.UI_FONT_HASHES, {
-            name: hashlib.sha256(self.font.encode()).hexdigest() for name in ("Manrope", "IBMPlexMono")
-        })
-        self.hashes.start()
-        self.addCleanup(self.hashes.stop)
-        self.license = "ejm-ui license scope\n\n" + standards.UI_LICENSE_SCOPE + "\n\nMIT License\nCopyright (c) 2026 Example\n" + standards.MIT_TERMS
-        self.write("LICENSE", self.license)
-        self.write("VERSION", "0.1.0\n")
-        self.write("CHANGELOG.md", "## [0.1.0] - 2026-10-19\nInitial source.\n")
-        lock: dict[str, Any] = {"version": "0.1.0", "packages": {}}
-        for path in ("", *standards.UI_PACKAGES):
-            prefix = path + "/" if path else ""
-            package: dict[str, Any] = {"version": "0.1.0", "private": True, "license": "SEE LICENSE IN LICENSE"}
-            if path:
-                package.update(name="@ejm/" + path.split("/")[1], files=["src", "!src/**/*.test.*", "LICENSE"],
-                               main="./src/index.ts", exports={".": "./src/index.ts"})
-                if path == "packages/tokens":
-                    package["files"] = ["src", "!src/**/*.test.*", "assets/fonts", "assets/brand", "assets/icons", "LICENSE"]
-                package["repository"] = {"type": "git", "url": "git+https://github.com/ejmlabs/ejm-ui.git", "directory": path}
-                self.write(prefix + "LICENSE", self.license)
-                self.write(prefix + "THIRD_PARTY_NOTICES.md", "# Third-party notices\nSee LICENSE.\n")
-            self.write(prefix + "package.json", json.dumps(package))
-            lock["packages"][path] = {"version": "0.1.0"}
-        self.write("package-lock.json", json.dumps(lock))
-        self.private = {path: standards.read(self.root, path + "/package.json") for path in standards.UI_PACKAGES}
-        reviewed = {path: standards.ui_packing(json.loads(standards.read(self.root, path + "/package.json")))
-                    for path in standards.UI_PUBLIC}
-        packing = patch.dict(standards.UI_PACKING_SHA256, reviewed)
-        packing.start()
-        self.addCleanup(packing.stop)
-        self.write("crates/ejm-tui/Cargo.toml", '[package]\nname="ejm-tui"\nversion="0.1.0"\nlicense="MIT"\npublish=false\n')
-        self.write("crates/ejm-tui/Cargo.lock", '[[package]]\nname="ejm-tui"\nversion="0.1.0"\n')
-        for path in standards.UI_FONT_NOTICES:
-            self.write(path, self.font)
+def edit(tree: RepoTree, path: str, **changes: Any) -> None:
+    """Change fields of path/package.json; a value of None removes the field."""
+    def change(data: dict[str, Any]) -> None:
+        for key, value in changes.items():
+            if value is None:
+                data.pop(key, None)
+            else:
+                data[key] = value
 
-    def write(self, name: str, value: str) -> None:
-        path = self.root / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(value.encode())
+    tree.change_json((path + "/" if path else "") + "package.json", change)
 
+
+class UIStandardsTests(TreeCase):
     def test_ui_versions_accept_scoped_licenses_and_preserve_notice_bytes(self) -> None:
-        self.assertEqual(standards.versions(self.root, "ejm-ui"), "0.1.0")
-        self.assertEqual(standards.read(self.root, standards.UI_FONT_NOTICES[0], preserve_newlines=True), self.font)
-        self.assertEqual(standards.read(self.root, standards.UI_FONT_NOTICES[0]), self.font.replace("\r\n", "\n"))
+        tree = self.tree("ejm-ui")
+        self.assertEqual(standards.versions(tree.root, "ejm-ui"), "0.1.0")
+        original = (FONTS / "Manrope-OFL.txt").read_bytes().decode()
+        self.assertEqual(standards.read(tree.root, standards.UI_FONT_NOTICES[0], preserve_newlines=True), original)
+        self.assertEqual(standards.read(tree.root, standards.UI_FONT_NOTICES[0]), original.replace("\r\n", "\n"))
+        tree.check()
 
     def test_owned_package_and_lock_versions_cannot_drift(self) -> None:
-        paths = ("package.json", *(path + "/package.json" for path in standards.UI_PACKAGES))
-        for path in paths:
-            original = (self.root / path).read_bytes()
-            changed = json.loads(original)
-            changed["version"] = "0.2.0"
-            with self.subTest(path=path):
-                self.write(path, json.dumps(changed))
-                with self.assertRaisesRegex(ValueError, "differs from VERSION"):
-                    standards.versions(self.root, "ejm-ui")
-                (self.root / path).write_bytes(original)
-        original = json.loads(standards.read(self.root, "package-lock.json"))
-        for path in ("", *standards.UI_PACKAGES):
-            changed = copy.deepcopy(original)
-            changed["packages"][path]["version"] = "0.2.0"
+        tree = self.tree("ejm-ui")
+        for path in ("", *("packages/" + name for name in UI_DIRS)):
+            with self.subTest(package=path):
+                tree = self.tree("ejm-ui")
+                edit(tree, path, version="0.2.0")
+                self.fails(tree, re.escape((path + "/" if path else "") + "package.json") + ": .*differs from VERSION")
+        for path in ("", *("packages/" + name for name in UI_DIRS)):
             with self.subTest(lock=path):
-                self.write("package-lock.json", json.dumps(changed))
-                with self.assertRaisesRegex(ValueError, "npm lock package"):
-                    standards.versions(self.root, "ejm-ui")
-        self.write("package-lock.json", json.dumps(original))
-        self.write("crates/ejm-tui/Cargo.lock", '[[package]]\nname="ejm-tui"\nversion="0.2.0"\n')
-        with self.assertRaisesRegex(ValueError, "Cargo lock package"):
-            standards.versions(self.root, "ejm-ui")
+                tree = self.tree("ejm-ui")
+                tree.change_json("package-lock.json", lambda data: data["packages"][path].update(version="0.2.0"))  # noqa: B023 - run before the next iteration
+                self.fails(tree, "Owned UI npm lock package differs from VERSION: " + re.escape(path or "<root>"))
+        tree = self.tree("ejm-ui")
+        tree.write("crates/ejm-tui/Cargo.lock", '[[package]]\nname="ejm-tui"\nversion="0.2.0"\n')
+        self.fails(tree, "Owned UI Cargo lock package differs from VERSION")
+        tree.write("crates/ejm-tui/Cargo.lock", '[[package]]\nname="other"\nversion="0.1.0"\n')
+        self.fails(tree, "Owned UI Cargo lock package differs from VERSION")
+        tree.write("crates/ejm-tui/Cargo.lock", '[[package]]\nname="ejm-tui"\nversion="0.1.0"\n[[package]]\nname="ejm-tui"\nversion="0.1.0"\n')
+        self.fails(tree, "Owned UI Cargo lock package differs from VERSION")
 
-    def test_new_owned_package_requires_policy_review(self) -> None:
-        self.write("packages/unreviewed/package.json", '{"version":"0.1.0"}')
-        with self.assertRaisesRegex(ValueError, "inventory changed"):
-            standards.versions(self.root, "ejm-ui")
+    def test_a_new_private_package_needs_no_shared_change(self) -> None:
+        tree = self.tree("ejm-ui")
+        tree.add_ui_package("extra")
+        tree.change_json("package-lock.json", lambda data: data["packages"].update({"packages/extra": {"version": "0.1.0"}}))
+        tree.check()
+        # Its version, lock entry, privacy and notices are still checked through the glob.
+        edit(tree, "packages/extra", version="0.2.0")
+        self.fails(tree, "packages/extra/package.json: version differs from VERSION")
+        edit(tree, "packages/extra", version="0.1.0")
+        tree.change_json("package-lock.json", lambda data: data["packages"].pop("packages/extra"))
+        self.fails(tree, r"package-lock.json: missing key packages\.packages/extra\.version")
+        tree.change_json("package-lock.json", lambda data: data["packages"].update({"packages/extra": {"version": "0.1.0"}}))
+        for name, changes in (("not private", {"private": None}), ("public config", {"private": None, "publishConfig": {"access": "public", "provenance": True}}),
+                              ("private false", {"private": False}), ("another license", {"license": "MIT"}),
+                              ("other repository", {"repository": {"type": "git", "url": "https://example.com/x.git", "directory": "packages/extra"}})):
+            with self.subTest(name):
+                tree.add_ui_package("extra", **changes)
+                self.fails(tree, "packages/extra|must remain private|repository metadata")
+        tree.add_ui_package("extra")
+        tree.write("packages/extra/THIRD_PARTY_NOTICES.md", "")
+        self.fails(tree, "UI package needs complete scoped license and third-party notices: packages/extra")
+        tree.add_ui_package("extra")
+        (tree.root / "packages/extra/LICENSE").unlink()
+        self.fails(tree, "Missing or unsafe file: packages/extra/LICENSE")
+
+    def test_the_glob_lists_directories_with_a_package_json_and_follows_no_symlink(self) -> None:
+        tree = self.tree("ejm-ui")
+        self.assertEqual(standards.ui_packages(tree.root), sorted("packages/" + name for name in UI_DIRS))
+        (tree.root / "packages/notes").mkdir()
+        tree.write("packages/README.md", "text\n")
+        self.assertEqual(standards.ui_packages(tree.root), sorted("packages/" + name for name in UI_DIRS))
+        outside = tempfile.TemporaryDirectory()
+        self.addCleanup(outside.cleanup)
+        Path(outside.name, "package.json").write_text("{}")
+        (tree.root / "packages/linked").symlink_to(outside.name, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "packages/linked must not be a symlink"):
+            standards.ui_packages(tree.root)
+        self.fails(tree, "packages/linked must not be a symlink")
+        (tree.root / "packages/linked").unlink()
+        (tree.root / "packages/broken").mkdir()
+        (tree.root / "packages/broken/package.json").symlink_to(Path(outside.name, "package.json"))
+        self.assertIn("packages/broken", standards.ui_packages(tree.root))
+        self.fails(tree, "Missing or unsafe file: packages/broken/package.json")
+
+    def test_a_symlinked_packages_directory_is_rejected(self) -> None:
+        tree = self.tree("ejm-ui")
+        (tree.root / "packages").rename(tree.root / "moved")
+        (tree.root / "packages").symlink_to(tree.root / "moved", target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "packages must not be a symlink"):
+            standards.ui_packages(tree.root)
+        self.fails(tree, "packages must not be a symlink")
+
+    def test_too_many_packages_are_rejected(self) -> None:
+        tree = self.tree("ejm-ui")
+        for index in range(60):
+            tree.write(f"packages/p{index}/package.json", "{}")
+        with self.assertRaisesRegex(ValueError, "Too many owned UI packages"):
+            standards.ui_packages(tree.root)
+
+    def test_a_missing_public_package_is_reported(self) -> None:
+        tree = self.tree("ejm-ui")
+        for path in standards.UI_PUBLIC:
+            (tree.root / path / "package.json").unlink()
+        problems = self.fails(tree, "packages/tokens: the reviewed public UI package is missing")
+        self.assertEqual(len([problem for problem in problems if "reviewed public UI package is missing" in problem]), 4)
 
     def test_license_cannot_expand_to_reserved_material_or_lose_software_terms(self) -> None:
-        for changed in ("MIT License\nCopyright 2026 Example\n" + standards.MIT_TERMS,
-                        self.license.replace(standards.MIT_TERMS, "Incomplete terms.")):
+        tree = self.tree("ejm-ui")
+        for changed in ("MIT License\nCopyright 2026 Example\n" + standards.MIT_TERMS, UI_LICENSE.replace(standards.MIT_TERMS, "Incomplete terms."),
+                        UI_LICENSE.replace("ejm-ui license scope", "license scope"), UI_LICENSE.replace(standards.UI_LICENSE_SCOPE, "All rights granted."),
+                        UI_LICENSE.replace("MIT License", "License"), ""):
             with self.subTest(license=changed[:40]):
-                self.write("LICENSE", changed)
+                tree.write("LICENSE", changed)
                 with self.assertRaisesRegex(ValueError, "reserved brand rights"):
-                    standards.licenses(self.root, "ejm-ui")
+                    standards.licenses(tree.root, "ejm-ui")
+        tree.write("LICENSE", UI_LICENSE)
+        standards.licenses(tree.root, "ejm-ui")
 
     def test_package_identity_privacy_and_notices_are_required(self) -> None:
-        for path in standards.UI_PACKAGES:
-            manifest_path = path + "/package.json"
-            original = json.loads(standards.read(self.root, manifest_path))
+        for path in ("packages/" + name for name in UI_DIRS):
+            tree = self.tree("ejm-ui")
             for field, changed in (("license", "MIT"), ("private", False), ("repository", {"url": "https://example.com"})):
                 with self.subTest(package=path, field=field):
-                    self.write(manifest_path, json.dumps({**original, field: changed}))
+                    original = json.loads(tree.read(path + "/package.json"))
+                    edit(tree, path, **{field: changed})
                     with self.assertRaises(ValueError):
-                        standards.licenses(self.root, "ejm-ui")
-            self.write(manifest_path, json.dumps(original))
-            notice = path + "/THIRD_PARTY_NOTICES.md"
-            self.write(notice, "")
+                        standards.licenses(tree.root, "ejm-ui")
+                    tree.write(path + "/package.json", json.dumps(original))
+            tree.write(path + "/THIRD_PARTY_NOTICES.md", "")
             with self.subTest(package=path, field="notice"), self.assertRaisesRegex(ValueError, "third-party notices"):
-                standards.licenses(self.root, "ejm-ui")
-            self.write(notice, "# Third-party notices\nSee LICENSE.\n")
-
-    def make_public(self, path: str, **changes: Any) -> None:
-        """Make a package public with the reviewed packing fields, then apply changes (None removes a field)."""
-        manifest = path + "/package.json"
-        package = json.loads(self.private[path])
-        package.pop("private", None)
-        package["publishConfig"] = {"access": "public", "provenance": True}
-        package.update(changes)
-        self.write(manifest, json.dumps({key: value for key, value in package.items() if value is not None}))
+                standards.licenses(tree.root, "ejm-ui")
+            tree.write(path + "/THIRD_PARTY_NOTICES.md", "# Notices\n")
+            tree.write(path + "/LICENSE", "MIT License\n")
+            with self.subTest(package=path, field="package license"), self.assertRaisesRegex(ValueError, "complete scoped license"):
+                standards.licenses(tree.root, "ejm-ui")
 
     def test_exactly_the_owner_public_set_may_publish_with_the_exact_configuration(self) -> None:
-        for path in standards.UI_PUBLIC:
-            self.make_public(path)
-        standards.licenses(self.root, "ejm-ui")
+        tree = self.tree("ejm-ui")
+        standards.licenses(tree.root, "ejm-ui")
         self.assertEqual(standards.UI_PUBLIC, ("packages/core", "packages/ssg", "packages/tokens", "packages/ui"))
         for path in standards.UI_PUBLIC:
-            original = standards.read(self.root, path + "/package.json")
+            original = tree.read(path + "/package.json")
             for name, changes in (("private false", {"private": False}),
                                   ("no config", {"publishConfig": None}),
                                   ("restricted", {"publishConfig": {"access": "restricted", "provenance": True}}),
@@ -147,190 +195,221 @@ class UIStandardsTests(unittest.TestCase):
                                   ("float provenance", {"publishConfig": {"access": "public", "provenance": 1.0}}),
                                   ("changed license", {"license": "MIT"})):
                 with self.subTest(package=path, change=name):
-                    package = json.loads(original)
-                    package.update(changes)
-                    if changes.get("publishConfig", 0) is None:
-                        del package["publishConfig"]
-                    self.write(path + "/package.json", json.dumps(package))
+                    edit(tree, path, **changes)
                     with self.assertRaises(ValueError):
-                        standards.licenses(self.root, "ejm-ui")
-            self.write(path + "/package.json", original)
+                        standards.licenses(tree.root, "ejm-ui")
+                    tree.write(path + "/package.json", original)
+            standards.licenses(tree.root, "ejm-ui")
+        # A package in the public set may also be held back by marking it private.
+        edit(tree, "packages/ui", private=True)
+        standards.licenses(tree.root, "ejm-ui")
 
     def test_other_packages_and_the_root_must_stay_private(self) -> None:
-        private_only = ("", *(path for path in standards.UI_PACKAGES if path not in standards.UI_PUBLIC))
+        private_only = ("", *("packages/" + name for name in UI_DIRS if "packages/" + name not in standards.UI_PUBLIC))
         self.assertEqual(private_only, ("", "packages/demos", "packages/ink", "packages/shots", "packages/site"))
+        tree = self.tree("ejm-ui")
         for path in private_only:
-            manifest = (path + "/" if path else "") + "package.json"
-            original = json.loads(standards.read(self.root, manifest))
-            del original["private"]
-            original["publishConfig"] = {"access": "public", "provenance": True}
             with self.subTest(package=path):
-                self.write(manifest, json.dumps(original))
+                edit(tree, path, private=None, publishConfig={"access": "public", "provenance": True})
                 with self.assertRaisesRegex(ValueError, "must remain private"):
-                    standards.licenses(self.root, "ejm-ui")
-                self.write(manifest, json.dumps({**original, "private": True}))
-                standards.licenses(self.root, "ejm-ui")
+                    standards.licenses(tree.root, "ejm-ui")
+                edit(tree, path, private=True)
+                standards.licenses(tree.root, "ejm-ui")
 
-    def test_public_packages_must_match_the_reviewed_packing_fields_exactly(self) -> None:
-        for path in standards.UI_PUBLIC:
-            self.make_public(path)
-        standards.licenses(self.root, "ejm-ui")
-        tokens = json.loads(standards.read(self.root, "packages/tokens/package.json"))
-        base = tokens["files"]
-        deviations = {
-            "name": ("@ejm/other", "ejm-tokens", "@EJM/tokens", ""),
-            "files": ([*base, "assets"], [*base, "assets/logos"], [*base, "./assets"], [*base, "assets/*"], [*base, "!!assets"],
-                      [*base, "Assets"], [*base, "assets/fonts"], base[::-1], base[:-1], [*base, "README.md"], ["assets"], [], "assets/fonts"),
-            "main": ("assets/logos/x.svg", "Assets/logos/x.svg", "ASSETS/LOGOS/X.SVG", "./src/other.ts", 1),
-            "types": ("Assets/logos/x.svg", "./src/other.d.ts"),
-            "typings": ("./src/index.ts",),
-            "exports": ({".": "./assets/logos/x.svg"}, {}, "./src/index.ts"),
-            "bin": ("assets/logos/x.svg", "Assets/logos/x.svg", {"x": "ASSETS/LOGOS/X.SVG"}, {"x": "./src/index.ts"}),
-            "browser": ("assets/logos/x.svg", "Assets/logos/x.svg", {"./src/index.ts": False}),
-            "module": ("./src/index.ts",),
-            "directories": ({"bin": "assets"}, {"bin": "assets/logos"}, {"bin": "Assets"}, {"man": "man"}, {}, "assets"),
-            "man": ("assets/logos/x.1", ["x.1"]),
-            "bundleDependencies": (True, []),
-            "bundledDependencies": (True, []),
-            "workspaces": (["assets"],),
-            "scripts": ({"prepack": "cp -r assets/logos assets/icons"}, {"prepare": "node x.mjs"}, {"postinstall": "node x.mjs"},
-                        {"preprepare": "x"}, {"postprepare": "x"}, {"postpack": "x"}, {"prepublish": "x"}, {"prepublishOnly": "x"},
-                        {"publish": "x"}, {"postpublish": "x"}, {"preinstall": "x"}, {"install": "x"}, "prepack", ["prepack"]),
-        }
-        for path in standards.UI_PUBLIC:
-            for field, values in deviations.items():
-                for value in values:
-                    with self.subTest(package=path, field=field, value=value):
-                        self.make_public(path, **{field: value})
-                        with self.assertRaisesRegex(ValueError, "differ from the reviewed values"):
-                            standards.licenses(self.root, "ejm-ui")
-            for field in ("name", "files", "main", "exports"):
-                with self.subTest(package=path, removed=field):
-                    self.make_public(path, **{field: None})
-                    with self.assertRaisesRegex(ValueError, "differ from the reviewed values"):
-                        standards.licenses(self.root, "ejm-ui")
-            self.make_public(path)
-            standards.licenses(self.root, "ejm-ui")
-
-    def test_packing_digest_is_exact_about_types_order_and_field_set(self) -> None:
-        package = {"name": "@ejm/x", "files": ["src"], "main": "./src/index.ts"}
-        digest = standards.ui_packing(package)
-        self.assertEqual(digest, standards.ui_packing({"main": "./src/index.ts", "files": ["src"], "name": "@ejm/x", "version": "1"}))
-        self.assertEqual(digest, standards.ui_packing({**package, "scripts": {"build": "x", "check": "y"}}))
-        self.assertNotEqual(digest, standards.ui_packing({**package, "scripts": {"build": "x", "prepack": "y"}}))
-        for changed in ({**package, "files": ["src", "src"]}, {**package, "files": [["src"]]}, {**package, "main": "./SRC/index.ts"},
-                        {**package, "directories": {}}, {**package, "bin": None}, {"files": ["src"], "name": "@ejm/x"}):
-            self.assertNotEqual(digest, standards.ui_packing(changed), changed)
-
-    def test_reviewed_values_for_public_packages_match_the_recorded_digests(self) -> None:
-        reviewed = {
-            "packages/tokens": {
-                "name": "@ejm/tokens", "main": "./src/index.ts", "types": "./src/index.ts",
-                "exports": {".": "./src/index.ts", "./tailwind.css": "./generated/tailwind.css", "./window.css": "./generated/window.css",
-                            "./neutral.css": "./generated/neutral.css", "./theme.css": "./generated/theme.css", "./theme.json": "./theme.json",
-                            "./generated/*": "./generated/*", "./assets/*": "./assets/*", "./rust/*": "./rust/*"},
-                "files": ["src", "!src/**/*.test.*", "generated", "rust", "theme.json", "README.md", "assets/fonts", "assets/brand",
-                          "assets/icons", "LICENSE", "THIRD_PARTY_NOTICES.md"]},
-            "packages/core": {
-                "name": "@ejm/core", "main": "./src/index.ts", "types": "./src/index.ts",
-                "exports": {".": "./src/index.ts", "./contract.json": "./contract.json"},
-                "files": ["src", "!src/**/*.test.*", "contract.json", "LICENSE", "THIRD_PARTY_NOTICES.md"]},
-            "packages/ssg": {
-                "name": "@ejm/ssg", "main": "./src/index.ts", "types": "./src/index.ts", "bin": {"ejm-ssg": "./bin/ejm-ssg.mjs"},
-                "exports": {".": "./src/index.ts", "./server": "./src/server.ts", "./vite": "./src/vite.mjs",
-                            "./ssg.css": "./src/ssg.css"},
-                "files": ["bin", "src", "!src/**/*.test.*", "!src/perf", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"]},
-            "packages/ui": json.loads("""
-            {
-    "name": "@ejm/ui",
-                "main": "./src/index.ts",
-                "types": "./src/index.ts",
-                "exports": {
-                    ".": "./src/index.ts",
-                    "./styles.css": "./src/styles.css",
-                    "./styles-docs.css": "./src/styles-docs.css",
-                    "./styles-app.css": "./src/styles-app.css",
-                    "./styles-terminal.css": "./src/styles-terminal.css",
-                    "./theme-boot.js": "./public/theme-boot.js",
-                    "./font-preloads": "./src/font-preloads.ts",
-                    "./catalog.json": "./src/catalog.json",
-                    "./fonts/*": "./src/fonts/*",
-                    "./art/*": "./src/art/*",
-                    "./app": "./src/app/index.ts",
-                    "./app/messages": "./src/app/messages.ts",
-                    "./app/scale": "./src/app/scale.ts",
-                    "./app/useBox": "./src/app/useBox.ts",
-                    "./app/*": "./src/app/*.tsx",
-                    "./docs": "./src/docs/index.ts",
-                    "./docs/highlight": "./src/docs/highlight.ts",
-                    "./docs/highlight-all": "./src/docs/highlight-all.ts",
-                    "./docs/hooks": "./src/docs/hooks.ts",
-                    "./docs/*": "./src/docs/*.tsx",
-                    "./motion": "./src/motion/index.ts",
-                    "./motion/useDrawOn": "./src/motion/useDrawOn.ts",
-                    "./motion/useReveal": "./src/motion/useReveal.ts",
-                    "./motion/*": "./src/motion/*.tsx",
-                    "./layout": "./src/layout/index.ts",
-                    "./layout/*": "./src/layout/*.tsx",
-                    "./shell": "./src/shell/index.ts",
-                    "./shell/*": "./src/shell/*.tsx",
-                    "./hooks": "./src/hooks/index.ts",
-                    "./hooks/*": "./src/hooks/*.ts",
-                    "./components/TerminalWorkspace": "./src/terminal/TerminalWorkspace.tsx",
-                    "./components/*": "./src/components/*.tsx",
-                    "./lib/utils": "./src/lib/utils.ts",
-                    "./styles-static.css": "./src/styles-static.css",
-                    "./components/NativeCheckbox": "./src/static/NativeCheckbox.tsx",
-                    "./shell/Disclosure": "./src/static/Disclosure.tsx",
-                    "./layout/ActionRows": "./src/static/ActionRows.tsx",
-                    "./layout/DocumentContent": "./src/static/DocumentContent.tsx",
-                    "./styles-site.css": "./src/styles-site.css",
-                    "./static.css": "./public/static.css",
-                    "./control-recipes": {
-                        "types": "./src/control-recipes.d.mts",
-                        "import": "./src/control-recipes.mjs",
-                        "default": "./src/control-recipes.mjs"
-                    }
-                },
-                "files": [
-                    "src",
-                    "!src/**/*.test.*",
-                    "!src/components/test-setup.tsx",
-                    "!src/**/README.md",
-                    "public/theme-boot.js",
-                    "THEME.md",
-                    "COMPONENTS.md",
-                    "LICENSE",
-                    "THIRD_PARTY_NOTICES.md",
-                    "public/static.css"
-                ]
-            }"""),
-        }
-        for path, package in reviewed.items():
+    def test_the_reviewed_manifests_satisfy_the_structural_rules(self) -> None:
+        self.assertEqual(sorted(REVIEWED), sorted(standards.UI_PUBLIC))
+        self.assertEqual(sorted(standards.UI_PACKING_PREFIXES), sorted(standards.UI_PUBLIC))
+        for path, package in REVIEWED.items():
             with self.subTest(package=path):
-                self.assertEqual(standards.ui_packing(package), RECORDED_PACKING[path])
-        self.assertEqual(sorted(RECORDED_PACKING), sorted(standards.UI_PUBLIC))
+                self.assertEqual(standards.ui_packing_problems(path, package), [])
+        tree = self.tree("ejm-ui")
+        for path, package in REVIEWED.items():
+            tree.write(path + "/package.json", json.dumps({**package, "version": "0.1.0", "license": "SEE LICENSE IN LICENSE", "publishConfig": {"access": "public", "provenance": True},
+                                                           "repository": {"type": "git", "url": "git+https://github.com/ejmlabs/ejm-ui.git", "directory": path}}))
+        tree.check()
+
+    def test_every_reviewed_prefix_is_a_reviewed_files_entry_and_nothing_more(self) -> None:
+        for path, package in REVIEWED.items():
+            entries = {entry for entry in package["files"] if not entry.startswith("!")}
+            self.assertEqual(entries, set(standards.UI_PACKING_PREFIXES[path]), path)
+
+    def test_routine_changes_inside_the_reviewed_prefixes_need_no_shared_change(self) -> None:
+        tree = self.tree("ejm-ui")
+        changes = {
+            "packages/tokens": {"files": ["!src/**/*.test.*", "!**/*.map", "src", "src/new/file.ts", "./generated", "generated/**", "rust", "theme.json", "assets/fonts/*.woff2",
+                                          "assets/brand/mark.svg", "assets/icons", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"],
+                                "exports": {".": "./src/other.ts", "./new": "./generated/new.css", "./art/*": "./assets/logos/*"}, "main": "src/other.ts",
+                                "scripts": {"build": "node build.mjs", "test": "node test.mjs", "check": "x"}},
+            "packages/ssg": {"files": ["bin", "bin/extra.mjs", "src", "LICENSE", "THIRD_PARTY_NOTICES.md"], "bin": {"ejm-ssg": "bin/ejm-ssg.mjs", "other": "./bin/other.mjs"}},
+            "packages/ui": {"files": ["src", "public/theme-boot.js", "THEME.md", "LICENSE", "THIRD_PARTY_NOTICES.md"], "types": "./src/other.d.ts",
+                            "browser": {"./src/node.ts": False, "./src/web.ts": "./src/browser.ts"}},
+            "packages/core": {"files": ["src", "contract.json", "LICENSE", "THIRD_PARTY_NOTICES.md"], "directories": {"lib": "src"}},
+        }
+        for path, edits in changes.items():
+            with self.subTest(package=path):
+                edit(tree, path, **edits)
+                tree.check()
+
+    def test_public_packages_must_keep_the_exact_name(self) -> None:
+        for path in standards.UI_PUBLIC:
+            for name in ("@ejm/other", "ejm-tokens", "@EJM/" + path.split("/")[1], "", None, 3, ["@ejm/" + path.split("/")[1]]):
+                with self.subTest(package=path, name=name):
+                    tree = self.tree("ejm-ui")
+                    edit(tree, path, name=name)
+                    self.fails(tree, re.escape(path) + "/package.json: name must be @ejm/" + path.split("/")[1])
+
+    def test_public_packages_cannot_run_lifecycle_scripts_or_bundle(self) -> None:
+        for path in standards.UI_PUBLIC:
+            tree = self.tree("ejm-ui")
+            for hook in standards.UI_LIFECYCLE_SCRIPTS:
+                with self.subTest(package=path, hook=hook):
+                    edit(tree, path, scripts={"build": "x", hook: "node x.mjs"})
+                    self.fails(tree, "lifecycle script " + hook + " could change the packed files")
+            for scripts in ("prepack", ["prepack"], 3):
+                with self.subTest(package=path, scripts=scripts):
+                    edit(tree, path, scripts=scripts)
+                    self.fails(tree, "scripts must be an object")
+            edit(tree, path, scripts={"build": "x", "prebuild": "y", "postbuild": "z", "test": "w", "pretest": "v"})
+            tree.check()
+            edit(tree, path, scripts=None)
+            for field, value in (("bundleDependencies", True), ("bundleDependencies", []), ("bundledDependencies", ["a"]), ("workspaces", ["assets"]), ("workspaces", [])):
+                with self.subTest(package=path, field=field, value=value):
+                    edit(tree, path, **{field: value})
+                    self.fails(tree, field + " could change the packed files")
+                    edit(tree, path, **{field: None})
+
+    def test_private_packages_are_not_subject_to_the_packing_rules(self) -> None:
+        tree = self.tree("ejm-ui")
+        edit(tree, "packages/demos", scripts={"prepack": "x", "postinstall": "y"}, files=["assets"], workspaces=["x"], name="anything")
+        tree.check()
+
+    def test_public_packages_must_list_what_they_pack_inside_the_reviewed_prefixes(self) -> None:
+        for path in standards.UI_PUBLIC:
+            tree = self.tree("ejm-ui")
+            for name, files in {"missing": None, "empty": [], "string": "src", "non-string": ["src", 1], "nested": [["src"]]}.items():
+                with self.subTest(package=path, files=name):
+                    edit(tree, path, files=files)
+                    self.fails(tree, re.escape(path) + "/package.json: files must list exactly what is packed")
+            for entry in ("assets", "assets/logos", "assets/artwork/x.svg", "./assets", "assets/*", "!!assets", "../x", "/etc/passwd", "src/../assets/logos", "*", "**/*.svg", "brand",
+                          "logos", "Src", "src*", "srcx/y", "src\\..\\assets", "./", ".", "", "./../x", "src//x", "assets/fonts/../logos", "node_modules", "SRC"):
+                with self.subTest(package=path, entry=entry):
+                    base = list(standards.UI_PACKING_PREFIXES[path])
+                    edit(tree, path, files=[*base, entry])
+                    self.fails(tree, re.escape(path) + "/package.json: files entry " + re.escape(repr(entry)) + " is outside the reviewed set")
+
+    def test_the_ui_tarball_no_longer_packs_the_static_stylesheet(self) -> None:
+        ui = REVIEWED["packages/ui"]
+        for entry in ("public/static.css", "./public/static.css", "public", "public/*"):
+            with self.subTest(entry=entry):
+                problems = standards.ui_packing_problems("packages/ui", {**ui, "files": [*ui["files"], entry]})
+                self.assertEqual(len(problems), 1, problems)
+                self.assertIn("files entry " + repr(entry) + " is outside the reviewed set", problems[0])
+
+    def test_the_tokens_tarball_cannot_gain_brand_logos_or_artwork(self) -> None:
+        tokens = REVIEWED["packages/tokens"]
+        for entry in ("assets", "assets/*", "assets/logos", "assets/artwork", "assets/logos/x.svg", "./assets", "assets/brand/../logos", "assets/Brand"):
+            with self.subTest(entry=entry):
+                problems = standards.ui_packing_problems("packages/tokens", {**tokens, "files": [*tokens["files"], entry]})
+                self.assertEqual(len(problems), 1, problems)
+        for entry in ("assets/brand", "assets/brand/mark.svg", "assets/icons/x.svg", "assets/fonts/Manrope.woff2", "./assets/fonts"):
+            with self.subTest(entry=entry):
+                self.assertEqual(standards.ui_packing_problems("packages/tokens", {**tokens, "files": [*tokens["files"], entry]}), [])
+        for field, value in (("main", "./assets/logos/x.svg"), ("browser", "assets/logos/x.svg"), ("bin", {"x": "./assets/logos/x.svg"}), ("man", ["assets/logos/x.1"]),
+                             ("directories", {"bin": "assets/logos"}), ("main", "ASSETS/LOGOS/X.SVG"), ("bin", "assets/artwork/x.mjs"), ("man", "x.1")):
+            with self.subTest(field=field):
+                self.assertEqual(len(standards.ui_packing_problems("packages/tokens", {**tokens, field: value})), 1)
+
+    def test_files_that_npm_always_packs_are_held_to_the_same_prefixes(self) -> None:
+        for path in standards.UI_PUBLIC:
+            tree = self.tree("ejm-ui")
+            for field, value in (("main", "assets/logos/x.svg"), ("main", "./Assets/logos/x.svg"), ("main", "./other/index.js"), ("browser", "assets/logos/x.svg"),
+                                 ("browser", {"./src/a.ts": "./assets/logos/x.svg"}), ("bin", "assets/logos/x.svg"), ("bin", {"x": "./assets/logos/x.svg"}),
+                                 ("bin", {"x": "./src/ok.mjs", "y": "../outside.mjs"}), ("man", "x.1"), ("man", ["./src/x.1", "assets/logos/x.1"]),
+                                 ("directories", {"bin": "assets"}), ("directories", {"man": "man"}), ("directories", {"bin": "assets/logos"})):
+                with self.subTest(package=path, field=field, value=value):
+                    edit(tree, path, **{field: value})
+                    self.fails(tree, re.escape(path) + "/package.json: " + field + " .* is outside the reviewed set")
+                    edit(tree, path, **{field: None})
+            tree.check()
+
+    def test_fields_that_npm_does_not_pack_are_not_restricted(self) -> None:
+        tree = self.tree("ejm-ui")
+        for path in standards.UI_PUBLIC:
+            edit(tree, path, types="./assets/logos/x.d.ts", typings="./x", module="./assets/logos/x.mjs", exports={".": "./assets/logos/x.svg", "./x": {"import": "./y.mjs"}})
+        tree.check()
+
+    def test_strings_yields_path_leaves_not_keys(self) -> None:
+        self.assertEqual(sorted(standards.strings("a")), ["a"])
+        self.assertEqual(sorted(standards.strings(["a", ["b"], {"k": "c", "d": {"e": "f"}}, 1, None, True])), ["a", "b", "c", "f"])
+        self.assertEqual(list(standards.strings(None)), [])
+        self.assertEqual(sorted(standards.strings({"x": "y", "z": False})), ["y"])
+
+    def test_inside_decides_by_whole_path_segments_and_allows_removals(self) -> None:
+        prefixes = ("src", "assets/brand", "LICENSE")
+        for entry in ("src", "src/a", "./src/a/b", "assets/brand", "assets/brand/x.svg", "LICENSE", "!anything", "!src/**/*.test.*", "!../x", "src/*.ts", "src/**"):
+            with self.subTest(entry=entry):
+                self.assertTrue(standards.inside(entry, prefixes))
+        for entry in ("srcs", "assets", "assets/brandx", "assets/brand2/x", "LICENSES", "!!src", "..", "../src", "/src", "src/..", "src/./a", "a\\b", "", "./", "src//a"):
+            with self.subTest(entry=entry):
+                self.assertFalse(standards.inside(entry, prefixes))
 
     def test_font_licenses_must_be_original_and_match_the_ui_package(self) -> None:
+        tree = self.tree("ejm-ui")
         source, copied = standards.UI_FONT_NOTICES[0], standards.UI_FONT_NOTICES[2]
-        self.write(source, self.font + "Changed terms.\n")
-        with self.assertRaisesRegex(ValueError, "original OFL"):
-            standards.licenses(self.root, "ejm-ui")
-        self.write(source, self.font)
-        self.write(copied, self.font.replace("\r\n", "\n"))
-        standards.licenses(self.root, "ejm-ui")
-        self.write(copied, self.font + "Changed terms.\n")
-        with self.assertRaisesRegex(ValueError, "differs from the token owner"):
-            standards.licenses(self.root, "ejm-ui")
+        original = tree.read(source)
+        tree.write(source, original + "Changed terms.\n")
+        with self.assertRaisesRegex(ValueError, "UI fonts need their original OFL"):
+            standards.licenses(tree.root, "ejm-ui")
+        tree.write(source, original)
+        tree.write(copied, original.replace("\r\n", "\n"))
+        standards.licenses(tree.root, "ejm-ui")
+        tree.write(copied, original + "Changed terms.\n")
+        with self.assertRaisesRegex(ValueError, "UI package font notice differs from the token owner"):
+            standards.licenses(tree.root, "ejm-ui")
+        tree.write(copied, original)
+        for path in standards.UI_FONT_NOTICES:
+            with self.subTest(path=path):
+                (tree.root / path).unlink()
+                with self.assertRaisesRegex(ValueError, "Missing or unsafe file: " + re.escape(path)):
+                    standards.licenses(tree.root, "ejm-ui")
+                tree.write(path, (FONTS / (re.search(r"(Manrope|IBMPlexMono)", path)[0] + "-OFL.txt")).read_bytes())  # type: ignore[index]
 
     def test_original_public_font_notices_pass_the_unpatched_hash_allowlist(self) -> None:
-        self.hashes.stop()
-        fixtures = Path(__file__).parent / "fixtures" / "font-notices"
+        tree = self.tree("ejm-ui")
         for name in ("Manrope", "IBMPlexMono"):
-            original = (fixtures / (name + "-OFL.txt")).read_bytes().decode("utf-8")
-            self.write("packages/tokens/assets/fonts/" + name + "-OFL.txt", original)
-            self.write("packages/ui/src/fonts/" + name + "-OFL.txt", original)
-        standards.licenses(self.root, "ejm-ui")
+            original = (FONTS / (name + "-OFL.txt")).read_bytes()
+            tree.write("packages/tokens/assets/fonts/" + name + "-OFL.txt", original)
+            tree.write("packages/ui/src/fonts/" + name + "-OFL.txt", original)
+        standards.licenses(tree.root, "ejm-ui")
+        self.assertEqual(set(standards.UI_FONT_HASHES), {"Manrope", "IBMPlexMono"})
+
+    def test_the_terminal_crate_keeps_mit_terms_and_stays_unpublished(self) -> None:
+        for name, text in {
+            "another license": '[package]\nname = "ejm-tui"\nversion = "0.1.0"\nlicense = "GPL-3.0"\npublish = false\n',
+            "no license": '[package]\nname = "ejm-tui"\nversion = "0.1.0"\npublish = false\n',
+            "published": '[package]\nname = "ejm-tui"\nversion = "0.1.0"\nlicense = "MIT"\n',
+            "publish true": '[package]\nname = "ejm-tui"\nversion = "0.1.0"\nlicense = "MIT"\npublish = true\n',
+            "publish a registry": '[package]\nname = "ejm-tui"\nversion = "0.1.0"\nlicense = "MIT"\npublish = ["crates"]\n',
+        }.items():
+            with self.subTest(name):
+                tree = self.tree("ejm-ui")
+                tree.write("crates/ejm-tui/Cargo.toml", text)
+                self.fails(tree, "UI terminal crate must retain MIT terms and remain unpublished")
+        tree = self.tree("ejm-ui")
+        (tree.root / "crates/ejm-tui/Cargo.toml").unlink()
+        self.fails(tree, "Missing or unsafe file: crates/ejm-tui/Cargo.toml")
+        tree.write("crates/ejm-tui/Cargo.toml", "[workspace]\n")
+        self.fails(tree, "crates/ejm-tui/Cargo.toml: missing key package")
+
+    def test_every_ui_problem_is_reported_together(self) -> None:
+        tree = self.tree("ejm-ui")
+        edit(tree, "packages/core", scripts={"prepack": "x"}, files=["assets"])
+        edit(tree, "packages/demos", version="0.2.0")
+        tree.write("crates/ejm-tui/Cargo.toml", '[package]\nname = "ejm-tui"\nversion = "0.1.0"\nlicense = "GPL-3.0"\n')
+        problems = self.fails(tree, "lifecycle script prepack")
+        joined = "\n".join(problems)
+        for expected in ("files entry 'assets' is outside the reviewed set", "packages/demos/package.json: version differs from VERSION", "UI terminal crate must retain MIT terms"):
+            self.assertIn(expected, joined)
 
     def test_ui_repository_is_explicit_and_other_owners_remain_rejected(self) -> None:
         with patch.dict(os.environ, {"GITHUB_REPOSITORY": "ejmlabs/ejm-ui", "GH_TOKEN": "fixture"}, clear=True):

@@ -9,6 +9,7 @@ import urllib.request
 from pathlib import Path
 
 MAX_ARCHIVE_BYTES = 64_000_000
+MAX_BINARY_BYTES = 256_000_000
 # Hosted runner (RUNNER_OS, RUNNER_ARCH) to the release target each tool publishes.
 TARGETS = {("Linux", "X64"): "x86_64-unknown-linux-musl", ("macOS", "ARM64"): "aarch64-apple-darwin", ("Windows", "X64"): "x86_64-pc-windows-msvc"}
 # Each digest matches the .sha256 file published with its release; a new version needs new reviewed digests.
@@ -46,15 +47,18 @@ def binary(tool: str, archive: bytes, triple: str) -> bytes:
         data = bundle.extractfile(member) if member.isfile() else None
         if data is None:
             raise ValueError("Tool archive has no regular binary: " + name)
+        if member.size > MAX_BINARY_BYTES:
+            raise ValueError("Tool binary exceeds its byte limit: " + name)
         return data.read()
 
 
 def install(tools: list[str], directory: Path) -> None:
     triple = target()
+    unknown = [tool for tool in tools if tool not in TOOLS]
+    if unknown:
+        raise ValueError("Unknown tool: " + ", ".join(unknown))
     directory.mkdir(parents=True, exist_ok=True)
     for tool in tools:
-        if tool not in TOOLS:
-            raise ValueError("Unknown tool: " + tool)
         url = TOOLS[tool][0].format(target=triple)
         with urllib.request.urlopen(url, timeout=60) as response:  # noqa: S310 - fixed https release URL; the digest check is the trust boundary
             archive = response.read(MAX_ARCHIVE_BYTES + 1)

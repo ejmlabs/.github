@@ -1,7 +1,7 @@
 # Build and deploy
 
 Read this before a deploy, a dry run, or a rollback. The repository's own deploy skill names
-its site directory, check script, Worker and approval rule.
+its site directory, check script and Worker.
 
 ## Why a clean build
 
@@ -14,12 +14,21 @@ your change did not touch, or a bundle that differs from CI. The revision the re
 The same goes for the site repository: a local checkout may hold another agent's work. Build
 the merge commit, not your working tree.
 
+## Config details
+
+- Pin wrangler as an exact devDependency of the package that owns the config, run it from that
+  package (`npx wrangler`), and point `$schema` at `./node_modules/wrangler/config-schema.json`.
+- Set `not_found_handling` and ship a 404 page.
+- Keep `observability` off unless a reviewed need exists. Logs can hold request content.
+- Change `compatibility_date` only in its own reviewed change, with the tests run.
+
 ## Before you start
 
 1. The PR merged through the gate (see `ejmlabs-workflow`). Read the merge commit:
    `gh pr view N --json mergeCommit --jq .mergeCommit.oid`.
-2. The repository's approval rule allows this deploy. If production deploys are marked
-   approval-gated, the user asked for this one.
+2. The repository has no `deploy.yml` caller, or the user asked for this manual deploy. With
+   the caller, CI deploys staging, then production once a maintainer approves; follow
+   [ci-deploys.md](ci-deploys.md).
 3. You know the Worker name and config path from the repository's deploy skill or README.
 
 ## Sequence
@@ -41,7 +50,7 @@ cd "$work/SITE/site"
 npm ci --ignore-scripts
 ```
 
-Then run the repository's checks in its order and stop at the first failure. For ejmlabs.com:
+Then run the repository's checks in its order and stop at the first failure. For example:
 
 ```sh
 npm run typecheck
