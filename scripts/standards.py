@@ -56,6 +56,9 @@ class Profile(NamedTuple):
 
 
 PROFILES = {
+    "ejm-chess": Profile(
+        guide="README.md#local-setup", versions=(("package.json", "version"), ("package-lock.json", "version")),
+        locks=(("package-lock.json", ("packages", "", "version")),)),
     "ejm-cli": Profile(
         guide="docs/contributing.md", versions=(("Cargo.toml", "workspace.package.version"),),
         workspace=True, cargo_lock="Cargo.lock", native=True, cache=True, deploy=True, harness_pin=True, codeql_languages="rust"),

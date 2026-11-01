@@ -73,8 +73,8 @@ python3 scripts/configure_repositories.py [--hold-actions | --protect-main] [--r
 python3 scripts/configure_repositories.py --check [--repository NAME ...] [--standards-revision SHA]
 ```
 
-The default scope is `.github`, `ejmlabs`, `ejm-cli`, `ejm-harness` and `ejm-ide`; `ejm-ui` and
-`ejm-calm` need `--repository NAME`. Apply refuses to enable Actions until reviewed callers are on
+The default scope is `.github`, `ejmlabs`, `ejm-cli`, `ejm-harness` and `ejm-ide`; `ejm-ui`, `ejm-chess`, `ejm-calm` and
+`ejm-rightkit-fs` need `--repository NAME`. Apply refuses to enable Actions until reviewed callers are on
 main (`--hold-actions` keeps them off for bootstrap). `--protect-main` adds branch protection and
 the `v*` tag ruleset. For a repository with `deploy.yml` on main, apply also creates the `staging`
 and `production` environments, each allowing deployment from `main` only. It never sets reviewers:
@@ -205,6 +205,7 @@ check caps bundle bytes, download size or dependency count.
 | `ejm-ide` | macos-15 | `npm ci --ignore-scripts`; `npm run verify`, `site:check`, `site:build` | Harness pin |
 | `ejm-ui` | ubuntu-24.04 | the owner commands below | |
 | `ejm-calm` | ubuntu-24.04 | none: the product's `.github/quality` | Its browser smoke uses the runner's Chrome |
+| `ejm-chess` | ubuntu-24.04 | none: the product's `.github/quality` | Pinned public UI source |
 
 - Product-owned gate. An executable, regular (not symlinked) `.github/quality` replaces the
   built-in commands. It runs from the product root with `npm_config_ignore_scripts=true` and needs
@@ -220,6 +221,21 @@ check caps bundle bytes, download size or dependency count.
   Linux without recommended packages. Only the CLI profile runs `./product/.github/actions/setup-ci`
   (credential-free Quality and the cache warm job); the standards accept that one step form and no
   other local action. Land and verify the action before adopting source that needs it.
+
+## ejm-chess profile
+
+[ejm-chess](https://github.com/ejmlabs/ejm-chess) is a TypeScript Workers application.
+Its `VERSION`, package manifest and both root lockfile versions must agree. Its contributor
+setup is `README.md#local-setup`. The optional member code scan uses JavaScript/TypeScript.
+Settings remain an explicit opt-in (`--repository ejm-chess`). Apply and read back the baseline
+before installing callers.
+
+Quality requires the product's executable `.github/quality` and fails closed without it. The
+product must supply a credential-free configuration for its Worker tests and run its typecheck,
+tests and build there. Its current checkout lacks `VERSION`, the required community files and
+the private Worker configuration for those tests. A caller alone is insufficient for adoption. The gate installs the optional UI
+source pinned by trusted main before running that command. The profile does not install Rust tools
+or authorize a shared site deploy.
 
 ## UI owner profile
 

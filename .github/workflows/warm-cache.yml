@@ -96,7 +96,7 @@
         "name": "Install pinned Rust tools"
         "shell": "bash"
         "run": |
-          if [[ "$PROFILE" == ejm-* ]]; then
+          if [[ "$PROFILE" == ejm-cli || "$PROFILE" == ejm-harness || "$PROFILE" == ejm-ide || "$PROFILE" == ejm-rightkit-fs || "$PROFILE" == ejm-ui ]]; then
             rustup toolchain install 1.99.1 --profile minimal --component clippy,rustfmt
             rustup default 1.99.1
             if [[ "$PROFILE" != ejm-ui ]]; then

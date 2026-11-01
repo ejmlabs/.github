@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Report an ejm-chess vulnerability privately
+    url: https://github.com/ejmlabs/ejm-chess/security/advisories/new
+    about: Do not post security details or secrets in public issues.
   - name: Report an ejm-cli vulnerability privately
     url: https://github.com/ejmlabs/ejm-cli/security/advisories/new
     about: Do not post security details or secrets in public issues.

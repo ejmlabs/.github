@@ -2,7 +2,7 @@
 
 ## Overview
 
-Shared repository policy and reusable GitHub workflows for ejm-cli,
+Shared repository policy and reusable GitHub workflows for ejm-chess, ejm-cli,
 ejm-harness, ejm-ide, ejm-ui and the ejmlabs studio. Consumers pin reviewed
 full commit SHAs. Each repository keeps its own semantic version.
 

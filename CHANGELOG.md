@@ -6,6 +6,8 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 The net change since 0.1.0:
 
+- Add an `ejm-chess` admission and standards profile for its TypeScript application, with a product-owned Quality gate and optional JavaScript/TypeScript CodeQL caller.
+
 - Member code scans request Actions read access. The settings tool requires the CodeQL subdirectory actions in the repository allowlist.
 - Add an `ejm-rightkit-fs` standards and admission profile for its dual-licensed Cargo package.
 
