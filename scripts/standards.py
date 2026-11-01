@@ -123,7 +123,7 @@ UI_FONT_HASHES = {
     "IBMPlexMono": "7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da",
 }
 INHERIT = "    secrets: inherit\n"
-# Each push to main deploys to staging, then to production once staging succeeds. The merge is the human decision.
+# Each push to main deploys to staging, then to production once a maintainer approves the production job.
 # The called workflow reads the environment's CLOUDFLARE_API_TOKEN only when the caller passes secrets on.
 SITE_DEPLOY_CALLER = """name: Deploy site
 on:

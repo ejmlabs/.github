@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Continuous staging and production deploys for the ejmlabs sites, decided by the merge.
+Continuous staging deploys and maintainer-released production deploys for the ejmlabs sites.
 
 ## Requirements
 
@@ -15,14 +15,19 @@ A push to main in an adopting site repository SHALL build the site without crede
 - **WHEN** the Wrangler config has no `env.staging` with its own name and routes
 - **THEN** the staging deploy fails and production is not offered
 
-### Requirement: Production follows staging after the merge
+### Requirement: Production waits for a maintainer
 
-Production SHALL deploy the files staging deployed as soon as staging succeeds, with no approval in GitHub: the human decision is the merge. A required reviewer on the `production` environment SHALL be allowed and SHALL NOT be required. A deploy that has started SHALL never be cancelled; the build, staging and production jobs SHALL queue per repository in push order, and a newer main commit SHALL replace only an older run that has not started.
+Production SHALL deploy the files staging deployed only after a required reviewer of the `production` environment approves the job, and only while the job's commit is still main's head. The merge releases a change to staging and the approval releases it to production. A deploy that has started SHALL never be cancelled; the build, staging and production jobs SHALL queue per repository in push order, and a newer main commit SHALL replace only an older run that has not started.
 
 #### Scenario: Unprotected environment
 
-- **WHEN** staging or production lacks a custom deployment branch policy of exactly `main`
+- **WHEN** staging or production lacks a custom deployment branch policy of exactly `main`, or production requires no reviewer
 - **THEN** the deploy fails before calling Wrangler
+
+#### Scenario: An older run approved late
+
+- **WHEN** a maintainer approves a production job after a newer commit reached main
+- **THEN** that job fails before calling Wrangler, and the newer commit's job deploys once it is approved
 
 #### Scenario: A newer push while a deploy runs
 

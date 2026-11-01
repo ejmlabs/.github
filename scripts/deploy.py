@@ -207,8 +207,22 @@ def github(path: str) -> Any:  # noqa: ANN401 - GitHub's JSON is untyped until c
     return json.loads(body)
 
 
+def required_reviewers(environment: dict[str, Any]) -> int:
+    rules = environment.get("protection_rules") or []
+    return sum(len(rule.get("reviewers") or []) for rule in rules if isinstance(rule, dict) and rule.get("type") == "required_reviewers")
+
+
+def require_main_head() -> None:
+    """A maintainer can approve an older run after main moved on. Deploying it would roll production back, and the newer commit has its own run."""
+    ref = github("/git/ref/heads/main")
+    target = ref.get("object") if isinstance(ref, dict) else None
+    head = target.get("sha") if isinstance(target, dict) else None
+    if not isinstance(head, str) or head != os.environ["GITHUB_SHA"]:
+        raise ValueError("Main has moved past this commit, so this run would roll production back. Approve the newest production run instead")
+
+
 def check_environment(environment: str) -> None:
-    """GitHub creates a missing environment without rules, so require the rule this deploy relies on: only main may deploy. A reviewer is allowed, never required."""
+    """GitHub creates a missing environment without rules, so require the rules this deploy relies on: only main may deploy, and a maintainer releases production."""
     if environment not in ENVIRONMENTS:
         raise ValueError("Unknown deploy environment: " + environment)
     found = github("/environments/" + environment)
@@ -220,6 +234,10 @@ def check_environment(environment: str) -> None:
     if (not isinstance(entries, list) or len(entries) != 1 or listing.get("total_count") != 1
             or not isinstance(entries[0], dict) or entries[0].get("name") != "main" or entries[0].get("type") != "branch"):
         raise ValueError(f"The {environment} environment must allow deployments from the main branch only")
+    if environment == "production":
+        if required_reviewers(found) < 1:
+            raise ValueError("The production environment must require a maintainer's approval before any deploy")
+        require_main_head()
 
 
 def wrangler_environment() -> dict[str, str]:

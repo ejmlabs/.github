@@ -40,9 +40,9 @@ def find(path: str) -> dict[str, Any] | None:
 
 
 class SetDeployTokenTests(unittest.TestCase):
-    def run_main(self, argv: list[str], gh: Recorder, *, accepted: bool = True, finder: Any = find) -> tuple[str, MagicMock]:
+    def run_main(self, argv: list[str], gh: Recorder, *, accepted: bool = True, finder: Any = find, reviewers: int = 1) -> tuple[str, MagicMock]:
         out = io.StringIO()
-        configure = MagicMock()
+        configure = MagicMock(return_value={"required_reviewers": reviewers})
         with patch.object(subprocess, "run", gh.run), patch.object(settings, "find", finder), \
                 patch.object(settings, "configure_environment", configure), patch.object(tool, "read_token", return_value=TOKEN), \
                 patch.object(tool, "cloudflare_accepts", return_value=accepted), contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
@@ -61,6 +61,13 @@ class SetDeployTokenTests(unittest.TestCase):
             self.assertEqual(args[:4], ["gh", "secret", "set", "CLOUDFLARE_API_TOKEN"])
         self.assertNotIn(TOKEN, output)
         self.assertIn(f"done: CLOUDFLARE_API_TOKEN is set in {len(SITE_DEPLOY) * 2} environments", output)
+
+    def test_production_without_a_reviewer_still_gets_the_token_and_a_warning(self) -> None:
+        output, _ = self.run_main(["--repository", "ejm-ui"], Recorder(), reviewers=0)
+        self.assertEqual([line for line in output.splitlines() if line.startswith("warning:")], [f"warning: ejm-ui: {settings.NO_RELEASER}"])
+        self.assertIn("ok   ejm-ui production", output)
+        output, _ = self.run_main(["--repository", "ejm-ui"], Recorder())
+        self.assertNotIn("warning:", output)
 
     def test_a_token_cloudflare_rejects_writes_nothing(self) -> None:
         gh = Recorder()
