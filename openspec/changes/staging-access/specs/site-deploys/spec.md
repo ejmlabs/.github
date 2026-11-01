@@ -19,6 +19,20 @@ After the staging deploy succeeds, the staging job SHALL request the deployed st
 - **WHEN** the wrong-secret probe answers a challenge, because the owner's bot-phase skip is mis-scoped, absent, or does not match the probe's Client-ID header
 - **THEN** the staging job fails and names the mis-scoped skip, and a challenge is never read as the gate being present
 
+### Requirement: A gated production host's deploy job verifies the same way
+
+When a site's production host sits behind an Access application, its production deploy job SHALL run the same two-read verify against the production hostname with the token values from its own environment's secrets, and SHALL fail closed on the same kinds.
+
+#### Scenario: Production verify passes
+
+- **WHEN** the production token GET answers 200 with an HTML body and the wrong-secret probe is answered by Access's own rejection
+- **THEN** the production job succeeds with the deploy verified through the gate
+
+#### Scenario: Production secrets missing
+
+- **WHEN** either Access service-token secret is unset in the `production` environment of a gated production host's job
+- **THEN** the job fails before the request and names the missing secret
+
 ### Requirement: The staging smoke takes its host and token from reviewed sources
 
 The staging host SHALL come from the reviewed Wrangler config's staging routes and SHALL be exactly one custom-domain entry whose pattern is one hostname. The token values SHALL come only from the job's environment secrets and SHALL fail the job when missing.
