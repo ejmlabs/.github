@@ -19,29 +19,38 @@ The staging smoke step SHALL read the Access service-token values only from the 
 - **WHEN** the owner rotates the service token
 - **THEN** the pipeline needs no code or repository change because the values live only in the environment secrets
 
-### Requirement: Staging Access is never weakened to make a check pass
+### Requirement: The smoke proves the gate by Access's own rejection
 
-Every live staging verification and the smoke SHALL accept only an authenticated 200 response and SHALL require an unauthenticated request to the same host to be denied. No workflow, script or instruction SHALL widen the Access boundary to make a check pass, and gerry's per-path signed-webhook bypass applications SHALL keep their current per-path scope. A bot-phase exception scoped to requests presenting the smoke token MAY exist only as an owner decision recorded in `docs/operations.md`.
+The smoke and every live staging verification SHALL learn the gate's presence only from Access's own rejection of a probe GET carrying the smoke token's Client ID with an invalid secret; a challenge never records the gate as present, and the probe answered with the page fails the check.
 
-#### Scenario: Unauthenticated access denied
+#### Scenario: Denial probe answered
 
-- **WHEN** an unauthenticated request to a staging host is redirected to the Access login or challenged
-- **THEN** the verification records the gate as present and no rule is widened
+- **WHEN** the wrong-secret probe carries the smoke token's Client ID with an invalid Client Secret and a staging host answers it
+- **THEN** only Access's own rejection, an Access-issued 403 or the Access login redirect, records the gate as present, because a challenge says nothing about the deploy and never stands in for it, and no rule is widened
 
 #### Scenario: Unauthenticated access allowed
 
-- **WHEN** an unauthenticated request to a staging host answers with the site's own page
+- **WHEN** the wrong-secret probe is answered with the site's own page instead of Access's rejection
 - **THEN** the verification fails, names the missing gate, and no rule is widened
+
+#### Scenario: Probe challenged
+
+- **WHEN** the wrong-secret probe answers a challenge
+- **THEN** the verification fails and names the missing or mis-scoped bot-phase skip, because the skip must match the probe's Client-ID header for Access to answer at all
+
+### Requirement: Staging Access is never weakened to make a check pass
+
+No workflow, script or instruction SHALL widen the Access boundary to make a check pass, and gerry's per-path signed-webhook bypass applications SHALL keep their current per-path scope. A bot-phase exception matching the smoke token's `CF-Access-Client-Id` header, its value or presence, on the staging hostnames MAY exist only as an owner decision recorded in `docs/operations.md`.
 
 #### Scenario: Boundary stays at the owner and the token
 
-- **WHEN** a change proposes an Access bypass, an allow-list entry besides the owner's email rule and the one smoke service token, a wider path scope, or an exception matching requests without the smoke token's credentials
+- **WHEN** a change proposes an Access bypass, an allow-list entry besides the owner's email rule and the one smoke service token, a wider path scope, or a bot or WAF exception matching anything besides the smoke token's Client-ID header on the staging hostnames
 - **THEN** it is refused as a widening of the boundary, and only the owner's recorded bot-phase exception exists
 
 #### Scenario: Scoped bot exception
 
-- **WHEN** the first token-carrying smoke answers the zone's bot challenge
-- **THEN** only the owner decides whether the scoped bot-phase exception applies, records it in `docs/operations.md` when applied, and every other remedy stays forbidden
+- **WHEN** the owner applies the bot-phase exception
+- **THEN** it matches only the smoke token's `CF-Access-Client-Id` header, its value or presence, only on the staging hostnames, is recorded in `docs/operations.md` with its expression, and the denial probe relies on exactly this match
 
 #### Scenario: Smoke cannot pass
 
