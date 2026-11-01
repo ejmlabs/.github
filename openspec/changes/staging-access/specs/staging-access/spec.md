@@ -45,7 +45,7 @@ The smoke and every live staging verification SHALL learn the gate's presence on
 
 ### Requirement: Staging Access is never weakened to make a check pass
 
-No workflow, script or instruction SHALL widen the Access boundary to make a check pass, and gerry's per-path signed-webhook bypass applications SHALL keep their current per-path scope. A bot-phase exception matching the smoke token's `CF-Access-Client-Id` header, its value or presence, on the staging hostnames MAY exist only as an owner decision recorded in `docs/operations.md`, and no bot-phase exception SHALL cover a production host.
+No workflow, script or instruction SHALL widen the Access boundary to make a check pass, and the non-ejmlabs product's per-path signed-webhook bypass applications SHALL keep their current per-path scope. A bot-phase exception matching the smoke token's `CF-Access-Client-Id` header, its value or presence, on the staging hostnames MAY exist only as an owner decision recorded in `docs/operations.md`, and no bot-phase exception SHALL cover a production host.
 
 #### Scenario: Boundary stays at the owner and the token
 
