@@ -712,6 +712,25 @@ class WorkflowTests(unittest.TestCase):
                 (self.directory / "cache.yml").write_text(canonical)
                 workflows(self.root, repository)
 
+    def test_code_scan_caller_is_optional_and_pinned_to_the_profile(self) -> None:
+        for repository, profile in standards.PROFILES.items():
+            if repository == ".github":
+                continue
+            with self.subTest(repository=repository):
+                canonical = consumer_workflows(self.revision, codeql_languages=profile.codeql_languages)["code-scan.yml"]
+                path = self.directory / "code-scan.yml"
+                path.write_text(canonical)
+                workflows(self.root, repository)
+                for changed in (canonical.replace(self.revision, self.other_revision),
+                                canonical.replace("security-events: write", "contents: write"),
+                                canonical.replace("languages: " + profile.codeql_languages, "languages: actions")):
+                    path.write_text(changed)
+                    with self.assertRaisesRegex(ValueError, "differs from the canonical consumer: code-scan.yml"):
+                        workflows(self.root, repository)
+                path.unlink()
+        self.assertEqual(standards.PROFILES["ejm-cli"].codeql_languages, "rust")
+        self.assertEqual(standards.PROFILES["ejm-harness"].codeql_languages, "python")
+
     def test_site_deploy_caller_passes_no_secrets(self) -> None:
         canonical = standards.SITE_DEPLOY_CALLER.replace("STANDARDS_REVISION", self.revision)
         older = canonical + "    secrets: inherit\n"

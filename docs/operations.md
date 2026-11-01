@@ -3,6 +3,14 @@
 How the shared gate, releases and site deploys are set up and run. The scripts are the exact
 specification; this guide holds what a maintainer has to decide or do.
 
+## Member code scanning
+
+Member repositories can adopt `.github/workflows/code-scan.yml` using the canonical
+caller from `consumer_workflows` in `scripts/standards.py`. Its pin must match
+`pr.yml`; its language input comes from the repository profile. The caller runs
+on pull requests, pushes to main and weekly. Adoption and required-check settings
+are managed in each member repository.
+
 ## Generated workflow size
 
 Generate shared workflows with `python3 scripts/build_workflows.py` and check
