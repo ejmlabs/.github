@@ -161,6 +161,13 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertEqual(caller["jobs"]["codeql-analysis"], {"permissions": job["permissions"], "uses": "./.github/workflows/codeql-analysis.yml",
                                                                "with": {"languages": "python, actions"}})
 
+    def test_member_codeql_caller_grants_the_reusable_job_permissions(self) -> None:
+        reusable = generated_yaml((workflows.ROOT / ".github/workflows/codeql-analysis.yml").read_text())
+        permissions = reusable["jobs"]["codeql-analysis"]["permissions"]
+        caller = consumer_workflows("a" * 40, codeql_languages="javascript-typescript")["code-scan.yml"]
+        block = "    permissions:\n" + "".join(f"      {name}: {level}\n" for name, level in permissions.items())
+        self.assertIn(block, caller)
+
     def test_own_callers_match_the_secrets_declared_at_their_pinned_revisions(self) -> None:
         repository = subprocess.run(["git", "rev-parse", "--git-dir"], cwd=workflows.ROOT, capture_output=True, check=False)
         if repository.returncode:

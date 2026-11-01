@@ -17,6 +17,15 @@ subdirectory actions. The settings tool checks this requirement. Rust uses the
 same caller and the pinned CodeQL v4 action supports it. Public repositories can
 use code scanning; private repositories also need GitHub Code Security enabled.
 
+If a scan fails at startup with no jobs, check the caller and the live Actions
+settings in that member repository. The caller job must grant `contents: read`,
+`actions: read` and `security-events: write`, matching the pinned reusable job.
+GitHub does not allow a reusable workflow to elevate the caller's permissions.
+For a selected-actions policy, check the live allowlist for the subdirectory
+pattern above. A root-only `github/codeql-action@*` entry is not the same pattern.
+Compare the caller with the canonical template after moving its pin. Local
+standards tests do not prove that GitHub accepted or ran a member workflow.
+
 The `ejm-rightkit-fs` profile checks its single Cargo package and its
 `MIT OR Apache-2.0` license metadata. It must adopt the shared community files,
 `VERSION`, callers and an executable `.github/quality` before its gate can pass.
