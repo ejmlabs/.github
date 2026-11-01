@@ -71,6 +71,11 @@ def generated_yaml(text: str) -> Any:
     return parsed
 
 
+# Sites that link @ejm/* from a sibling ejm-ui install its dependencies first, so the file: links resolve into built packages.
+UI_INSTALL = ["npm", "--prefix", "../ejm-ui", "ci", "--ignore-scripts"]
+HARNESS_BUILD = [UI_INSTALL, ["npm", "--prefix", "site", "ci", "--ignore-scripts"], ["npm", "--prefix", "site", "run", "build"]]
+IDE_BUILD = [UI_INSTALL, ["npm", "ci", "--ignore-scripts"], ["npm", "run", "site:build"]]
+
 # Every command a gate script may run is a stub that only records itself, and a product's own gate is a script that does the same.
 RECORDER = """import json, os, sys
 sys.stdin.read()
@@ -338,9 +343,9 @@ class WorkflowSecurityTests(unittest.TestCase):
         (root / "temp").mkdir()
         (root / "bin").mkdir()
         product = root / "product"
-        for name in ("distribution", "website/dist", "site/dist", "site/public"):
+        for name in ("distribution", "website/dist", "site/dist"):
             (product / name).mkdir(parents=True)
-        for name in ("distribution/wrangler.jsonc", "website/dist/index.html", "site/wrangler.jsonc", "site/dist/index.html", "site/public/index.html"):
+        for name in ("distribution/wrangler.jsonc", "website/dist/index.html", "site/wrangler.jsonc", "site/dist/index.html"):
             (product / name).write_text(name)
         if stub_npm:
             stub = root / "bin/npm"
@@ -362,8 +367,14 @@ class WorkflowSecurityTests(unittest.TestCase):
     def test_site_build_runs_the_profile_commands_when_the_product_has_no_build_script(self) -> None:
         result, root = self.build_site("ejm-ide")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual([call["command"] for call in self.commands(root)], [["npm", "ci", "--ignore-scripts"], ["npm", "run", "site:build"]])
+        self.assertEqual([call["command"] for call in self.commands(root)], IDE_BUILD)
         self.assertEqual(self.packed(root), {"distribution", "distribution/wrangler.jsonc", "website/dist", "website/dist/index.html"})
+
+    def test_the_harness_site_installs_ejm_ui_first_then_builds_and_packs_site_dist(self) -> None:
+        result, root = self.build_site("ejm-harness")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([call["command"] for call in self.commands(root)], HARNESS_BUILD)
+        self.assertEqual(self.packed(root), {"site/wrangler.jsonc", "site/dist", "site/dist/index.html"})
 
     def test_a_product_owned_site_build_replaces_the_profile_commands(self) -> None:
         def script(product: Path) -> None:
@@ -415,7 +426,7 @@ class WorkflowSecurityTests(unittest.TestCase):
             with self.subTest(name):
                 result, root = self.build_site("ejm-ide", prepare)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual([call["command"] for call in self.commands(root)], [["npm", "ci", "--ignore-scripts"], ["npm", "run", "site:build"]])
+                self.assertEqual([call["command"] for call in self.commands(root)], IDE_BUILD)
 
     def test_every_site_profile_packs_its_declared_paths_and_unknown_profiles_fail(self) -> None:
         for profile in ("ejm-harness", "ejmlabs"):

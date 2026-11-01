@@ -132,6 +132,14 @@ The net change since 0.1.0:
 
 - `public/static.css` from the reviewed packing set of `@ejm/ui`, which no longer packs it.
 
+### Site builds that link ejm-ui
+
+#### Changed
+
+- The `ejm-harness` site fallback build runs `npm --prefix ../ejm-ui ci --ignore-scripts`, `npm --prefix site ci --ignore-scripts` and `npm --prefix site run build`, and the deploy packs `site/wrangler.jsonc` and `site/dist`. It used to run no build and pack `site/public`, which would publish an empty site once the site is built with ejm-ssg.
+- The `ejm-ide` site fallback build installs ejm-ui's dependencies first (`npm --prefix ../ejm-ui ci --ignore-scripts`), then runs `npm ci --ignore-scripts` and `npm run site:build`, because its `website/` workspace links `@ejm/*` from `../ejm-ui`.
+- Both take effect in a repository when its PR moves its pins. A product's own `.github/site-build` still replaces them.
+
 ## [0.1.0] - 2026-10-18
 
 - Initial development baseline. This entry documents source version metadata; it does not assert a published release or production readiness.
