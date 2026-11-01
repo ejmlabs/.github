@@ -21,7 +21,7 @@ After the staging deploy succeeds, the staging job SHALL request the deployed st
 
 ### Requirement: A gated production host's deploy job verifies the same way
 
-When a site's production host sits behind an Access application, its production deploy job SHALL run the same two-read verify against the production hostname with the token values from its own environment's secrets, and SHALL fail closed on the same kinds.
+When a site's production host sits behind an Access application, its production deploy job SHALL run the same two-read verify against the production hostname with the token values from its own environment's secrets, and SHALL fail closed on the same kinds. No bot-phase skip covers a production host, so a challenge on either production read fails the job.
 
 #### Scenario: Production verify passes
 
@@ -32,6 +32,11 @@ When a site's production host sits behind an Access application, its production 
 
 - **WHEN** either Access service-token secret is unset in the `production` environment of a gated production host's job
 - **THEN** the job fails before the request and names the missing secret
+
+#### Scenario: Production read challenged
+
+- **WHEN** the bot phase challenges the token GET or the wrong-secret probe on a gated production host
+- **THEN** the production job fails and names the challenge, and no production skip is added to pass it
 
 ### Requirement: The staging smoke takes its host and token from reviewed sources
 

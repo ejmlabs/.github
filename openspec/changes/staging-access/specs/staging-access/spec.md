@@ -45,17 +45,17 @@ The smoke and every live staging verification SHALL learn the gate's presence on
 
 ### Requirement: Staging Access is never weakened to make a check pass
 
-No workflow, script or instruction SHALL widen the Access boundary to make a check pass, and gerry's per-path signed-webhook bypass applications SHALL keep their current per-path scope. A bot-phase exception matching the smoke token's `CF-Access-Client-Id` header, its value or presence, on the staging hostnames and the two agents hosts MAY exist only as an owner decision recorded in `docs/operations.md`.
+No workflow, script or instruction SHALL widen the Access boundary to make a check pass, and gerry's per-path signed-webhook bypass applications SHALL keep their current per-path scope. A bot-phase exception matching the smoke token's `CF-Access-Client-Id` header, its value or presence, on the staging hostnames MAY exist only as an owner decision recorded in `docs/operations.md`, and no bot-phase exception SHALL cover a production host.
 
 #### Scenario: Boundary stays at the owner and the token
 
-- **WHEN** a change proposes an Access bypass, an allow-list entry besides the owner's email rule and the one smoke service token, a wider path scope, or a bot or WAF exception matching anything besides the smoke token's Client-ID header on the staging hostnames and the two agents hosts
+- **WHEN** a change proposes an Access bypass, an allow-list entry besides the owner's email rule and the one smoke service token, a wider path scope, or a bot or WAF exception matching anything besides the smoke token's Client-ID header on the staging hostnames
 - **THEN** it is refused as a widening of the boundary, and only the owner's recorded bot-phase exception exists
 
 #### Scenario: Scoped bot exception
 
 - **WHEN** the owner applies the bot-phase exception
-- **THEN** it matches only the smoke token's `CF-Access-Client-Id` header, its value or presence, only on the staging hostnames and the two agents hosts, is recorded in `docs/operations.md` with its expression, and the denial probe relies on exactly this match
+- **THEN** it matches only the smoke token's `CF-Access-Client-Id` header, its value or presence, only on the staging hostnames, is recorded in `docs/operations.md` with its expression, and the denial probe relies on exactly this match
 
 #### Scenario: Smoke cannot pass
 
@@ -64,7 +64,7 @@ No workflow, script or instruction SHALL widen the Access boundary to make a che
 
 ### Requirement: The agents hosts stay behind Access and CI authenticates on both
 
-`agents.ejmlabs.com` and `staging.agents.ejmlabs.com` SHALL stay behind their Access application in every deploy path, and the ejm-agents deploy workflow's smoke and post-deploy checks SHALL carry the service-token headers on both hosts. The shared token path covers the production host with the values from its `production` environment secrets.
+`agents.ejmlabs.com` and `staging.agents.ejmlabs.com` SHALL stay behind their Access application in every deploy path, and the ejm-agents deploy workflow's smoke and post-deploy checks SHALL carry the service-token headers on both hosts. The shared token path covers the production host with the values from its `production` environment secrets. No bot-phase skip covers a production host: a challenge on a production check fails the check.
 
 #### Scenario: Gate missing on an agents host
 
@@ -75,6 +75,11 @@ No workflow, script or instruction SHALL widen the Access boundary to make a che
 
 - **WHEN** the ejm-agents deploy workflow runs its smoke after a staging or production deploy
 - **THEN** both reads carry the `CF-Access-Client-Id` and `CF-Access-Client-Secret` headers on that host, taken only from the deploying job's environment secrets
+
+#### Scenario: Production check challenged
+
+- **WHEN** the bot phase challenges a post-deploy check on the production agents host
+- **THEN** the check fails and names the challenge, and no production skip is added to pass it
 
 #### Scenario: Agents token rotation
 
