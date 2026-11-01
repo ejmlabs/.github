@@ -18,7 +18,7 @@ import standards
 
 OWNER = "ejmlabs"
 NAMES = (".github", "ejmlabs", "ejm-cli", "ejm-harness", "ejm-ide")
-SUPPORTED_NAMES = (*NAMES, "ejm-ui", "ejm-calm")
+SUPPORTED_NAMES = (*NAMES, "ejm-ui", "ejm-calm", "ejm-rightkit-fs")
 CONTEXTS = ("Quality", "Repository standards")
 # GitHub Actions. Pinning the required checks to it keeps another app from publishing them.
 ACTIONS_APP_ID = 15368
@@ -27,11 +27,7 @@ GATE_LABELS = (
     {"name": "gate:revoke", "color": "B60205", "description": "Stop the current head: fail checks, cancel runs, dismiss bot approvals"},
 )
 ALLOWED_ACTIONS: dict[str, Any] = {"github_owned_allowed": False, "verified_allowed": False,
-                   "patterns_allowed": ["actions/*@*", "astral-sh/setup-uv@*", "ejmlabs/.github/*@*"]}
-
-
-def allowed_actions(name: str) -> dict[str, Any]:
-    return {**ALLOWED_ACTIONS, "patterns_allowed": [*ALLOWED_ACTIONS["patterns_allowed"], *(["github/codeql-action@*"] if name == ".github" else [])]}
+                   "patterns_allowed": ["actions/*@*", "astral-sh/setup-uv@*", "ejmlabs/.github/*@*", "github/codeql-action@*"]}
 
 
 # Settings for runs from fork pull requests, which only private repositories expose.
@@ -335,7 +331,7 @@ def configure(name: str, *, protect: bool, hold: bool, expected_pin: str | None 
         api(root + "/actions/permissions", "PUT", {"enabled": False})
     else:
         api(root + "/actions/permissions", "PUT", {"enabled": True, "allowed_actions": "selected", "sha_pinning_required": True})
-        api(root + "/actions/permissions/selected-actions", "PUT", allowed_actions(name))
+        api(root + "/actions/permissions/selected-actions", "PUT", ALLOWED_ACTIONS)
     workflow_update = api(root + "/actions/permissions/workflow", "PUT", {
         "default_workflow_permissions": "read", "can_approve_pull_request_reviews": True,
     }, optional=hold)
@@ -438,7 +434,10 @@ def check_actions(name: str, found: Findings) -> None:
 
 def check_allowlist(name: str, found: Findings) -> None:
     allowed = api(f"repos/{OWNER}/{name}/actions/permissions/selected-actions")
-    for key, wanted in allowed_actions(name).items():
+    patterns = dig(allowed, "patterns_allowed")
+    if isinstance(patterns, list) and "github/codeql-action@*" not in patterns:
+        found.failures.append("actions allowlist must include github/codeql-action@* before enabling code-scan; add it in Settings, Actions, General")
+    for key, wanted in ALLOWED_ACTIONS.items():
         found.expect_value("actions allowlist " + key, dig(allowed, key), wanted)
 
 

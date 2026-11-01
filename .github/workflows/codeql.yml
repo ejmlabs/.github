@@ -12,6 +12,7 @@
   "codeql-analysis":
     "permissions":
       "contents": "read"
+      "actions": "read"
       "security-events": "write"
     "uses": "./.github/workflows/codeql-analysis.yml"
     "with":

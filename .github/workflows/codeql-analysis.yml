@@ -13,6 +13,7 @@
     "timeout-minutes": 60
     "permissions":
       "contents": "read"
+      "actions": "read"
       "security-events": "write"
     "steps":
       -

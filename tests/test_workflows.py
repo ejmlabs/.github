@@ -150,7 +150,7 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertEqual(reusable["permissions"], {})
         self.assertEqual(reusable["on"]["workflow_call"]["inputs"]["languages"]["default"], "javascript-typescript")
         job = reusable["jobs"]["codeql-analysis"]
-        self.assertEqual(job["permissions"], {"contents": "read", "security-events": "write"})
+        self.assertEqual(job["permissions"], {"contents": "read", "actions": "read", "security-events": "write"})
         self.assertEqual([step["uses"].split("@")[0] for step in job["steps"]],
                          ["actions/checkout", "github/codeql-action/init", "github/codeql-action/autobuild", "github/codeql-action/analyze"])
         self.assertEqual(job["steps"][1]["with"], {"languages": "${{ inputs.languages }}", "queries": "security-extended"})
@@ -821,7 +821,7 @@ class WorkflowSecurityTests(unittest.TestCase):
 
     def test_product_owned_quality_replaces_the_built_in_gate_and_runs_from_the_product_root(self) -> None:
         self.assertIn(workflows.GATE, self.governance["jobs"]["quality"]["steps"])
-        for profile in ("ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui", "ejmlabs", ".github"):
+        for profile in ("ejm-cli", "ejm-harness", "ejm-ide", "ejm-rightkit-fs", "ejm-ui", "ejmlabs", ".github"):
             with self.subTest(profile=profile):
                 status, calls = run_gate(workflows.GATE["run"], profile, {"product/.github/quality": "executable"})
                 self.assertEqual(status, 0)
