@@ -26,8 +26,14 @@ GATE_LABELS = (
     {"name": "gate:approve", "color": "0E8A16", "description": "Maintainer approval that also admits the current head"},
     {"name": "gate:revoke", "color": "B60205", "description": "Stop the current head: fail checks, cancel runs, dismiss bot approvals"},
 )
-ALLOWED_ACTIONS = {"github_owned_allowed": False, "verified_allowed": False,
+ALLOWED_ACTIONS: dict[str, Any] = {"github_owned_allowed": False, "verified_allowed": False,
                    "patterns_allowed": ["actions/*@*", "astral-sh/setup-uv@*", "ejmlabs/.github/*@*"]}
+
+
+def allowed_actions(name: str) -> dict[str, Any]:
+    return {**ALLOWED_ACTIONS, "patterns_allowed": [*ALLOWED_ACTIONS["patterns_allowed"], *(["github/codeql-action@*"] if name == ".github" else [])]}
+
+
 # Settings for runs from fork pull requests, which only private repositories expose.
 FORK_RUNS = {"run_workflows_from_fork_pull_requests": False, "send_write_tokens_to_workflows": False,
              "send_secrets_and_variables": False, "require_approval_for_fork_pr_workflows": True}
@@ -329,7 +335,7 @@ def configure(name: str, *, protect: bool, hold: bool, expected_pin: str | None 
         api(root + "/actions/permissions", "PUT", {"enabled": False})
     else:
         api(root + "/actions/permissions", "PUT", {"enabled": True, "allowed_actions": "selected", "sha_pinning_required": True})
-        api(root + "/actions/permissions/selected-actions", "PUT", ALLOWED_ACTIONS)
+        api(root + "/actions/permissions/selected-actions", "PUT", allowed_actions(name))
     workflow_update = api(root + "/actions/permissions/workflow", "PUT", {
         "default_workflow_permissions": "read", "can_approve_pull_request_reviews": True,
     }, optional=hold)
@@ -432,7 +438,7 @@ def check_actions(name: str, found: Findings) -> None:
 
 def check_allowlist(name: str, found: Findings) -> None:
     allowed = api(f"repos/{OWNER}/{name}/actions/permissions/selected-actions")
-    for key, wanted in ALLOWED_ACTIONS.items():
+    for key, wanted in allowed_actions(name).items():
         found.expect_value("actions allowlist " + key, dig(allowed, key), wanted)
 
 

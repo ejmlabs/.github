@@ -125,6 +125,23 @@ class WorkflowSecurityTests(unittest.TestCase):
         cls.governance = generated_yaml((workflows.ROOT / ".github/workflows/governance.yml").read_text())
         cls.release = workflows.release_workflow()
 
+    def test_codeql_scans_the_requested_languages_with_scoped_permissions(self) -> None:
+        reusable = generated_yaml((workflows.ROOT / ".github/workflows/codeql-analysis.yml").read_text())
+        caller = generated_yaml((workflows.ROOT / ".github/workflows/codeql.yml").read_text())
+        self.assertEqual(reusable["permissions"], {})
+        self.assertEqual(reusable["on"]["workflow_call"]["inputs"]["languages"]["default"], "javascript-typescript")
+        job = reusable["jobs"]["codeql-analysis"]
+        self.assertEqual(job["permissions"], {"contents": "read", "security-events": "write"})
+        self.assertEqual([step["uses"].split("@")[0] for step in job["steps"]],
+                         ["actions/checkout", "github/codeql-action/init", "github/codeql-action/autobuild", "github/codeql-action/analyze"])
+        self.assertEqual(job["steps"][1]["with"], {"languages": "${{ inputs.languages }}", "queries": "security-extended"})
+        self.assertFalse(job["steps"][0]["with"]["persist-credentials"])
+        self.assertEqual(caller["permissions"], {})
+        self.assertEqual(caller["on"]["push"]["branches"], ["main"])
+        self.assertTrue(caller["on"]["schedule"])
+        self.assertEqual(caller["jobs"]["codeql-analysis"], {"permissions": job["permissions"], "uses": "./.github/workflows/codeql-analysis.yml",
+                                                               "with": {"languages": "python, actions"}})
+
     def test_own_callers_match_the_secrets_declared_at_their_pinned_revisions(self) -> None:
         repository = subprocess.run(["git", "rev-parse", "--git-dir"], cwd=workflows.ROOT, capture_output=True, check=False)
         if repository.returncode:
@@ -442,8 +459,10 @@ class WorkflowSecurityTests(unittest.TestCase):
     def test_action_pins_come_from_the_manifest_dependabot_updates(self) -> None:
         pins = workflows.action_pins(workflows.ROOT / "action.yml")
         self.assertEqual(set(pins), {"actions/checkout", "actions/setup-node", "astral-sh/setup-uv", "actions/attest-build-provenance",
-                                     "actions/upload-artifact", "actions/download-artifact", "actions/cache/restore", "actions/cache/save"})
-        constants = {workflows.CHECKOUT, workflows.NODE, workflows.UV, workflows.ATTEST, workflows.UPLOAD, workflows.DOWNLOAD, workflows.CACHE_RESTORE, workflows.CACHE_SAVE}
+                                     "actions/upload-artifact", "actions/download-artifact", "actions/cache/restore", "actions/cache/save",
+                                     "github/codeql-action/init", "github/codeql-action/autobuild", "github/codeql-action/analyze"})
+        constants = {workflows.CHECKOUT, workflows.NODE, workflows.UV, workflows.ATTEST, workflows.UPLOAD, workflows.DOWNLOAD, workflows.CACHE_RESTORE, workflows.CACHE_SAVE,
+                     workflows.CODEQL_INIT, workflows.CODEQL_AUTOBUILD, workflows.CODEQL_ANALYZE}
         self.assertEqual(constants, set(pins.values()))
         # Dependabot bumps every cache action to one revision, so the two must agree.
         self.assertEqual(workflows.CACHE_RESTORE.split("@")[1], workflows.CACHE_SAVE.split("@")[1])

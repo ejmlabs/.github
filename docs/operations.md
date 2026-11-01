@@ -17,7 +17,8 @@ merge once every required status passes. Strict statuses still hold it until
 it is up to date with main.
 
 Default workflow tokens are read-only. Allow only full-SHA actions from
-`actions/*`, `astral-sh/setup-uv` and `ejmlabs/.github`. Enable bot review
+`actions/*`, `astral-sh/setup-uv` and `ejmlabs/.github`. This repository also allows
+`github/codeql-action`. Enable bot review
 recording so an explicit human self-approve can be represented as a native
 review via the `gate:approve` label. Fork PR workflows get no secrets or write
 tokens. Re-enabling any model review needs the security review's sign-off first.
@@ -228,6 +229,10 @@ that judge it. Human review of the pin line is the control.
 - Optional callers. `cache.yml` in `ejm-cli`, `ejm-harness`, `ejm-ide` and `ejm-ui`. `deploy.yml` in
   any site repository, with or without `secrets: inherit`. `build.yml` in `ejm-cli` and
   `ejm-harness`. `publish.yml` only in `ejm-ui`, at its reviewed SHA-256.
+- This repository's generated `codeql.yml` calls its local `codeql-analysis.yml` on pushes to main
+  and weekly, scanning Python and Actions with the security-extended queries. Its caller and analysis
+  job grant `contents: read` and `security-events: write`. The exact caller is accepted only here.
+  Code scanning default setup must be disabled before advanced workflow uploads can succeed.
 - Any other workflow must be credential-free: triggers only `push`, `pull_request`,
   `workflow_dispatch`, `schedule` and `merge_group`; top-level `permissions` exactly
   `contents: read` or `{}`; no job-level `permissions`, `environment` or `secrets`; no expression

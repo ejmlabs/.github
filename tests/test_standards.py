@@ -45,6 +45,21 @@ SHA1, SHA2 = "1" * 40, "2" * 40
 
 
 class StandardTests(TreeCase):
+    def test_codeql_caller_exception_is_scoped_to_its_reviewed_content_and_repository(self) -> None:
+        tree = self.tree(".github")
+        path = ".github/workflows/codeql.yml"
+        tree.write(path, standards.CODEQL_CALLER)
+        self.assertEqual(standards.workflow_problems(tree.root, ".github"), [])
+        for changed in (standards.CODEQL_CALLER.replace('"security-events": "write"', '"contents": "write"'),
+                        standards.CODEQL_CALLER.replace('"./.github/workflows/codeql-analysis.yml"', '"./.github/workflows/other.yml"'),
+                        standards.CODEQL_CALLER + '    "secrets": "inherit"\n'):
+            with self.subTest(changed=changed):
+                tree.write(path, changed)
+                self.assertTrue(standards.workflow_problems(tree.root, ".github"))
+        consumer = self.tree("ejm-cli")
+        consumer.write(path, standards.CODEQL_CALLER)
+        self.assertTrue(standards.workflow_problems(consumer.root, "ejm-cli"))
+
     def test_the_profile_table_drives_the_repository_lists(self) -> None:
         self.assertEqual(standards.NATIVE_RELEASE, ("ejm-cli", "ejm-harness"))
         self.assertEqual(standards.WARM_CACHE, ("ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui"))
