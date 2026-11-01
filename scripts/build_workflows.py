@@ -287,8 +287,19 @@ def governance() -> dict[str, Any]:
               "permissions": {"contents": "read", "pull-requests": "write", "statuses": "write"},
               "env": {**ENV, "JOB_RESULTS": "${{ toJSON(needs) }}"},
               "steps": [run("Publish required results only after live admission validation", python(source("governance.py"), "finish"))]}
+    guidance = {
+        "needs": ["admission"],
+        "if": "${{ !cancelled() && github.event.pull_request.head.repo.full_name == github.repository }}",
+        "runs-on": "ubuntu-24.04", "timeout-minutes": 3,
+        "permissions": {"contents": "read", "pull-requests": "write", "statuses": "read"},
+        "concurrency": {"group": "pr-guidance-${{ github.repository }}-${{ github.event.number }}", "cancel-in-progress": False},
+        "env": {"GH_TOKEN": "${{ github.token }}", "PR_NUMBER": "${{ github.event.number }}"},
+        "steps": [run("Refresh advisory PR next action", python(libraries("governance.py") + "\n" + source("pr_guidance.py").replace("from governance import REQUIRED_CONTEXTS, GitHub, checked_sha, same_repository\n", "")))],
+    }
+    guidance_finish = {**guidance, "needs": ["admission", "finish"],
+                       "if": "${{ !cancelled() && needs.admission.outputs.run == 'true' && github.event.pull_request.head.repo.full_name == github.repository }}"}
     secrets = {"EJM_HARNESS_TOKEN": {"required": False}}
-    return {"name": "Human-admitted PR checks", "on": {"workflow_call": {"secrets": secrets}}, "permissions": {}, "jobs": {"admission": admission, "prepare": prepare, "quality": quality, "registry": registry, "standards": standards, "finish": finish}}
+    return {"name": "Human-admitted PR checks", "on": {"workflow_call": {"secrets": secrets}}, "permissions": {}, "jobs": {"admission": admission, "prepare": prepare, "quality": quality, "registry": registry, "standards": standards, "finish": finish, "guidance": guidance, "guidance_finish": guidance_finish}}
 
 
 def release_workflow() -> dict[str, Any]:
