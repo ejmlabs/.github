@@ -1,4 +1,3 @@
-import base64
 import hashlib
 import importlib
 import io
@@ -38,6 +37,7 @@ from standards import (
     versions,
     workflows,
 )
+from test_workflows import embedded_source
 
 ROOT = Path(__file__).resolve().parents[1]
 NBSP, EN_SPACE, NEL, LINE_SEP, EM_DASH, E_ACUTE = (chr(code) for code in (0xA0, 0x2002, 0x85, 0x2028, 0x2014, 0xE9))
@@ -354,11 +354,9 @@ class StandardTests(TreeCase):
 
     def test_the_embedded_workflow_script_is_this_library_with_a_quiet_entry_point(self) -> None:
         steps = governance()["jobs"]["standards"]["steps"]
-        run = next(step["run"] for step in steps if step.get("name") == "Validate shared public standards and version metadata")
-        match = re.search(r"b64decode\('([^']+)'\)", run)
-        self.assertIsNotNone(match)
-        assert match is not None
-        embedded = base64.b64decode(match[1]).decode()
+        step = next(step for step in steps if step.get("name") == "Validate shared public standards and version metadata")
+        embedded = embedded_source(step["run"], step.get("env"))
+        assert embedded is not None
         # SemVer comes from versioning.py, embedded first because a workflow has no module to import it from.
         self.assertEqual(embedded, libraries("versioning.py", "standards.py") + "\nsys.exit(standards_main(sys.argv[1:]))\n")
         self.assertNotIn("templates", embedded.rsplit("\n", 3)[-2])

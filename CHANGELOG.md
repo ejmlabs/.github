@@ -21,6 +21,8 @@ The net change since 0.1.0:
 - `ejm-ui` support: an owner profile, an optional public UI source pin and a reviewed public npm package set.
 - `ejm-calm` support: a site profile (MIT, `package.json` and its lock at `VERSION`, contributor guide `README.md#run-locally`) that owns its Quality gate in `.github/quality` and deploys through `deploy.yml`; settings take it with `--repository ejm-calm`.
 
+- Bound generated workflow and run-step sizes by compressing trusted scripts and splitting large payloads into static step environment values. Consumers adopt the new revision through the normal staged pin rollout.
+
 ### Velocity and safety refactor
 
 #### Added
