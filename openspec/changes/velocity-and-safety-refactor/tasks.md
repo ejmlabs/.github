@@ -22,7 +22,9 @@
   - [ ] A rerun of failed jobs keeps the admission
 - [x] 2.2 A Dependabot actions PR passes `python3 scripts/build_workflows.py --check`: ejmlabs/.github#71 changed `action.yml` and the generated `attach-assets.yml` together, and its admitted Quality and Repository standards passed
 - [ ] 2.3 First staging and production deploy for each adopting site, with its environments configured
+  - Production deploys from main through `deploy-site.yml`, each production job successful on 2026-11-01 and its hashed assets served byte for byte at the canonical host: ejm-ui `d9d2c5e` (version 6d677f21-642a-4616-913c-3405d53253f1), ejmlabs `4608766` (571278d0-c844-4f52-87f6-17b8878571d9), ejm-ide `19a0204` (41cc9f7c-c675-4062-9543-4e602517072a, with `/api/releases` answering JSON), ejm-harness `b4b76a1` (777c87f3-7d6b-497a-9670-9f6e0292faae). Staging deployed first in each. ejm-cli has not adopted the caller (no access from these sessions).
 - [ ] 2.4 `python3 scripts/configure_repositories.py --check` passes for every repository
+  - Cloud sessions cannot run it: the session proxy refuses the Actions settings, environments and collaborators endpoints. The owner runs it from a workstation.
 - [ ] 2.5 Admitted gate timings on each consumer after its pin moves, cold and with a warm cache
 - [ ] 2.6 First native draft release with `attest`: the draft exists with no tag, `target_commitish` is the commit, `attach` and `attest` run with their own permissions, and publishing the draft creates the tag
 
