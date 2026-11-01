@@ -3,12 +3,11 @@
 ## Overview
 
 Shared repository policy and reusable GitHub workflows for ejm-cli,
-ejm-harness, ejm-ide and the ejmlabs studio. Consumers pin reviewed full
-commit SHAs. Each repository keeps its own semantic version.
+ejm-harness, ejm-ide, ejm-ui and the ejmlabs studio. Consumers pin reviewed
+full commit SHAs. Each repository keeps its own semantic version.
 
-The source also supports an explicit `ejm-ui` owner profile. Its gate and
-metadata rules are described in [UI owner support](docs/operations.md#ui-owner-profile).
-This support does not install callers, change settings, or activate UI checks.
+The `ejm-ui` owner profile adds its package and publish rules to the same gate.
+They are described in [UI owner profile](docs/operations.md#ui-owner-profile).
 
 ## Status
 
@@ -17,46 +16,38 @@ Each consumer adopts a revision through its own protected PR. Review the
 consumer's installed caller and checks to establish what is active.
 
 Source publication, source releases, package releases, native installers and
-website deployments are separate steps. A passing source check establishes
-neither a published artifact nor a deployed site. See the
+website deployments are separate steps. See the
 [acceptance limits](docs/operations.md#acceptance-limits).
 
 ## Requirements
 
-- Python 3.11 or newer for policy checks and workflow generation.
+- Python 3.12 or newer for policy checks and workflow generation, and
+  [uv](https://docs.astral.sh/uv/) for the locked ruff and mypy tests.
 - GitHub Actions and a plan that supports the required repository protections.
 - The pinned tools required by the selected product's Quality gate.
 
-Public dependencies need no private repository token. Keep dependency source
-pinned and pass it through the trusted source-preparation job. See
-[credentials](docs/operations.md#credentials) and the product contributor guide.
-
-The CLI selector can test a reviewed harness pin and matching lockfile in one
-change after checking the pin against protected harness history. Consumers must
-adopt that selector through a reviewed workflow revision. See
-[CLI dependency selection](docs/operations.md#cli-harness-pin-updates).
+Public dependencies need no private repository token. See
+[credentials](docs/operations.md#credentials) and
+[quality profiles](docs/operations.md#quality-profiles) for the harness pin and
+the product-owned gate commands.
 
 ## Quick start
 
 ```sh
 python3 -m unittest discover -s tests -v
 python3 scripts/build_workflows.py --check
+python3 scripts/sync_agents.py . --check
 ```
 
 ## Usage
 
 Install the consumer PR and draft-release templates described in
-[operations](docs/operations.md). After inspecting the exact PR commit, a human
-maintainer posts these as separate, unedited comments:
-
-```text
-/ready FULL_HEAD_SHA
-/approve FULL_HEAD_SHA
-```
-
-Readiness admits bounded CI. Approval records human review;
-maintainers may approve their own changes. `/revoke FULL_HEAD_SHA` blocks merge
-and cancels active admitted work. New commits require new decisions.
+[operations](docs/operations.md). A maintainer's same-repo non-draft PR admits
+itself. Any other PR waits for a maintainer to mark it Ready or add
+`gate:approve`, and fork PRs are not admitted. See
+[admission, approval and reruns](docs/operations.md#admission-approval-and-reruns).
+Required merge checks are Quality and Repository standards plus one approving
+GitHub review.
 
 ## Development
 
@@ -81,7 +72,8 @@ changes in consumers through reviewed pin updates.
 
 Use [private reporting](SECURITY.md). Product builds receive no model key or
 write token. There is no automated model review; maintainers review every
-change. Result publication rechecks live human readiness.
+change. Result publication writes a status only for the run that owns it, after
+rechecking the live PR head.
 
 ## Support
 

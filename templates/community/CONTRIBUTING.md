@@ -1,14 +1,18 @@
 # Contributing
 
-Start with the [README](README.md) and [development guide]({{development_guide}}). Use small PRs, clear titles, and tests for changed behavior. Follow the existing formatting, architecture, and accessibility rules. If `openspec/` exists, plan and apply feature or bug fixes through OpenSpec, then sync and archive completed changes.
+Start with the [README](README.md) and [development guide]({{development_guide}}). Use small PRs, clear titles, and tests for changed behavior. Follow the existing formatting, architecture, and accessibility rules. If `openspec/` exists, use OpenSpec for a change to a contract other repositories or users rely on, or one that spans several PRs, and archive it in the PR that finishes it. Bug fixes with a regression test, dependency bumps, docs and refactors go straight to a PR.
 
 ## Human admission and review
 
-Opening or updating a PR does not authorize CI or AI spending. A current human maintainer with GitHub **maintain** or **admin** permission posts `/ready FULL_HEAD_SHA` as a standalone PR comment after checking the scope and proposed workflow changes. Use the full current 40-character commit SHA. Draft PRs cannot be admitted. A new commit needs a new decision. Check limits and run time are bounded; repeated events do not authorize another review.
+A draft PR runs no checks. Mark the PR Ready for review when the work is ready for them.
 
-After reviewing that commit, a maintainer posts `/approve FULL_HEAD_SHA`. Maintainers may explicitly approve their own work. GitHub cannot record an author's native approval, so trusted automation records the human comment as a bot approval and a required **Maintainer approval** status. The comment and all checks remain required. Native review alone does not replace this explicit gate. Keep both readiness and approval comments unchanged. Editing or deleting one revokes the decisions. `/revoke FULL_HEAD_SHA` cancels the admitted run and blocks merge. To retry a failed run, revoke, investigate, and post a fresh ready comment. Do not use Actions rerun to replay an admission.
+A same-repository PR whose author is a current human maintainer, with GitHub **maintain** or **admin** permission, is admitted when it is opened, reopened, pushed or marked Ready. Any other PR in the repository, such as a Dependabot PR, is admitted when a current human maintainer marks it Ready or adds the `gate:approve` label. A fork PR is never admitted, because a fork's token cannot write the required statuses. A maintainer who has reviewed an outside change pushes it to a branch in this repository, and the checks run there. There is no limit on PR size, and each job has a time limit.
 
-The required statuses are **Human readiness**, **Maintainer approval**, **Quality**, **Repository standards**, and **AI review**. Automated review uses high reasoning effort. A missing key, a review that does not complete, or a `Possible security concern` label fails the gate. A maintainer may remove that label after reviewing the concern; the removal is logged on the PR and re-evaluates the gate. Address other findings in a new commit and request fresh admission. Automated review does not cover files the reviewer excludes (lockfiles, minified files, assets and binaries) or files clipped by its token budget, which its coverage footer lists. **Maintainer approval** covers them: inspect those files before approving. Do not bypass the requirements as an administrator.
+Admission, approval and revocation apply to the head commit the event saw. A new commit needs a new admission: the push for a maintainer's own PR, a new Ready or `gate:approve` for any other.
+
+After reviewing that commit, a maintainer leaves an approving GitHub review, or adds `gate:approve` for self-approve under administrator-enforced required reviews. Trusted automation records the label as a bot approval for the current head, admits the head if no run holds it, and removes the label so it can be re-applied after a new push. The `gate:revoke` label, or converting the PR to draft, stops the head's runs and dismisses bot approvals.
+
+The required statuses are **Quality** and **Repository standards**, plus one approving GitHub review. Re-run failed jobs only for an infrastructure failure. Fix review comments and failing checks in a new commit. Do not bypass the requirements as an administrator.
 
 ## Changes and reporting
 

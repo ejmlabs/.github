@@ -47,18 +47,19 @@ Bands may nest; the nearest wins. Children use only semantic names, so they read
 
 ## Type
 
-| Utility                           | Use                                        |
-| --------------------------------- | ------------------------------------------ |
-| `text-display-lg`, `text-display` | The one display line on a page             |
-| `text-title`, `text-heading`      | Section and subsection headings            |
-| `text-lead`                       | The opening paragraph                      |
-| `text-body`                       | Running text, 16px on phones               |
-| `text-meta`                       | Labels and metadata, IBM Plex Mono         |
-| `text-stat`                       | A large standalone number                  |
-| `tabular-nums`                    | Numbers in tables, facts rows and versions |
+| Utility                      | Use                                                     |
+| ---------------------------- | ------------------------------------------------------- |
+| `text-display`               | The one display line on a page, and a standalone number |
+| `text-title`, `text-heading` | Section and subsection headings                         |
+| `text-lead`                  | The opening paragraph                                   |
+| `text-body`                  | Running text, 16px on phones                            |
+| `text-meta`                  | Labels and metadata, IBM Plex Mono                      |
+| `tabular-nums`               | Numbers in tables, facts rows and versions              |
 
-Tailwind's `text-xs` and up stay available for dense app UI. Headings wrap balanced; prose wraps
-pretty. Preload both fonts with `fontPreloads` from `@ejm/ui`.
+The scale is six sizes: display, title, heading, lead, body and meta. Controls and dense tables
+use `text-base` (16px), or `text-sm` (14px) when compact; the kit uses no other Tailwind size.
+Body lines stay within `max-w-measure` (68ch). Headings wrap balanced; prose wraps pretty.
+Preload both fonts with `fontPreloads` from `@ejm/ui`.
 
 ## Space, radius and elevation
 
@@ -81,3 +82,15 @@ pretty. Preload both fonts with `fontPreloads` from `@ejm/ui`.
   text that can be the Largest Contentful Paint).
 - Stagger with `--ejm-i` on each child. The index stops at 8, so an entrance stays under 1.2s.
 - Every animation utility is wrapped in `prefers-reduced-motion: no-preference`.
+
+## Themes
+
+- `theme-boot.js` runs before any CSS, so the first frame has the right theme. Without a saved
+  choice the system preference decides.
+- The theme control sits last in the header tools. `?theme=dark` and `?theme=light` are test
+  overrides and are never saved.
+
+## Terminal interfaces
+
+- Build from `ejm-tui` blocks. No boxes, frames or painted backgrounds; group with space and one
+  hairline rule. Every state has a word or glyph and works under `NO_COLOR`.

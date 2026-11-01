@@ -1,0 +1,30 @@
+# Action pins for the generated workflows. scripts/build_workflows.py reads this file, and Dependabot
+# updates it beside the generated workflows in one pull request, so a bump needs no regeneration.
+# Every step is disabled: this file is a pin manifest and is never run.
+name: Action pins
+description: Pins the generator embeds in the shared workflows. Never run.
+runs:
+  using: composite
+  steps:
+    - if: ${{ false }}
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+    - if: ${{ false }}
+      uses: github/codeql-action/init@793b778da9c9275a0f276522b27cb5fc14bba279
+    - if: ${{ false }}
+      uses: github/codeql-action/autobuild@793b778da9c9275a0f276522b27cb5fc14bba279
+    - if: ${{ false }}
+      uses: github/codeql-action/analyze@793b778da9c9275a0f276522b27cb5fc14bba279
+    - if: ${{ false }}
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+    - if: ${{ false }}
+      uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+    - if: ${{ false }}
+      uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+    - if: ${{ false }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+    - if: ${{ false }}
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+    - if: ${{ false }}
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+    - if: ${{ false }}
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
