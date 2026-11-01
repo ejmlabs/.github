@@ -37,7 +37,7 @@ PROTECTION: dict[str, Any] = {
 RULESET: dict[str, Any] = {"id": 7, "name": "Immutable semantic version tags", "target": "tag", "enforcement": "active", "bypass_actors": [],
            "conditions": {"ref_name": {"include": ["refs/tags/v*"], "exclude": []}}, "rules": [{"type": "update"}, {"type": "deletion"}]}
 ACTIONS: dict[str, Any] = {"enabled": True, "allowed_actions": "selected", "sha_pinning_required": True}
-ALLOWLIST: dict[str, Any] = {"github_owned_allowed": False, "verified_allowed": False, "patterns_allowed": ["ejmlabs/.github/*@*", "actions/*@*", "astral-sh/setup-uv@*", "github/codeql-action@*"]}
+ALLOWLIST: dict[str, Any] = {"github_owned_allowed": False, "verified_allowed": False, "patterns_allowed": ["ejmlabs/.github/*@*", "actions/*@*", "astral-sh/setup-uv@*", "github/codeql-action/*@*"]}
 WORKFLOW_PERMISSIONS: dict[str, Any] = {"default_workflow_permissions": "read", "can_approve_pull_request_reviews": True}
 FORK_RUNS: dict[str, Any] = {"run_workflows_from_fork_pull_requests": False, "send_write_tokens_to_workflows": False,
              "send_secrets_and_variables": False, "require_approval_for_fork_pr_workflows": True}
@@ -209,22 +209,22 @@ class ApplyTests(GhCase):
         gh = self.gh(healthy())
         settings.configure("ejm-cli", protect=False, hold=False)
         self.assertEqual(gh.written("PUT", "/selected-actions"), [{"github_owned_allowed": False, "verified_allowed": False,
-                                                                  "patterns_allowed": ["actions/*@*", "astral-sh/setup-uv@*", "ejmlabs/.github/*@*", "github/codeql-action@*"]}])
+                                                                  "patterns_allowed": ["actions/*@*", "astral-sh/setup-uv@*", "ejmlabs/.github/*@*", "github/codeql-action/*@*"]}])
         self.assertEqual(gh.written("PUT", "/actions/permissions")[-1], {"enabled": True, "allowed_actions": "selected", "sha_pinning_required": True})
         first_read = next(index for index, call in enumerate(gh.calls) if "/contents/.github/workflows/pr.yml" in call[1])
         first_write = next(index for index, call in enumerate(gh.calls) if call[0] != "GET")
         self.assertLess(first_read, first_write)
 
     def test_codeql_action_is_allowed_for_member_scans(self) -> None:
-        self.assertIn("github/codeql-action@*", settings.ALLOWED_ACTIONS["patterns_allowed"])
+        self.assertIn("github/codeql-action/*@*", settings.ALLOWED_ACTIONS["patterns_allowed"])
 
     def test_missing_codeql_allowlist_explains_the_repository_setting(self) -> None:
         routes = healthy()
-        routes[("GET", "repos/ejmlabs/ejm-cli/actions/permissions/selected-actions")] = {**ALLOWLIST, "patterns_allowed": []}
+        routes[("GET", "repos/ejmlabs/ejm-cli/actions/permissions/selected-actions")] = {**ALLOWLIST, "patterns_allowed": ["github/codeql-action@*"]}
         self.gh(routes)
         found = settings.Findings()
         settings.check_allowlist("ejm-cli", found)
-        self.assertIn("actions allowlist must include github/codeql-action@* before enabling code-scan; add it in Settings, Actions, General", found.failures)
+        self.assertIn("actions allowlist must include github/codeql-action/*@* before enabling code-scan; add it in Settings, Actions, General", found.failures)
 
     def test_activation_refuses_unreviewed_workflows_before_any_write(self) -> None:
         for label, files in (("extra workflow", {**default_files("ejm-cli"), "evil.yml": EVIL}),
