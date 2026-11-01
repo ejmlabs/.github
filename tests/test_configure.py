@@ -150,7 +150,7 @@ def healthy(name: str = "ejm-cli", *, files: dict[str, str] | None = None, pin: 
         ("GET", root + "/rulesets?includes_parents=false&per_page=100&page=1"): rulesets,
         ("GET", root + "/rulesets/7"): RULESET,
         ("GET", root + "/actions/permissions"): ACTIONS,
-        ("GET", root + "/actions/permissions/selected-actions"): ALLOWLIST,
+        ("GET", root + "/actions/permissions/selected-actions"): {**ALLOWLIST, "patterns_allowed": [*ALLOWLIST["patterns_allowed"], *(["github/codeql-action@*"] if name == ".github" else [])]},
         ("GET", root + "/actions/permissions/workflow"): WORKFLOW_PERMISSIONS,
         ("GET", root + "/actions/permissions/fork-pr-workflows-private-repos"): FORK_RUNS,
         ("GET", root + "/actions/permissions/fork-pr-contributor-approval"): {"approval_policy": "all_external_contributors"},
@@ -214,6 +214,10 @@ class ApplyTests(GhCase):
         first_read = next(index for index, call in enumerate(gh.calls) if "/contents/.github/workflows/pr.yml" in call[1])
         first_write = next(index for index, call in enumerate(gh.calls) if call[0] != "GET")
         self.assertLess(first_read, first_write)
+
+    def test_codeql_action_is_allowed_only_for_the_shared_standards_repository(self) -> None:
+        self.assertIn("github/codeql-action@*", settings.allowed_actions(".github")["patterns_allowed"])
+        self.assertNotIn("github/codeql-action@*", settings.allowed_actions("ejm-cli")["patterns_allowed"])
 
     def test_activation_refuses_unreviewed_workflows_before_any_write(self) -> None:
         for label, files in (("extra workflow", {**default_files("ejm-cli"), "evil.yml": EVIL}),

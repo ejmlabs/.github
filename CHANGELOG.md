@@ -6,6 +6,7 @@ Changes follow [Semantic Versioning](https://semver.org/). Each repository is ve
 
 The net change since 0.1.0:
 
+- A reusable CodeQL workflow with security-extended queries and a scheduled Python and Actions scan for this repository.
 - A human-gated PR pipeline as reusable workflows: a maintainer's PR admits itself, any other PR is admitted by a maintainer's Ready or `gate:approve`, and comments control nothing.
 - The `gate:approve` and `gate:revoke` labels, with two required statuses (Quality and Repository standards) plus one approving review, enforced for administrators. No model review runs.
 - Repository standards for versions, licenses, documents and workflow callers.
