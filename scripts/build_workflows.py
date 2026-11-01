@@ -107,7 +107,7 @@ VERIFY = run("Recheck current human admission", python(source("governance.py"), 
 ARTIFACT = {"uses": DOWNLOAD, "with": {"artifact-ids": "${{ needs.prepare.outputs.artifact }}", "merge-multiple": True, "path": "prepared"}}
 EXTRACT = run("Extract source data safely", python(source("extract.py"), "", "python3 -I"))
 INSTALL_TOOLS = python(source("tools.py"), "cargo-deny cargo-machete", "python3 -I")
-RUST_TOOLS = run("Install pinned Rust tools", """if [[ "$PROFILE" == ejm-* ]]; then
+RUST_TOOLS = run("Install pinned Rust tools", """if [[ "$PROFILE" == ejm-cli || "$PROFILE" == ejm-harness || "$PROFILE" == ejm-ide || "$PROFILE" == ejm-rightkit-fs || "$PROFILE" == ejm-ui ]]; then
   rustup toolchain install """ + RUST_VERSION + """ --profile minimal --component clippy,rustfmt
   rustup default """ + RUST_VERSION + """
   if [[ "$PROFILE" != ejm-ui ]]; then
