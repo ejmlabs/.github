@@ -9,7 +9,8 @@ It asks for the token once without echo, or reads one line from standard input w
 the token with Cloudflare before it writes anything. For each repository that may deploy a site, it
 creates or repairs the staging and production environments with the main-only branch policy that
 configure_repositories.py applies, then hands the token to `gh secret set` on standard input. The
-token never appears in arguments, the environment, or output.
+token never appears in arguments, the environment, or output. It warns when production has no
+required reviewer, because production deploys then fail until a maintainer is added.
 """
 import argparse
 import getpass
@@ -70,7 +71,9 @@ def set_secret(name: str, environment: str, token: str) -> None:
 def store(name: str, environment: str, token: str) -> str:
     """Configure one environment, write the secret, and read back its update time (GitHub never returns the value)."""
     root = f"repos/{settings.OWNER}/{name}"
-    settings.configure_environment(root, environment)
+    state = settings.configure_environment(root, environment)
+    if environment == "production" and state["required_reviewers"] < 1:
+        print(f"warning: {name}: {settings.NO_RELEASER}", file=sys.stderr, flush=True)
     set_secret(name, environment, token)
     stored = settings.find(f"{root}/environments/{environment}/secrets/{SECRET}")
     if not isinstance(stored, dict) or stored.get("name") != SECRET:

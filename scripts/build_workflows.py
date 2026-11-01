@@ -376,6 +376,7 @@ def deploy_workflow() -> dict[str, Any]:
                           {"uses": NODE, "with": {"node-version": "24"}},
                           run("Install the pinned deployer", install, env={"GH_TOKEN": "", "GITHUB_TOKEN": "", "NPM_CONFIG_USERCONFIG": "/dev/null"}),
                           # GitHub creates a missing environment without rules, so read them before the deploy token is in play.
+                          # Production also needs a required reviewer, and deploys only main's newest commit.
                           run("Require the " + environment + " environment's protections", trusted.replace("{mode}", "protection"), env={"GH_TOKEN": "${{ github.token }}"}),
                           run("Deploy the built site to " + environment, trusted.replace("{mode}", "deploy"),
                               env={"CLOUDFLARE_API_TOKEN": "${{ secrets.CLOUDFLARE_API_TOKEN }}"})]}

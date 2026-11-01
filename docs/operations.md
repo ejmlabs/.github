@@ -42,14 +42,15 @@ python3 scripts/configure_repositories.py --check [--repository NAME ...] [--sta
 ```
 
 The default scope is `.github`, `ejmlabs`, `ejm-cli`, `ejm-harness` and `ejm-ide`; `ejm-ui` and
-`ejm-calm` need `--repository NAME`. Apply refuses to enable Actions until reviewed callers are on main
-(`--hold-actions` keeps them off for bootstrap). `--protect-main` adds branch protection and the
-`v*` tag ruleset. For a repository with `deploy.yml` on main, apply also creates the `staging` and
-`production` environments, each allowing deployment from `main` only. It never sets reviewers: one is
-optional, and a reviewer a human adds is kept. `--check` writes nothing and exits 1 on any failure. It asserts
-the settings above, collaborator roles, and that main's workflows pass the standards workflow
-check on a pin that is on `ejmlabs/.github` main or a retained `workflow-pins/` branch
-(`--standards-revision` requires one exact SHA).
+`ejm-calm` need `--repository NAME`. Apply refuses to enable Actions until reviewed callers are on
+main (`--hold-actions` keeps them off for bootstrap). `--protect-main` adds branch protection and
+the `v*` tag ruleset. For a repository with `deploy.yml` on main, apply also creates the `staging`
+and `production` environments, each allowing deployment from `main` only. It never sets reviewers:
+the owner adds at least one maintainer to `production`, apply keeps the reviewers a human set, and
+it warns when production has none. `--check` writes nothing and exits 1 on any failure. It asserts
+the settings above, a required reviewer on `production`, collaborator roles, and that main's
+workflows pass the standards workflow check on a pin that is on `ejmlabs/.github` main or a retained
+`workflow-pins/` branch (`--standards-revision` requires one exact SHA).
 
 ## Admission, approval and reruns
 
@@ -276,9 +277,10 @@ shared `deploy-site.yml`:
    else the commands for the site in `SITES` in `scripts/deploy.py`, which also holds each site's
    config path and output paths.
 2. `staging` deploys the artifact with `wrangler deploy --env staging`.
-3. `production` runs once staging succeeds and deploys the same files with the top-level config. No
-   one approves it in GitHub: the human decision is the merge (`gate:approve` and the required
-   checks).
+3. `production` runs once staging succeeds and a maintainer approves it, and deploys the same files
+   with the top-level config. The merge (`gate:approve` and the required checks) releases a change
+   to staging, and the approval releases it to production. The job deploys only while its commit
+   is main's head, so approving an older run fails instead of rolling production back.
 
 A deploy job trusts nothing in the artifact. It checks out the reviewed `github.sha` (sparse,
 `persist-credentials: false`, `contents: read`), validates every tar member before extraction,
@@ -289,8 +291,8 @@ committed source. A Wrangler `build` command is refused, and staging needs its o
 routes, because `--env staging` otherwise inherits the production custom domain. Wrangler runs
 from the lockfile in `deploy/` with a minimal environment that holds no GitHub token. A separate
 step first reads the environment and fails closed unless it has exactly one deployment branch
-policy, `main`, in staging and production alike. A required reviewer on `production` is allowed
-and never required.
+policy, `main`, in staging and production alike, and unless `production` also has at least one
+required reviewer.
 
 Before a site moves to the new pin, run `set_deploy_token.py` to create `staging` and
 `production` and store `CLOUDFLARE_API_TOKEN` in both, and read the result back with

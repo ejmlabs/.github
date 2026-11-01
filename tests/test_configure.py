@@ -164,7 +164,7 @@ def healthy(name: str = "ejm-cli", *, files: dict[str, str] | None = None, pin: 
     }
     if "deploy.yml" in files:
         for target in settings.ENVIRONMENTS:
-            routes[("GET", f"{root}/environments/{target}")] = environment()
+            routes[("GET", f"{root}/environments/{target}")] = environment(reviewers=[REVIEWER] if target == "production" else None)
             routes[("GET", f"{root}/environments/{target}/deployment-branch-policies?per_page=100")] = MAIN_POLICY
     return routes
 
@@ -342,7 +342,7 @@ class ApplyTests(GhCase):
 
 
 class EnvironmentTests(GhCase):
-    def test_new_environments_get_a_main_only_policy_and_no_invented_reviewer(self) -> None:
+    def test_new_environments_get_a_main_only_policy_no_invented_reviewer_and_a_warning(self) -> None:
         routes = healthy()
         for target in settings.ENVIRONMENTS:
             path = f"repos/ejmlabs/ejm-cli/environments/{target}"
@@ -356,8 +356,8 @@ class EnvironmentTests(GhCase):
             self.assertEqual(gh.written("POST", path + "/deployment-branch-policies"), [{"name": "main", "type": "branch"}])
             self.assertEqual(gh.written("DELETE", "/deployment-branch-policies/5"), [])
         self.assertEqual(result["environments"]["staging"], {"deployment_branch_policy": BRANCH_POLICY,
-                                                              "branch_policies": [{"name": "main", "type": "branch"}]})
-        self.assertNotIn("warnings", result)
+                                                              "branch_policies": [{"name": "main", "type": "branch"}], "required_reviewers": 0})
+        self.assertEqual(result["warnings"], [settings.NO_RELEASER])
 
     def test_reapplying_keeps_the_human_reviewer_and_removes_every_other_branch_policy(self) -> None:
         routes = healthy()
@@ -478,11 +478,17 @@ class CheckTests(GhCase):
                 self.assertEqual(len(report["failures"]), 1, report["failures"])
                 self.assertIn(expected, report["failures"][0])
 
-    def test_a_production_reviewer_is_allowed_and_never_required(self) -> None:
-        for reviewers in (None, [], [REVIEWER]):
+    def test_production_needs_a_maintainer_reviewer_and_staging_does_not(self) -> None:
+        missing: tuple[list[dict[str, Any]] | None, ...] = (None, [])
+        for reviewers in missing:
             with self.subTest(reviewers=reviewers):
                 routes = healthy()
                 routes[("GET", "repos/ejmlabs/ejm-cli/environments/production")] = environment(reviewers=reviewers)
+                self.assertEqual(self.check(routes)["failures"], ["environment production must require at least one maintainer as a reviewer"])
+        for reviewers in (None, [], [REVIEWER]):
+            with self.subTest(staging=reviewers):
+                routes = healthy()
+                routes[("GET", "repos/ejmlabs/ejm-cli/environments/staging")] = environment(reviewers=reviewers)
                 self.assertEqual(self.check(routes)["failures"], [])
 
     def test_every_failed_assertion_is_listed_not_only_the_first(self) -> None:
@@ -734,7 +740,7 @@ class CommandLineTests(GhCase):
             self.cli("--hold-actions", "--repository", "ejm-cli")
         self.assertIn("human maintainers", str(raised.exception.code))
 
-    def test_apply_prints_one_json_result_per_repository_and_no_reviewer_warning(self) -> None:
+    def test_apply_prints_one_json_result_per_repository_and_warns_when_production_has_no_reviewer(self) -> None:
         routes = {**healthy("ejm-cli"), **healthy("ejm-ide")}
         for name in ("ejm-cli", "ejm-ide"):
             routes[("GET", f"repos/ejmlabs/{name}/environments/production")] = environment()
@@ -743,6 +749,9 @@ class CommandLineTests(GhCase):
         results = [json.loads(line) for line in out.splitlines()]
         self.assertEqual([result["repository"] for result in results], ["ejmlabs/ejm-cli", "ejmlabs/ejm-ide"])
         self.assertEqual([person["login"] for person in results[0]["collaborators"]], ["owner", "reader"])
+        self.assertEqual(err.splitlines(), [f"warning: {name}: {settings.NO_RELEASER}" for name in ("ejm-cli", "ejm-ide")])
+        self.gh({**healthy("ejm-cli")})
+        _, err = self.cli("--hold-actions", "--repository", "ejm-cli")
         self.assertEqual(err, "")
 
 

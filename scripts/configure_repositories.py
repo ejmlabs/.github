@@ -36,9 +36,12 @@ TAG_RULESET = {"name": "Immutable semantic version tags", "target": "tag", "enfo
                "conditions": {"ref_name": {"include": ["refs/tags/v*"], "exclude": []}},
                "rules": [{"type": "update"}, {"type": "deletion"}]}
 ENVIRONMENTS = ("staging", "production")
-# Only main may deploy. A reviewer is optional: this tool keeps one a human added and never sets one.
+# Only main may deploy, and production waits for a maintainer. Reviewers are people: this tool keeps the ones a human set,
+# never invents one, and reports a production environment that has none.
 ENVIRONMENT_POLICY = {"protected_branches": False, "custom_branch_policies": True}
 DEPLOY_BRANCH = {"name": "main", "type": "branch"}
+NO_RELEASER = ("production has no required reviewer, so its deploys fail; add a maintainer under Settings, Environments, production, "
+               "Required reviewers")
 MAX_WORKFLOW_FILES = 50
 MAX_WORKFLOW_BYTES = 1_000_000
 FULL_SHA = re.compile(r"[0-9a-f]{40}")
@@ -243,6 +246,16 @@ def deploys_site(name: str) -> bool:
     return isinstance(entries, list) and any(dig(entry, "name") == "deploy.yml" and dig(entry, "type") == "file" for entry in entries)
 
 
+def required_reviewers(environment: Any) -> int:  # noqa: ANN401 - one decoded environment
+    rules = dig(environment, "protection_rules")
+    total = 0
+    for rule in rules if isinstance(rules, list) else []:
+        reviewers = dig(rule, "reviewers")
+        if dig(rule, "type") == "required_reviewers" and isinstance(reviewers, list):
+            total += len(reviewers)
+    return total
+
+
 def branch_policies(path: str) -> list[dict[str, Any]]:
     """The deployment branch policies of one environment path."""
     listing = find(f"{path}/deployment-branch-policies?per_page=100")
@@ -259,7 +272,8 @@ def read_environment(root: str, environment: str) -> dict[str, Any] | None:
     if found is None:
         return None
     return {"deployment_branch_policy": dig(found, "deployment_branch_policy"),
-            "branch_policies": sorted(({"name": dig(policy, "name"), "type": dig(policy, "type")} for policy in branch_policies(path)), key=str)}
+            "branch_policies": sorted(({"name": dig(policy, "name"), "type": dig(policy, "type")} for policy in branch_policies(path)), key=str),
+            "required_reviewers": required_reviewers(found)}
 
 
 def reviewer_reference(entry: Any) -> dict[str, Any]:  # noqa: ANN401 - one decoded reviewer
@@ -358,6 +372,8 @@ def configure(name: str, *, protect: bool, hold: bool, expected_pin: str | None 
         result["main_protection"] = api(root + "/branches/main/protection")
     if deploys_site(name):
         result["environments"] = {environment: configure_environment(root, environment) for environment in ENVIRONMENTS}
+        if result["environments"]["production"]["required_reviewers"] < 1:
+            result["warnings"] = [NO_RELEASER]
     result["unavailable"] = sorted(key for key, value in result.items() if unavailable(value))
     return result
 
@@ -459,6 +475,8 @@ def check_environments(name: str, found: Findings) -> None:
             continue
         found.expect_value(f"environment {environment} deployment branch policy", state["deployment_branch_policy"], ENVIRONMENT_POLICY)
         found.expect_value(f"environment {environment} branch policies", state["branch_policies"], [DEPLOY_BRANCH])
+        if environment == "production":
+            found.expect("environment production must require at least one maintainer as a reviewer", ok=state["required_reviewers"] >= 1)
 
 
 def check_access(name: str, found: Findings) -> None:
@@ -499,6 +517,8 @@ def apply(names: Sequence[str], *, protect: bool, hold: bool, expected_pin: str 
         result = configure(name, protect=protect, hold=hold, expected_pin=expected_pin)
         result["collaborators"] = access[name]
         print(json.dumps(result), flush=True)
+        for warning in result.get("warnings", []):
+            print(f"warning: {name}: {warning}", file=sys.stderr)
 
 
 def revision(value: str) -> str:

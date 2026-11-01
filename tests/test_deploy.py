@@ -64,6 +64,10 @@ STUDIO = """{
 """
 PROTECTED: dict[str, Any] = {"deployment_branch_policy": {"protected_branches": False, "custom_branch_policies": True}, "protection_rules": []}
 ONLY_MAIN: dict[str, Any] = {"total_count": 1, "branch_policies": [{"id": 1, "name": "main", "type": "branch"}]}
+MAINTAINER: dict[str, Any] = {"type": "required_reviewers", "prevent_self_review": False, "reviewers": [{"type": "User", "reviewer": {"id": 42, "login": "owner"}}]}
+RELEASED: dict[str, Any] = {**PROTECTED, "protection_rules": [MAINTAINER]}
+HEAD = "0123456789abcdef0123456789abcdef01234567"
+MAIN_AT_HEAD: dict[str, Any] = {"ref": "refs/heads/main", "object": {"type": "commit", "sha": HEAD}}
 
 
 class JsoncTests(unittest.TestCase):
@@ -206,25 +210,43 @@ class StudioConfigTests(unittest.TestCase):
 
 
 class EnvironmentTests(unittest.TestCase):
-    def check(self, environment: str, found: Any, listing: Any) -> list[str]:
+    def check(self, environment: str, found: Any, listing: Any, main: Any = MAIN_AT_HEAD, sha: str = HEAD) -> list[str]:
         calls: list[str] = []
 
         def read(path: str) -> Any:
             calls.append(path)
+            if path == "/git/ref/heads/main":
+                return main
             return listing if "deployment-branch-policies" in path else found
 
-        with patch.object(deploy, "github", read):
+        with patch.object(deploy, "github", read), patch.dict(os.environ, {"GITHUB_SHA": sha}):
             deploy.check_environment(environment)
         return calls
 
-    def test_main_only_custom_policy_passes_and_a_reviewer_is_never_required(self) -> None:
+    def test_staging_needs_no_reviewer_and_production_needs_a_maintainer(self) -> None:
         self.assertEqual(self.check("staging", PROTECTED, ONLY_MAIN), [
             "/environments/staging", "/environments/staging/deployment-branch-policies?per_page=100"])
-        reviewers = {"type": "required_reviewers", "reviewers": [{"type": "User"}]}
-        for rules in (None, [], [{"type": "wait_timer", "wait_timer": 5}], [{"type": "required_reviewers", "reviewers": []}], [reviewers]):
-            for environment in deploy.ENVIRONMENTS:
-                with self.subTest(environment=environment, rules=rules):
-                    self.assertEqual(len(self.check(environment, {**PROTECTED, "protection_rules": rules}, ONLY_MAIN)), 2)
+        self.assertEqual(self.check("production", RELEASED, ONLY_MAIN), [
+            "/environments/production", "/environments/production/deployment-branch-policies?per_page=100", "/git/ref/heads/main"])
+        no_reviewer: tuple[Any, ...] = (None, [], [{"type": "wait_timer", "wait_timer": 5}], [{"type": "required_reviewers", "reviewers": []}],
+                                        [{"type": "required_reviewers"}], ["required_reviewers"])
+        for rules in (*no_reviewer, [MAINTAINER], [{"type": "wait_timer", "wait_timer": 5}, MAINTAINER]):
+            with self.subTest(environment="staging", rules=rules):
+                self.assertEqual(len(self.check("staging", {**PROTECTED, "protection_rules": rules}, ONLY_MAIN)), 2)
+        for rules in no_reviewer:
+            with self.subTest(environment="production", rules=rules), self.assertRaisesRegex(ValueError, "maintainer's approval"):
+                self.check("production", {**PROTECTED, "protection_rules": rules}, ONLY_MAIN)
+
+    def test_production_deploys_only_the_newest_main_commit(self) -> None:
+        older = "f" * 40
+        with self.assertRaisesRegex(ValueError, "Main has moved past this commit"):
+            self.check("production", RELEASED, ONLY_MAIN, sha=older)
+        stale: tuple[Any, ...] = ({"object": {"sha": older}}, {"object": {"sha": None}}, {"object": "main"}, {}, [], None)
+        for main in stale:
+            with self.subTest(main=main), self.assertRaisesRegex(ValueError, "Main has moved past this commit"):
+                self.check("production", RELEASED, ONLY_MAIN, main=main)
+        with patch.object(deploy, "github", return_value=MAIN_AT_HEAD), patch.dict(os.environ, {}, clear=True), self.assertRaises(KeyError):
+            deploy.require_main_head()
 
     def test_every_other_branch_policy_is_refused(self) -> None:
         def policy(**changes: Any) -> dict[str, Any]:
@@ -425,7 +447,7 @@ class DeployTests(unittest.TestCase):
         self.wrangler = FakeWrangler(self.temp)
         self.environment = {"PATH": os.environ["PATH"], "HOME": str(Path(self.directory.name, "home")), "RUNNER_TEMP": str(self.temp), "CI": "true", "PROFILE": "ejm-cli",
                             "CLOUDFLARE_API_TOKEN": "cloudflare-token-not-used", "GH_TOKEN": "github-token-not-used", "GITHUB_TOKEN": "github-token-not-used",
-                            "GITHUB_REPOSITORY": "ejmlabs/ejm-cli", "ACTIONS_RUNTIME_TOKEN": "runtime-token-not-used", "NODE_OPTIONS": "--require=./hook.js",
+                            "GITHUB_REPOSITORY": "ejmlabs/ejm-cli", "GITHUB_SHA": HEAD, "ACTIONS_RUNTIME_TOKEN": "runtime-token-not-used", "NODE_OPTIONS": "--require=./hook.js",
                             "npm_config_userconfig": "/srv/untrusted"}
         patcher = patch.dict(os.environ, self.environment, clear=True)
         patcher.start()
@@ -445,9 +467,11 @@ class DeployTests(unittest.TestCase):
             path.write_text(text)
 
     def fake_api(self, environments: Mapping[str, tuple[Any, Any]] | None = None) -> Callable[[str], Any]:
-        known = environments or {"staging": ({**PROTECTED, "protection_rules": []}, ONLY_MAIN), "production": (PROTECTED, ONLY_MAIN)}
+        known = environments or {"staging": ({**PROTECTED, "protection_rules": []}, ONLY_MAIN), "production": (RELEASED, ONLY_MAIN)}
 
         def read(path: str) -> Any:
+            if path == "/git/ref/heads/main":
+                return MAIN_AT_HEAD
             name = path.split("/", 3)[2].split("?", 1)[0]
             found, listing = known[name]
             return listing if "deployment-branch-policies" in path else found
@@ -567,6 +591,12 @@ class DeployTests(unittest.TestCase):
             for environment in deploy.ENVIRONMENTS:
                 with self.subTest(environment=environment), self.assertRaises(ValueError):
                     deploy.main(["protection", environment])
+        unreleased = self.fake_api({"staging": (PROTECTED, ONLY_MAIN), "production": (PROTECTED, ONLY_MAIN)})
+        with patch.object(deploy, "github", unreleased), self.assertRaisesRegex(ValueError, "maintainer's approval"):
+            deploy.main(["protection", "production"])
+        with patch.object(deploy, "github", reads), patch.dict(os.environ, {"GITHUB_SHA": "f" * 40}), self.assertRaisesRegex(ValueError, "moved past"):
+            deploy.main(["protection", "production"])
+        self.assertIsNone(self.wrangler.call())
 
     def test_the_wrong_arguments_or_repository_are_refused(self) -> None:
         for argv in ([], ["deploy"], ["deploy", "preview"], ["publish", "staging"], ["deploy", "staging", "extra"]):
