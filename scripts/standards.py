@@ -144,7 +144,6 @@ UI_FONT_HASHES = {
 }
 INHERIT = "    secrets: inherit\n"
 # Each push to main deploys to staging, then to production once a maintainer approves the production job.
-# The called workflow reads the environment's CLOUDFLARE_API_TOKEN only when the caller passes secrets on.
 SITE_DEPLOY_CALLER = """name: Deploy site
 on:
   push:
@@ -156,10 +155,9 @@ jobs:
       contents: read
       actions: read
     uses: ejmlabs/.github/.github/workflows/deploy-site.yml@STANDARDS_REVISION
-    secrets: inherit
 """
-# The form before `secrets: inherit` stays accepted until every consumer has moved.
-SITE_DEPLOY_CALLER_WITHOUT_SECRETS = SITE_DEPLOY_CALLER.removesuffix(INHERIT)
+# The inherited-secrets form stays accepted until every consumer has moved.
+SITE_DEPLOY_CALLER_WITH_INHERITED_SECRETS = SITE_DEPLOY_CALLER + INHERIT
 # The only writer of gate caches: a push to main builds the reviewed commit and saves it.
 WARM_CACHE_CALLER = """name: Warm trusted gate build caches
 on:
@@ -1333,8 +1331,8 @@ def workflow_problems(root: Path, profile: str) -> list[str]:
         for name, expected in consumer_workflows(pin, native=native, cache=cache, deploy=deploy).items():
             with collecting(problems, name):
                 actual = read(root, prefix + name)
-                if name == "deploy.yml" and not actual.endswith(INHERIT):
-                    expected = SITE_DEPLOY_CALLER_WITHOUT_SECRETS.replace("STANDARDS_REVISION", pin)  # noqa: PLW2901 - the older accepted form
+                if name == "deploy.yml" and actual.endswith(INHERIT):
+                    expected = SITE_DEPLOY_CALLER_WITH_INHERITED_SECRETS.replace("STANDARDS_REVISION", pin)  # noqa: PLW2901 - the older accepted form
                 if actual != expected:
                     problems.append(caller_mismatch(name, expected, actual))
     if native:
