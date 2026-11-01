@@ -821,7 +821,7 @@ class WorkflowSecurityTests(unittest.TestCase):
 
     def test_product_owned_quality_replaces_the_built_in_gate_and_runs_from_the_product_root(self) -> None:
         self.assertIn(workflows.GATE, self.governance["jobs"]["quality"]["steps"])
-        for profile in ("ejm-cli", "ejm-harness", "ejm-ide", "ejm-rightkit-fs", "ejm-ui", "ejmlabs", ".github"):
+        for profile in ("ejm-chess", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-rightkit-fs", "ejm-ui", "ejmlabs", ".github"):
             with self.subTest(profile=profile):
                 status, calls = run_gate(workflows.GATE["run"], profile, {"product/.github/quality": "executable"})
                 self.assertEqual(status, 0)
@@ -832,6 +832,13 @@ class WorkflowSecurityTests(unittest.TestCase):
         self.assertEqual((status, [call["command"] for call in calls]), (0, [["npm", "--prefix", "../ejm-ui", "ci", "--ignore-scripts"], ["quality"]]))
         status, calls = run_gate(workflows.GATE["run"], "ejm-cli", files, fail_at="quality")
         self.assertEqual((status, calls[-1]["command"]), (19, ["quality"]))
+
+    def test_chess_requires_its_own_quality_command_and_skips_rust_tools(self) -> None:
+        status, calls = run_gate(workflows.GATE["run"], "ejm-chess", {})
+        self.assertNotEqual(status, 0)
+        self.assertEqual(calls, [])
+        status, calls = run_gate(workflows.RUST_TOOLS["run"], "ejm-chess", {})
+        self.assertEqual((status, calls), (0, []))
 
     def test_anything_but_a_regular_executable_quality_file_falls_back_to_the_built_in_commands(self) -> None:
         cases = {

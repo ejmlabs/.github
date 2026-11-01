@@ -64,10 +64,20 @@ class StandardTests(TreeCase):
         self.assertEqual(standards.NATIVE_RELEASE, ("ejm-cli", "ejm-harness"))
         self.assertEqual(standards.WARM_CACHE, ("ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui"))
         self.assertEqual(sorted(standards.SITE_DEPLOY), ["ejm-calm", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-ui", "ejmlabs"])
-        self.assertEqual(sorted(PROFILES), [".github", "ejm-calm", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-rightkit-fs", "ejm-ui", "ejmlabs"])
+        self.assertEqual(sorted(PROFILES), [".github", "ejm-calm", "ejm-chess", "ejm-cli", "ejm-harness", "ejm-ide", "ejm-rightkit-fs", "ejm-ui", "ejmlabs"])
         self.assertEqual({name: profile.harness_pin for name, profile in PROFILES.items()}["ejm-cli"], True)
         self.assertEqual([name for name, profile in PROFILES.items() if profile.harness_pin], ["ejm-cli", "ejm-ide"])
         self.assertEqual([name for name, profile in PROFILES.items() if profile.publish], ["ejm-ui"])
+
+    def test_chess_profile_checks_application_versions_and_code_scan(self) -> None:
+        tree = self.tree("ejm-chess")
+        self.assertEqual(tree.check(), "0.1.0")
+        self.assertEqual(PROFILES["ejm-chess"].guide, "README.md#local-setup")
+        caller = consumer_workflows(REVISION, codeql_languages=PROFILES["ejm-chess"].codeql_languages)["code-scan.yml"]
+        tree.write(".github/workflows/code-scan.yml", caller)
+        self.assertEqual(standards.workflow_problems(tree.root, "ejm-chess"), [])
+        tree.change_json("package-lock.json", lambda data: data["packages"][""].update(version="0.2.0"))
+        self.fails(tree, "version differs from VERSION")
 
     def test_rightkit_profile_checks_the_single_crate_and_dual_license(self) -> None:
         tree = self.tree("ejm-rightkit-fs")
