@@ -21,17 +21,32 @@ The staging smoke step SHALL read the Access service-token values only from the 
 
 ### Requirement: Staging Access is never weakened to make a check pass
 
-The smoke and every live staging verification SHALL accept only an authenticated 200 response. No workflow, script or instruction SHALL add an Access bypass, an allow-list entry besides the one smoke service token, a WAF skip or a bot-protection exception to satisfy a staging check, and gerry's exact-path webhook bypass applications SHALL keep their exact-path scope.
+Every live staging verification and the smoke SHALL accept only an authenticated 200 response and SHALL require an unauthenticated request to the same host to be denied. No workflow, script or instruction SHALL widen the Access boundary to make a check pass, and gerry's per-path signed-webhook bypass applications SHALL keep their current per-path scope. A bot-phase exception scoped to requests presenting the smoke token MAY exist only as an owner decision recorded in `docs/operations.md`.
 
-#### Scenario: Access login redirect
+#### Scenario: Unauthenticated access denied
 
-- **WHEN** an unauthenticated request to a staging host answers with the Access login redirect or challenge
-- **THEN** the check records that staging is private and fails, and no rule is widened
+- **WHEN** an unauthenticated request to a staging host is redirected to the Access login or challenged
+- **THEN** the verification records the gate as present and no rule is widened
+
+#### Scenario: Unauthenticated access allowed
+
+- **WHEN** an unauthenticated request to a staging host answers with the site's own page
+- **THEN** the verification fails, names the missing gate, and no rule is widened
+
+#### Scenario: Boundary stays at the owner and the token
+
+- **WHEN** a change proposes an Access bypass, an allow-list entry besides the owner's email rule and the one smoke service token, a wider path scope, or an exception matching requests without the smoke token's credentials
+- **THEN** it is refused as a widening of the boundary, and only the owner's recorded bot-phase exception exists
+
+#### Scenario: Scoped bot exception
+
+- **WHEN** the first token-carrying smoke answers the zone's bot challenge
+- **THEN** only the owner decides whether the scoped bot-phase exception applies, records it in `docs/operations.md` when applied, and every other remedy stays forbidden
 
 #### Scenario: Smoke cannot pass
 
-- **WHEN** a site's staging host keeps failing its smoke
-- **THEN** the Access setup is fixed by the owner, and the smoke stays in the required path
+- **WHEN** a site's staging host keeps failing its smoke after the Access setup is correct
+- **THEN** the owner fixes the remaining setup as a recorded decision, and the smoke stays in the required path
 
 ### Requirement: The staging boundary stays recorded with each site
 

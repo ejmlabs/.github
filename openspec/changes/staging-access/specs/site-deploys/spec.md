@@ -2,12 +2,17 @@
 
 ### Requirement: The staging job verifies the served build through Access
 
-After the staging deploy succeeds, the staging job SHALL request the deployed staging host with the Access service-token headers taken only from the job's environment secrets, and SHALL fail the job when the host answers with the Access login, a challenge or any non-200.
+After the staging deploy succeeds, the staging job SHALL request the deployed staging host with the Access service-token headers taken only from the job's environment secrets, and SHALL fail the job when that request answers with the Access login, a challenge or any non-200. In the same job it SHALL also send the same request without credentials, and SHALL fail the job when that request is not denied, so a staging host with no Access application cannot pass.
 
 #### Scenario: Verify passes
 
-- **WHEN** the deployed staging host answers the token-carrying GET with 200 and an HTML body within the cap
+- **WHEN** the token-carrying GET answers 200 with an HTML body within the cap and the unauthenticated GET is redirected to the Access login or otherwise denied
 - **THEN** the staging job succeeds and the run is eligible for a production release
+
+#### Scenario: Gate absent
+
+- **WHEN** the unauthenticated GET answers the page with 200 instead of a denial, because the Access application is missing, deleted, or does not include the hostname
+- **THEN** the staging job fails and names the gate it could not find
 
 ### Requirement: The staging smoke takes its host and token from reviewed sources
 
@@ -17,11 +22,6 @@ The staging host SHALL come from the reviewed Wrangler config's staging routes a
 
 - **WHEN** either Access service-token secret is unset in the `staging` environment
 - **THEN** the staging job fails before the request and names the missing secret
-
-#### Scenario: Verify passes
-
-- **WHEN** the deployed staging host answers the token-carrying GET with 200 and an HTML body within the cap
-- **THEN** the staging job succeeds and the run is eligible for a production release
 
 #### Scenario: Access login instead of the page
 
