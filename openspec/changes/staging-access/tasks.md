@@ -24,7 +24,7 @@ This change's own files are the durable record: the applications and their polic
 - [ ] 3.6 `ejm-cli`: the caller moves to the current pin with `secrets: inherit` (its staging deploy currently stops with an empty token); the site skill, contributing doc and developer guide staging facts note the Access gate and that terminal reads need the token
 - [ ] 3.7 `ejm-agents`: after its site lands, adopt the shared caller and the `ejm-agents` profile, and keep the v0 plan's `ACCESS_AUD`/team-domain secrets split between its two environments; its PR 2 opt-out deploy workflow's smoke authenticates through the `ejm-agents-deploy-checks` token on both agents hosts (the requirement is pinned here, the workflow lands there), and the shared profile's production job verifies `agents.ejmlabs.com` the same way
 - [ ] 3.8 `ejm-chess` and the chess proof, capacity and drill Workers: no change (no staging boundary)
-- [ ] 3.9 `gerry`: no workflow change; the shared workflow does not smoke its host, and if that ever changes, the least-privilege form is a token scoped to that application alone, admitted only to the existing non-ejmlabs staging application, not the shared one; when the owner's media application lands, the repository's docs note the staging media host's gate and the LiveKit-over-proxy check
+- [ ] 3.9 The non-ejmlabs product's repository: no workflow change; the shared workflow does not smoke its host, and if that ever changes, the least-privilege form is a token scoped to that application alone, admitted only to the existing non-ejmlabs staging application, not the shared one; when the owner's media application lands, the repository's docs note the staging media host's gate and the LiveKit-over-proxy check
 
 ## 4. Verification
 
