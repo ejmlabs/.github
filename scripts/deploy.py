@@ -32,6 +32,7 @@ SITES = {
     "ejm-ide": ("npm --prefix ../ejm-ui ci --ignore-scripts\nnpm ci --ignore-scripts\nnpm run site:build\n",
                 "distribution/wrangler.jsonc", ("distribution", "website/dist")),
     "ejm-ui": ("npm ci --ignore-scripts\nnpm run build -w @ejm/gallery\n", "apps/gallery/wrangler.jsonc", ("apps/gallery/wrangler.jsonc", "apps/gallery/dist")),
+    "ejm-agents": ("npm ci --ignore-scripts\nnpm run build\n", "wrangler.jsonc", ("wrangler.jsonc", "dist")),
     "ejm-calm": ("npm ci --ignore-scripts\nnpm run build\n", "wrangler.jsonc", ("wrangler.jsonc", "dist")),
 }
 ENVIRONMENTS = ("staging", "production")

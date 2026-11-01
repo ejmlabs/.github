@@ -81,6 +81,12 @@ PROFILES = {
         licenses=(("package.json", "license"), ("src-tauri/Cargo.toml", "package.license")),
         cargo_lock="src-tauri/Cargo.lock", cache=True, deploy=True, harness_pin=True),
     "ejmlabs": Profile(guide="site/README.md", versions=(("site/package.json", "version"),), deploy=True),
+    "ejm-agents": Profile(
+        guide="README.md#development",
+        versions=(("package.json", "version"), ("package-lock.json", "version")),
+        locks=(("package-lock.json", ("packages", "", "version")),),
+        licenses=(("package.json", "license"),),
+        deploy=True),
     "ejm-calm": Profile(
         guide="README.md#run-locally",
         versions=(("package.json", "version"), ("package-lock.json", "version")),
