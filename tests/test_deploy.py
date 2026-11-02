@@ -12,7 +12,7 @@ import urllib.error
 from collections.abc import Callable, Mapping
 from email.message import Message
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -21,6 +21,10 @@ import deploy
 PRODUCTION: dict[str, Any] = {"name": "ejmlabs-cli", "routes": [{"pattern": "cli.ejmlabs.com", "custom_domain": True}], "assets": {"directory": "./dist"}}
 STAGING: dict[str, Any] = {"name": "ejmlabs-cli-staging", "routes": [{"pattern": "staging.cli.ejmlabs.com", "custom_domain": True}], "assets": {"directory": "./dist"}}
 CONFIG = json.dumps({**PRODUCTION, "env": {"staging": STAGING}}, indent=2) + "\n"
+# The agents site's shape: one custom-domain host per environment, the routes the Access check verifies.
+AGENTS: dict[str, Any] = {"name": "agents", "routes": [{"pattern": "agents.ejmlabs.com", "custom_domain": True}], "assets": {"directory": "./dist"}}
+AGENTS_STAGING: dict[str, Any] = {"name": "agents-staging", "routes": [{"pattern": "staging.agents.ejmlabs.com", "custom_domain": True}], "assets": {"directory": "./dist"}}
+AGENTS_CONFIG = json.dumps({**AGENTS, "env": {"staging": AGENTS_STAGING}}, indent=2) + "\n"
 # The ejmlabs studio's site/wrangler.jsonc as committed in ejmlabs/ejmlabs at 0289c47: a third `preview` environment beside staging.
 STUDIO = """{
   "$schema": "./node_modules/wrangler/config-schema.json",
@@ -167,6 +171,71 @@ class ConfigTests(unittest.TestCase):
         self.paths({**PRODUCTION, "account_id": deploy.ACCOUNT_ID})
         with self.assertRaisesRegex(ValueError, "different Cloudflare account"):
             self.paths({**PRODUCTION, "account_id": "0" * 32})
+
+
+class AccessHostTests(unittest.TestCase):
+    def test_the_reviewed_custom_domain_routes_are_the_hosts(self) -> None:
+        config = json.loads(AGENTS_CONFIG)
+        self.assertEqual(deploy.access_host(config, "production"), "agents.ejmlabs.com")
+        self.assertEqual(deploy.access_host(config, "staging"), "staging.agents.ejmlabs.com")
+
+    def test_verification_refuses_every_route_that_is_not_a_bare_custom_domain(self) -> None:
+        host = {"pattern": "agents.ejmlabs.com", "custom_domain": True}
+        bad_routes: tuple[Any, ...] = ([], None, ["agents.ejmlabs.com"], [{"pattern": "agents.ejmlabs.com"}],
+                                       [{"pattern": "*.agents.ejmlabs.com", "custom_domain": True}],
+                                       [{"pattern": "agents.ejmlabs.com/path", "custom_domain": True}],
+                                       [{"pattern": "agents.ejmlabs.com:8443", "custom_domain": True}],
+                                       [{"pattern": "https://agents.ejmlabs.com", "custom_domain": True}],
+                                       [{"pattern": "agents_ejmlabs_com", "custom_domain": True}],
+                                       [{"pattern": "", "custom_domain": True}], [3], "agents.ejmlabs.com", host,
+                                       [{"pattern": 3, "custom_domain": True}])
+        for routes in bad_routes:
+            with self.subTest(routes=routes), self.assertRaises(ValueError):
+                deploy.access_host({"routes": routes}, "production")
+        with self.assertRaises(ValueError):
+            deploy.access_host({**AGENTS, "env": {"staging": {**AGENTS_STAGING, "routes": []}}}, "staging")
+
+    def test_a_challenge_redirect_fails_instead_of_being_followed(self) -> None:
+        request = urllib.request.Request("https://agents.ejmlabs.com/")
+        handler = deploy.NoRedirect()
+        with self.assertRaises(urllib.error.HTTPError) as raised:
+            handler.redirect_request(request, None, 302, "Found", [], "https://team.cloudflareaccess.com/")
+        self.assertEqual(raised.exception.code, 302)
+
+    def test_the_authenticated_check_sends_the_service_token_headers_and_bounds_the_body(self) -> None:
+        recorded: dict[str, Any] = {}
+
+        class Answer:
+            def __init__(self, status: int, body: bytes) -> None:
+                self.status, self.rest = status, body
+
+            def read(self, limit: int) -> bytes:
+                body, self.rest = self.rest[:limit], self.rest[limit:]
+                return body
+
+            def __enter__(self) -> Self:
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+        class Opener:
+            def __init__(self, status: int, body: bytes) -> None:
+                self.answer = Answer(status, body)
+
+            def open(self, request: urllib.request.Request, timeout: int) -> Answer:
+                recorded.update(url=request.full_url, timeout=timeout, headers=dict(request.headers))
+                return self.answer
+
+        with patch("urllib.request.build_opener", return_value=Opener(200, b"<html>site</html>")):
+            self.assertEqual(deploy.authenticated_body("agents.ejmlabs.com", "id-value", "secret-value"), (200, b"<html>site</html>"))
+        self.assertEqual(recorded["url"], "https://agents.ejmlabs.com/")
+        self.assertEqual(recorded["timeout"], 60)
+        lowered = {key.lower(): value for key, value in recorded["headers"].items()}
+        self.assertEqual(lowered.get("cf-access-client-id"), "id-value")
+        self.assertEqual(lowered.get("cf-access-client-secret"), "secret-value")
+        with patch("urllib.request.build_opener", return_value=Opener(200, b"x" * (deploy.MAX_API_BYTES + 2))):
+            self.assertEqual(deploy.authenticated_body("agents.ejmlabs.com", "id", "secret")[1], b"x" * (deploy.MAX_API_BYTES + 1))
 
 
 class StudioConfigTests(unittest.TestCase):
@@ -419,13 +488,14 @@ class SourceTests(unittest.TestCase):
 
 
 class FakeWrangler:
-    """A Wrangler stand-in that records how it was started."""
+    """A Wrangler stand-in that records how it was started, including anything piped to it."""
 
     def __init__(self, temp: Path) -> None:
         self.record = temp / "wrangler-call.json"
         binary = temp / "deployer/node_modules/.bin/wrangler"
         binary.parent.mkdir(parents=True)
-        binary.write_text(f"#!{sys.executable}\nimport json, os, sys\nopen({str(self.record)!r}, 'w').write(json.dumps({{'argv': sys.argv[1:], 'env': dict(os.environ), 'cwd': os.getcwd()}}))\n")
+        binary.write_text(f"#!{sys.executable}\nimport json, os, sys\nstdin = sys.stdin.read() if hasattr(sys.stdin, 'isatty') and not sys.stdin.isatty() else ''\n"
+                          f"open({str(self.record)!r}, 'w').write(json.dumps({{'argv': sys.argv[1:], 'env': dict(os.environ), 'cwd': os.getcwd(), 'stdin': stdin}}))\n")
         binary.chmod(0o755)
 
     def call(self) -> dict[str, Any] | None:
@@ -465,6 +535,14 @@ class DeployTests(unittest.TestCase):
             path = Path("reviewed", name)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text)
+
+    def use_agents(self, artifact: dict[str, str] | None = None) -> None:
+        """Switch the workspace to the agents site and leave a deployed build behind, as the deploy step does."""
+        os.environ["PROFILE"] = "ejm-agents"
+        self.reviewed = {"wrangler.jsonc": AGENTS_CONFIG}
+        self.artifact = artifact or {"wrangler.jsonc": AGENTS_CONFIG, "dist/index.html": "<html>"}
+        self.pack()
+        deploy.main(["deploy", "staging"])
 
     def fake_api(self, environments: Mapping[str, tuple[Any, Any]] | None = None) -> Callable[[str], Any]:
         known = environments or {"staging": ({**PROTECTED, "protection_rules": []}, ONLY_MAIN), "production": (RELEASED, ONLY_MAIN)}
@@ -600,12 +678,85 @@ class DeployTests(unittest.TestCase):
         self.assertIsNone(self.wrangler.call())
 
     def test_the_wrong_arguments_or_repository_are_refused(self) -> None:
-        for argv in ([], ["deploy"], ["deploy", "preview"], ["publish", "staging"], ["deploy", "staging", "extra"]):
+        for argv in ([], ["deploy"], ["deploy", "preview"], ["publish", "staging"], ["deploy", "staging", "extra"], ["verify"], ["verify", "preview", "x"]):
             with self.subTest(argv=argv), self.assertRaisesRegex(ValueError, "Usage"):
                 deploy.main(argv)
         os.environ["PROFILE"] = ".github"
         with self.assertRaisesRegex(ValueError, "No site deploy"):
             deploy.main(["deploy", "staging"])
+        with self.assertRaisesRegex(ValueError, "No site deploy"):
+            deploy.main(["verify", "staging"])
+        self.assertIsNone(self.wrangler.call())
+
+    def verify_agents(self, environment: str, answer: tuple[int, bytes] = (200, b"<html>agents</html>")) -> None:
+        """Run the verify mode for the agents site with the service-token secrets set and the authenticated answer given."""
+        os.environ["CF_ACCESS_CLIENT_ID"] = "service-token-client-id"
+        os.environ["CF_ACCESS_CLIENT_SECRET"] = "service-token-secret-not-used"
+        with patch.object(deploy, "authenticated_body", return_value=answer):
+            deploy.main(["verify", environment])
+
+    def test_verify_sets_the_derived_identity_and_then_requires_the_deployed_answer(self) -> None:
+        self.use_agents()
+        self.verify_agents("staging")
+        call = self.wrangler.call()
+        assert call is not None
+        self.assertEqual(call["argv"], ["secret", "put", "ALLOWED_SERVICE_IDENTITIES", "--config", "built/wrangler.jsonc", "--env", "staging"])
+        # The value is the client id with the .access suffix, piped on stdin: never an argument, never a preset.
+        self.assertEqual(call["stdin"], "service-token-client-id.access")
+        self.assertEqual(set(call["env"]) - {"LC_CTYPE"}, {"PATH", "HOME", "RUNNER_TEMP", "CI", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "WRANGLER_SEND_METRICS"})
+        self.assertNotIn("GH_TOKEN", call["env"])
+        self.assertNotIn("CF_ACCESS_CLIENT", json.dumps(call["env"]))
+
+    def test_verify_production_puts_the_top_level_identity_and_checks_the_production_host(self) -> None:
+        self.use_agents()
+        self.verify_agents("production")
+        call = self.wrangler.call()
+        assert call is not None
+        self.assertEqual(call["argv"], ["secret", "put", "ALLOWED_SERVICE_IDENTITIES", "--config", "built/wrangler.jsonc"])
+        os.environ["CF_ACCESS_CLIENT_ID"] = "service-token-client-id"
+        os.environ["CF_ACCESS_CLIENT_SECRET"] = "service-token-secret-not-used"
+        with patch.object(deploy, "authenticated_body", return_value=(200, b"<html>agents</html>")) as answered:
+            deploy.main(["verify", "production"])
+        answered.assert_called_once_with("agents.ejmlabs.com", "service-token-client-id", "service-token-secret-not-used")
+
+    def test_verify_fails_closed_without_the_service_token_secrets_and_before_any_wrangler_call(self) -> None:
+        self.use_agents()
+        self.wrangler.record.unlink()
+        for client_id, client_secret in (("", ""), ("service-token-client-id", ""), ("", "service-token-secret-not-used")):
+            with patch.dict(os.environ, {"CF_ACCESS_CLIENT_ID": client_id, "CF_ACCESS_CLIENT_SECRET": client_secret}), \
+                    self.assertRaisesRegex(ValueError, "service-token secrets are missing"):
+                deploy.main(["verify", "staging"])
+        self.assertIsNone(self.wrangler.call())
+
+    def test_verify_keeps_the_checked_answer_honest(self) -> None:
+        self.use_agents()
+        answers: tuple[Any, ...] = ((302, b"<html>challenge</html>"), (403, b"forbidden"), (200, b""), (200, b'{"json": true}'), (200, b"x" * (deploy.MAX_API_BYTES + 1)))
+        for code, body in answers:
+            with self.subTest(code=code), self.assertRaises(ValueError):
+                self.verify_agents("staging", (code, body))
+
+    def test_verify_retries_transient_answers_and_fails_when_they_never_stop(self) -> None:
+        self.use_agents()
+        answers = [urllib.error.URLError("reset"), urllib.error.HTTPError("https://staging.agents.ejmlabs.com/", 502, "bad gateway", Message(), None), (200, b"<html>up</html>")]
+        os.environ["CF_ACCESS_CLIENT_ID"] = "service-token-client-id"
+        os.environ["CF_ACCESS_CLIENT_SECRET"] = "service-token-secret-not-used"
+        with patch.object(deploy, "time") as fake_time, patch.object(deploy, "authenticated_body", side_effect=iter(answers)):
+            fake_time.sleep = lambda _seconds: None
+            deploy.main(["verify", "staging"])
+        self.wrangler.record.unlink()
+        with patch.object(deploy, "time") as fake_time, patch.object(deploy, "authenticated_body", side_effect=urllib.error.URLError("down")):
+            fake_time.sleep = lambda _seconds: None
+            with self.assertRaises(urllib.error.URLError):
+                deploy.main(["verify", "staging"])
+
+    def test_verify_refuses_a_site_that_declares_no_access_verification(self) -> None:
+        self.use_agents()
+        os.environ["PROFILE"] = "ejm-cli"
+        os.environ["CF_ACCESS_CLIENT_ID"] = "service-token-client-id"
+        os.environ["CF_ACCESS_CLIENT_SECRET"] = "service-token-secret-not-used"
+        with self.assertRaisesRegex(ValueError, "does not declare Access verification"):
+            deploy.main(["verify", "staging"])
+        self.wrangler.record.unlink()
         self.assertIsNone(self.wrangler.call())
 
     def test_the_script_reports_a_failure_on_stderr_and_exits_nonzero(self) -> None:

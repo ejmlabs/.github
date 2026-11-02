@@ -19,3 +19,9 @@
 
 - [x] 3.1 `docs/operations.md` scope note, Quality table row and the site deploys list
 - [x] 3.2 `CHANGELOG.md` entry under `[Unreleased]`
+
+## 4. Re-declaration
+
+- [x] 4.1 Re-declare the deploy source with the reviewed Access-authenticated post-deploy checks and the `ALLOWED_SERVICE_IDENTITIES` deploy-time derivation (`scripts/deploy.py`, `.github/workflows/deploy-site.yml`)
+- [x] 4.2 Bump the canonical caller pins in this repository's own `pr.yml` and `release.yml` to this branch's head (`.github/workflows/pr.yml`, `.github/workflows/release.yml`)
+- [x] 4.3 `python3 scripts/build_workflows.py --check` is clean and the unittest suite matches the unmodified-main baseline (the 16 pre-existing `test_prepare.py` fixture errors)

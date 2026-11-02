@@ -354,16 +354,26 @@ class WorkflowSecurityTests(unittest.TestCase):
                 self.assertEqual(steps[1]["uses"], workflows.CHECKOUT)
                 self.assertEqual(steps[1]["with"], {"path": "reviewed", "ref": "${{ github.sha }}", "persist-credentials": False, "fetch-depth": 1, "submodules": False,
                                                     "sparse-checkout": reviewed, "sparse-checkout-cone-mode": False})
-                # The checkout is data: no step runs anything from it. The only trusted steps are the pinned deployer install and deploy.py.
-                protection, deploy = steps[-2], steps[-1]
-                self.assertTrue(all("secrets." not in json.dumps(step) for step in steps[:-1]))
+                # The checkout is data: no step runs anything from it. The only trusted steps are the pinned deployer install, deploy.py, and the Access verification.
+                protection, deploy, verify = steps[-3], steps[-2], steps[-1]
+                # Only the deploy step and the verification that follows it read secrets.
+                self.assertTrue(all("secrets." not in json.dumps(step) for step in steps[:-2]))
+                self.assertTrue(all("CF_ACCESS_CLIENT" not in json.dumps(step) for step in steps[:-1]))
                 self.assertEqual(protection["env"], {"GH_TOKEN": "${{ github.token }}"})
                 self.assertEqual(deploy["env"], {"CLOUDFLARE_API_TOKEN": "${{ secrets.CLOUDFLARE_API_TOKEN }}"})
                 self.assertNotIn("GH_TOKEN", json.dumps(deploy))
                 for step, mode in ((protection, "protection"), (deploy, "deploy")):
                     self.assertEqual(embedded_source(step["run"]), workflows.source("deploy.py"))
                     self.assertEqual(step["run"].splitlines()[0], f"python3 -I - {mode} {name} <<'TRUSTED_PYTHON'")
-                install = steps[-3]["run"]
+                # The verification runs the same trusted script for the sites that declare it, and skips the rest.
+                self.assertEqual(verify["env"], {"CF_ACCESS_CLIENT_ID": "${{ secrets.CF_ACCESS_CLIENT_ID }}", "CF_ACCESS_CLIENT_SECRET": "${{ secrets.CF_ACCESS_CLIENT_SECRET }}"})
+                self.assertEqual(embedded_source(verify["run"]), workflows.source("deploy.py"))
+                self.assertIn("python3 -I - verify " + name + " <<'TRUSTED_PYTHON'", verify["run"])
+                self.assertIn('case "$PROFILE" in', verify["run"])
+                self.assertIn("  ejm-agents)", verify["run"])
+                self.assertIn("  *) exit 0 ;;", verify["run"])
+                self.assertNotIn("secrets.", verify["run"])
+                install = steps[-4]["run"]
                 self.assertIn("npm ci --ignore-scripts", install)
                 lock = (workflows.ROOT / "deploy/package-lock.json").read_text()
                 self.assertIn(repr(lock), embedded_source(install) or "")
