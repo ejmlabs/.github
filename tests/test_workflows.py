@@ -366,7 +366,9 @@ class WorkflowSecurityTests(unittest.TestCase):
                     self.assertEqual(embedded_source(step["run"]), workflows.source("deploy.py"))
                     self.assertEqual(step["run"].splitlines()[0], f"python3 -I - {mode} {name} <<'TRUSTED_PYTHON'")
                 # The verification runs the same trusted script for the sites that declare it, and skips the rest.
-                self.assertEqual(verify["env"], {"CF_ACCESS_CLIENT_ID": "${{ secrets.CF_ACCESS_CLIENT_ID }}", "CF_ACCESS_CLIENT_SECRET": "${{ secrets.CF_ACCESS_CLIENT_SECRET }}"})
+                # It authenticates the secret put with the same environment token the deploy step uses.
+                self.assertEqual(verify["env"], {"CLOUDFLARE_API_TOKEN": "${{ secrets.CLOUDFLARE_API_TOKEN }}", "CF_ACCESS_CLIENT_ID": "${{ secrets.CF_ACCESS_CLIENT_ID }}",
+                                                 "CF_ACCESS_CLIENT_SECRET": "${{ secrets.CF_ACCESS_CLIENT_SECRET }}"})
                 self.assertEqual(embedded_source(verify["run"]), workflows.source("deploy.py"))
                 self.assertIn("python3 -I - verify " + name + " <<'TRUSTED_PYTHON'", verify["run"])
                 self.assertIn('case "$PROFILE" in', verify["run"])

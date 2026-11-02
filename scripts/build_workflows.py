@@ -417,7 +417,8 @@ def deploy_workflow() -> dict[str, Any]:
                           run("Deploy the built site to " + environment, trusted.replace("{mode}", "deploy"),
                               env={"CLOUDFLARE_API_TOKEN": "${{ secrets.CLOUDFLARE_API_TOKEN }}"}),
                           run("Verify the " + environment + " deploy through Cloudflare Access", verified,
-                              env={"CF_ACCESS_CLIENT_ID": "${{ secrets.CF_ACCESS_CLIENT_ID }}", "CF_ACCESS_CLIENT_SECRET": "${{ secrets.CF_ACCESS_CLIENT_SECRET }}"})]}
+                              env={"CLOUDFLARE_API_TOKEN": "${{ secrets.CLOUDFLARE_API_TOKEN }}", "CF_ACCESS_CLIENT_ID": "${{ secrets.CF_ACCESS_CLIENT_ID }}",
+                                   "CF_ACCESS_CLIENT_SECRET": "${{ secrets.CF_ACCESS_CLIENT_SECRET }}"})]}
 
     jobs = {
         # Builds queue in push order too, so a slow build of an older commit cannot reach staging and production after a newer one.
