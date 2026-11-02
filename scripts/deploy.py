@@ -4,9 +4,11 @@ import http.client
 import json
 import os
 import posixpath
+import re
 import subprocess
 import sys
 import tarfile
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path, PurePosixPath
@@ -36,6 +38,11 @@ SITES = {
     "ejm-calm": ("npm ci --ignore-scripts\nnpm run build\n", "wrangler.jsonc", ("wrangler.jsonc", "dist")),
 }
 ENVIRONMENTS = ("staging", "production")
+# Sites whose deploy is verified through Cloudflare Access. Their environments hold the service-token
+# secrets CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET, and each deploy sets the Worker's service-identity
+# allowlist from the client id, then requires the deployed host to answer the authenticated check. The
+# identity format is the service-token Client-Id suffixed ".access", the exact value verifyAccess matches.
+ACCESS_VERIFY = ("ejm-agents",)
 MAX_API_BYTES = 1_000_000
 MAX_MEMBERS = 100_000
 MAX_ARCHIVE_BYTES = 1_000_000_000
@@ -249,6 +256,67 @@ def wrangler_environment() -> dict[str, str]:
     return {**kept, "CLOUDFLARE_ACCOUNT_ID": ACCOUNT_ID, "WRANGLER_SEND_METRICS": "false"}
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Answer with the first response. An Access challenge is a redirect, so following one would mask the failure."""
+
+    def redirect_request(self, req: urllib.request.Request, fp: Any, code: int, msg: str, headers: Any, _newurl: str) -> None:  # noqa: ANN401 - handler signature
+        raise urllib.error.HTTPError(req.full_url, code, msg, headers, fp)
+
+
+def access_host(config: dict[str, Any], environment: str) -> str:
+    """The custom-domain host this environment serves, from the reviewed config. Verification follows the reviewed routes."""
+    scope: Any = config if environment == "production" else (config.get("env") or {}).get(environment)
+    routes = scope.get("routes") if isinstance(scope, dict) else None
+    route = routes[0] if isinstance(routes, list) and routes else None
+    pattern = route.get("pattern") if isinstance(route, dict) else route
+    if not isinstance(pattern, str) or not isinstance(route, dict) or route.get("custom_domain") is not True:
+        raise ValueError(f"The {environment} deploy needs a custom-domain route to verify through Access")
+    if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+", pattern):
+        raise ValueError(f"The {environment} route pattern is not a bare host, so it cannot be verified: " + pattern)
+    return pattern
+
+
+def authenticated_body(host: str, client_id: str, client_secret: str) -> tuple[int, bytes]:
+    """Request the host once through Cloudflare Access and return the first response's code and bounded body."""
+    request = urllib.request.Request("https://" + host + "/", headers={"CF-Access-Client-Id": client_id, "CF-Access-Client-Secret": client_secret})
+    with urllib.request.build_opener(NoRedirect()).open(request, timeout=60) as response:
+        return response.status, response.read(MAX_API_BYTES + 1)
+
+
+def verify(environment: str, profile: str) -> None:
+    """After the deploy: set the Worker's service-identity allowlist, then require the deployed host to answer Access."""
+    if profile not in ACCESS_VERIFY:
+        raise ValueError("This site does not declare Access verification")
+    client_id, client_secret = os.environ.get("CF_ACCESS_CLIENT_ID", ""), os.environ.get("CF_ACCESS_CLIENT_SECRET", "")
+    if not client_id or not client_secret:
+        raise ValueError(f"The Cloudflare Access service-token secrets are missing from the {environment} environment")
+    _, config_path, _ = SITES[profile]
+    config = site_config(Path("reviewed", config_path).read_text(encoding="utf-8"))
+    arguments = check(config, environment)
+    host = access_host(config, environment)
+    # The Worker's allowlist takes the service token's client id with the .access suffix, derived here at deploy
+    # time and piped to Wrangler: never a preset value, never an argument, never echoed by Actions masking.
+    wrangler = Path(os.environ["RUNNER_TEMP"], "deployer/node_modules/.bin/wrangler")
+    subprocess.run([str(wrangler), "secret", "put", "ALLOWED_SERVICE_IDENTITIES", "--config", str(Path("built", config_path)), *arguments],
+                   input=client_id + ".access", check=True, env=wrangler_environment(), text=True)
+    for attempt in range(3):
+        code, body = 0, b""
+        try:
+            code, body = authenticated_body(host, client_id, client_secret)
+            break
+        except (urllib.error.HTTPError, urllib.error.URLError, OSError):
+            if attempt == 2:
+                raise
+            time.sleep(5)
+    if code != 200:
+        raise ValueError(f"The {host} check answered HTTP {code} instead of 200")
+    if len(body) > MAX_API_BYTES:
+        raise ValueError(f"The {host} check answer exceeds its byte limit")
+    if b"<html" not in body.lower():
+        raise ValueError(f"The {host} check answered without an HTML body")
+    print(f"The {environment} host {host} answered 200 to the authenticated check")
+
+
 def deploy(environment: str, profile: str) -> None:
     env = wrangler_environment()
     _, config_path, paths = SITES[profile]
@@ -270,13 +338,15 @@ def deploy(environment: str, profile: str) -> None:
 
 
 def main(argv: "Sequence[str]") -> None:
-    if len(argv) != 2 or argv[0] not in ("protection", "deploy") or argv[1] not in ENVIRONMENTS:
-        raise ValueError("Usage: deploy.py (protection|deploy) (staging|production)")
+    if len(argv) != 2 or argv[0] not in ("protection", "deploy", "verify") or argv[1] not in ENVIRONMENTS:
+        raise ValueError("Usage: deploy.py (protection|deploy|verify) (staging|production)")
     profile = os.environ["PROFILE"]
     if profile not in SITES:
         raise ValueError("No site deploy for this repository")
     if argv[0] == "protection":
         check_environment(argv[1])
+    elif argv[0] == "verify":
+        verify(argv[1], profile)
     else:
         deploy(argv[1], profile)
 

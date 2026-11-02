@@ -10,7 +10,7 @@ from typing import Any
 
 from standards import CODEQL_CALLER
 
-from deploy import SITES, source_path
+from deploy import ACCESS_VERIFY, SITES, source_path
 
 ROOT = Path(__file__).resolve().parent.parent
 MAX_WORKFLOW_BYTES = 450_000
@@ -377,7 +377,7 @@ DEPENDENCY = {"persist-credentials": False, "fetch-depth": 1, "submodules": Fals
 
 
 def deploy_workflow() -> dict[str, Any]:
-    """Build a site once without credentials, deploy it to staging, then deploy the same files to production after a human approves."""
+    """Build a site once without credentials, deploy it to staging, then deploy the same files to production after a human approves. Sites that declare Access verification also set the Worker's service-identity allowlist and require the deployed host to answer the authenticated check."""
     profile = "github.event.repository.name"
     push = "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}"
     # A product that owns .github/site-build builds with it; the profile's commands are the fallback. The files to pack stay in SITES.
@@ -395,6 +395,10 @@ def deploy_workflow() -> dict[str, Any]:
 
     def deploy(environment: str, needs: str) -> dict[str, Any]:
         trusted = python(source("deploy.py"), "{mode} " + environment, "python3 -I")
+        # Sites that declare no Access verification have no authenticated check to run. Any other profile value
+        # reaches the fallthrough only if the deploy step failed first: deploy.py refuses a profile outside SITES.
+        verified = ('case "$PROFILE" in\n' + "".join("  " + name + ")\n" + trusted.replace("{mode}", "verify") + "  ;;\n" for name in ACCESS_VERIFY)
+                   + "  *) exit 0 ;;\nesac\n")
         return {"needs": needs, "if": push, "runs-on": "ubuntu-24.04", "timeout-minutes": 10, "environment": environment,
                 # contents reads the reviewed config; actions reads the environment's rules. Both fit within the caller's grant.
                 "permissions": {"contents": "read", "actions": "read"},
@@ -411,7 +415,10 @@ def deploy_workflow() -> dict[str, Any]:
                           # Production also needs a required reviewer, and deploys only main's newest commit.
                           run("Require the " + environment + " environment's protections", trusted.replace("{mode}", "protection"), env={"GH_TOKEN": "${{ github.token }}"}),
                           run("Deploy the built site to " + environment, trusted.replace("{mode}", "deploy"),
-                              env={"CLOUDFLARE_API_TOKEN": "${{ secrets.CLOUDFLARE_API_TOKEN }}"})]}
+                              env={"CLOUDFLARE_API_TOKEN": "${{ secrets.CLOUDFLARE_API_TOKEN }}"}),
+                          run("Verify the " + environment + " deploy through Cloudflare Access", verified,
+                              env={"CLOUDFLARE_API_TOKEN": "${{ secrets.CLOUDFLARE_API_TOKEN }}", "CF_ACCESS_CLIENT_ID": "${{ secrets.CF_ACCESS_CLIENT_ID }}",
+                                   "CF_ACCESS_CLIENT_SECRET": "${{ secrets.CF_ACCESS_CLIENT_SECRET }}"})]}
 
     jobs = {
         # Builds queue in push order too, so a slow build of an older commit cannot reach staging and production after a newer one.
