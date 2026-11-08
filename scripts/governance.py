@@ -497,7 +497,8 @@ def event_base(api: GitHub, event: dict[str, Any], live: dict[str, Any]) -> str 
     current = checked_sha(live["base"]["sha"])
     if named == current:
         return named
-    path = f"/repos/{api.repo}/compare/{named}...{current}"
+    # The client's root already names the repository, so this path must be repository-relative.
+    path = f"/compare/{named}...{current}"
     try:
         comparison = api.request(path)
     except urllib.error.HTTPError as error:

@@ -176,7 +176,7 @@ class Server:
                 comment = {"id": len(self.comments) + 1, "body": body["body"], "user": {"login": "github-actions[bot]"}}
                 self.comments.append(comment)
                 return 201, copy.deepcopy(comment)
-            case "GET", ["repos", _owner, _name, "compare", spec]:
+            case "GET", ["compare", spec]:
                 self.compares.append(spec)
                 # A...B, where B is live main. B is ahead when it contains A, which it does for an event that came first.
                 first, _, second = spec.partition("...")
@@ -529,6 +529,14 @@ class BaseBindingTests(GateCase):
         self.assertEqual(out["base"], BASE)
         self.assertEqual(self.server.compares, [f"{BASE}...{self.LATER}"])
 
+    def test_the_compare_asks_the_repository_path_the_client_builds(self) -> None:
+        # The client prefixes the repository, so a path that repeated it would answer 404 on every real call.
+        self.server.pr["base"]["sha"] = self.LATER
+        event = self.event("ready_for_review")
+        event["pull_request"]["base"]["sha"] = BASE
+        self.admit_as(500, event)
+        self.assertIn(("GET", f"/compare/{BASE}...{self.LATER}"), self.server.calls)
+
     def test_a_gate_approve_label_admits_the_base_its_approval_was_bound_to(self) -> None:
         event = self.labeled(APPROVE_LABEL)
         self.server.pr["base"]["sha"] = self.LATER
@@ -557,7 +565,7 @@ class BaseBindingTests(GateCase):
         self.server.pr["base"]["sha"] = self.LATER
         event = self.event("ready_for_review")
         event["pull_request"]["base"]["sha"] = BASE
-        self.server.fail("GET", "/repos/", 404)
+        self.server.fail("GET", "/compare/", 404)
         out = self.admit_as(500, event)
         self.assertEqual(out["base"], self.LATER)
 

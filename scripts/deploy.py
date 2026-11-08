@@ -154,9 +154,13 @@ def production_hosts(config: dict[str, Any]) -> list[str]:
 
 
 def valid_route(route: Any, production: list[str]) -> bool:  # noqa: ANN401 - a route is untyped until checked here
-    """True when the route names a strict subdomain of a production host."""
+    """True when the route names a strict subdomain of a production host and no production host itself.
+
+    A host that one production route uses must stay refused even when another production route would make it look
+    like a subdomain, as api.example.com does beside example.com.
+    """
     host = route_host(route)
-    return host is not None and any(host.endswith("." + known) and host != known for known in production)
+    return host is not None and host not in production and any(host.endswith("." + known) for known in production)
 
 
 def inside(path: str, parent: str) -> bool:

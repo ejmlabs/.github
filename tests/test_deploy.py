@@ -287,6 +287,19 @@ class StudioConfigTests(unittest.TestCase):
                 staging = {key: value for key, value in STAGING.items() if key != "workers_dev"}
                 deploy.check({**generic, "env": {"staging": {**staging, "workers_dev": workers_dev}}}, "staging")
 
+    def test_staging_cannot_take_a_host_another_production_route_uses(self) -> None:
+        production = {**PRODUCTION, "routes": [{"pattern": "example.com", "custom_domain": True},
+                                               {"pattern": "api.example.com/*", "custom_domain": False}]}
+        for pattern, ok in (("api.example.com/*", False), ("staging.example.com/*", True), ("staging.api.example.com/*", True)):
+            with self.subTest(pattern=pattern):
+                staging = {**STAGING, "routes": [{"pattern": pattern}]}
+                config = {**production, "env": {"staging": staging}}
+                if ok:
+                    self.assertEqual(deploy.check(config, "staging"), ["--env", "staging"])
+                else:
+                    with self.assertRaisesRegex(ValueError, "production host"):
+                        deploy.check(config, "staging")
+
     def test_staging_cannot_take_the_production_identity(self) -> None:
         config = deploy.site_config(STUDIO)
         staging = config["env"]["staging"]

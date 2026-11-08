@@ -322,10 +322,12 @@ Rust profiles (`ejm-cli`, `ejm-harness`, `ejm-ide`, `ejm-ui`) adopt the cache by
 secrets.
 
 - Key. `gate-<job>-<OS>-rust1.99.1-<hash of the Cargo.lock beside the target directory>-<the main
-  commit the build ran>`, where job is `quality` or `registry`. A gate job restores the exact key,
-  or else the newest entry with the prefix before the hash, so the cache of one main commit serves
-  a build of another only when they share a lockfile, and never an entry an unusual commit saved
-  under that lockfile. It never saves, and setup-uv's cache is off in gate jobs. A miss costs a
+  commit the build ran>`, where job is `quality` or `registry`. A gate job asks for its own key text
+  and falls back to that key without the commit, so the fallback keeps the lockfile hash: an entry
+  saved for another lockfile, and so another dependency set, is never restored. Entries for this
+  same lockfile saved by different main commits share the fallback, and the newest is restored, so
+  a main commit that shares a lockfile keeps the warm cache. It never saves, and setup-uv's cache
+  is off in gate jobs. A miss costs a
   cold build. Extraction stamps every file with the current time, so Cargo rebuilds every local
   crate and reuses only dependency artifacts.
 - PR scope. GitHub scopes the cache of a pull request run to that PR's merge ref, so PR code can
@@ -360,8 +362,9 @@ and requires the artifact's Wrangler config to be byte-identical to the reviewed
 `assets.directory` must stay inside the declared output paths, and a Worker `main` must be
 committed source. A Wrangler `build` command is refused, and staging needs its own Worker name and
 routes, because `--env staging` otherwise inherits the production custom domain. Staging must set
-`workers_dev: false` and every staging route must name a subdomain of the production host, so a
-staging build never answers on a public host before production is approved. Wrangler runs
+`workers_dev: false`, and every staging route must name a subdomain of a production host and no
+production host itself, so a staging Worker never sits on production's address or another address
+production uses. The staging host is still public; Cloudflare Access protects it. Wrangler runs
 from the lockfile in `deploy/` with a minimal environment that holds no GitHub token. A separate
 step first reads the environment and fails closed unless it has exactly one deployment branch
 policy, `main`, in staging and production alike, and unless `production` also has at least one

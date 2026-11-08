@@ -323,7 +323,7 @@ class WorkflowSecurityTests(unittest.TestCase):
                     self.assertEqual(step["with"]["path"].replace(*as_gate), restore["with"]["path"])
                     # Saved keys carry the exact main commit the build ran, so the gate's prefix match never restores
                     # a cache an unusual commit saved under a lockfile many commits share.
-                    self.assertEqual(step["with"]["key"].replace(*as_gate), restore["with"]["key"] + "-${{ github.sha }}")
+                    self.assertEqual(step["with"]["key"].replace(*as_gate), restore["with"]["key"])
                 # Saved only by a build that passed and found no cache: a saved key is never replaced.
                 self.assertEqual(save["if"], miss)
                 self.assertEqual(job["steps"].index(save), len(job["steps"]) - 1)
@@ -740,8 +740,11 @@ class WorkflowSecurityTests(unittest.TestCase):
                 self.assertTrue(restore["uses"].startswith("actions/cache/restore@"), "the admitted gate must never save a cache")
                 prefix = "gate-" + name + "-${{ runner.os }}-rust" + workflows.RUST_VERSION + "-"
                 self.assertEqual(restore["with"].keys(), {"path", "key", "restore-keys"})
-                self.assertEqual(restore["with"]["restore-keys"], prefix)
-                lookup = re.fullmatch(re.escape(prefix) + r"\$\{\{ hashFiles\(fromJSON\('(\{.*\})'\)\[needs\.admission\.outputs\.profile\]\) \}\}", restore["with"]["key"])
+                # The fallback prefix keeps the lockfile hash, so another lockfile's entry never matches; only this
+                # gate job's key text, which is the saved key without the commit, may follow it.
+                key = restore["with"]["key"]
+                self.assertEqual(key, restore["with"]["restore-keys"] + "-" + workflows.SAVED_COMMIT)
+                lookup = re.fullmatch(re.escape(prefix) + r"\$\{\{ hashFiles\(fromJSON\('(\{.*\})'\)\[needs\.admission\.outputs\.profile\]\) \}\}", restore["with"]["restore-keys"])
                 self.assertIsNotNone(lookup, restore["with"]["key"])
                 assert lookup is not None
                 locks = json.loads(lookup[1])

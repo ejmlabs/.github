@@ -9,8 +9,11 @@ The net change since 0.1.0:
 - Admission binds to the base commit the Ready or gate:approve event saw, never a newer tip of
   main, so a commit merged between review and approval is not folded into the approved change; a
   base main no longer contains is refused, and a same-named repository whose ID differs is a fork.
-- The trusted build cache's saved entries carry the exact main commit their build ran, so the
-  gate's prefix restore never serves an entry an unusual commit saved under a shared lockfile.
+- The trusted build cache's saved entries carry the main commit their build ran, and the gate's
+  fallback prefix stops at the lockfile hash, so it never restores an entry saved for another
+  dependency set.
+- Admission compares its base through the repository-relative compare path, so the ancestry check
+  runs on every real call rather than falling back to live main.
 - The actions allowlist pins each standard action to a 40-hex commit pattern instead of `@*`,
   which a tag or branch could satisfy.
 - Site deploys refuse a staging environment that sets `workers_dev` away from false, and require

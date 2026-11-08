@@ -40,6 +40,8 @@ RUST_TARGETS = {"quality": {"ejm-cli": "product/target", "ejm-harness": "product
                             "ejm-ui": "product/crates/ejm-tui/target"},
                 "registry": {"ejm-harness": "product/registry/target"}}
 RUST_VERSION = "1.99.1"
+# The warm job saves each cache under this main commit, so an entry says exactly which main build made it.
+SAVED_COMMIT = "${{ github.sha }}"
 # The repositories' .cargo/config.toml caps local builds at two jobs; hosted runners use every core.
 CARGO_ENV = {"CARGO_BUILD_JOBS": "default", "CARGO_INCREMENTAL": "0"}
 
@@ -224,13 +226,21 @@ def rust_cache(job: str, profile: str) -> tuple[str, dict[str, str]]:
     target = "${{ fromJSON('" + json.dumps(targets, separators=(",", ":")) + "')[" + profile + "] }}"
     locks = {name: path.removesuffix("/target") + "/Cargo.lock" for name, path in targets.items()}
     lock = "${{ hashFiles(fromJSON('" + json.dumps(locks, separators=(",", ":")) + "')[" + profile + "]) }}"
-    return condition, {"path": "~/.cargo/registry/index\n~/.cargo/registry/cache\n~/.cargo/git/db\n" + target + "\n", "key": cache_prefix(job) + lock}
+    # The saved key ends in the main commit it was built from, and the fallback prefix stops at the lockfile hash.
+    return condition, {"path": "~/.cargo/registry/index\n~/.cargo/registry/cache\n~/.cargo/git/db\n" + target + "\n",
+                       "key": cache_prefix(job) + lock + "-" + SAVED_COMMIT}
 
 
 def restore(job: str) -> list[dict[str, Any]]:
-    """Restore main's build for this lockfile, or its newest build for the same toolchain. The gate never saves."""
+    """Restore main's build for this lockfile. The gate never saves.
+
+    The fallback prefix is the saved key up to the commit, which is the gate's own key text, so it keeps the lockfile
+    hash: an entry saved for another lockfile, and so another dependency set, is never restored. Entries for this same
+    lockfile saved by different main commits share that prefix, and the newest is restored.
+    """
     condition, cache = rust_cache(job, "needs.admission.outputs.profile")
-    return [{"uses": CACHE_RESTORE, "if": "${{ " + condition + " }}", "with": {**cache, "restore-keys": cache_prefix(job)}}]
+    prefix = cache["key"].removesuffix("-" + SAVED_COMMIT)
+    return [{"uses": CACHE_RESTORE, "if": "${{ " + condition + " }}", "with": {**cache, "restore-keys": prefix}}]
 
 
 def governance() -> dict[str, Any]:
@@ -453,10 +463,9 @@ def warm_workflow() -> dict[str, Any]:
                run("Match the gate's exported source layout", "rm -rf product/.git ejm-harness/.git ejm-ui/.git\n")]
 
     def job(name: str, steps: list[dict[str, Any]], extra: dict[str, Any]) -> dict[str, Any]:
-        # Only a build of this exact main commit saves an entry, so the gate never restores a cache an unusual commit
-        # saved under a lockfile many commits share.
+        # The saved key ends in the main commit this build ran, and the gate's fallback prefix stops at the lockfile
+        # hash, so the gate only ever restores an entry for the same lockfile.
         condition, cache = rust_cache(name, profile)
-        cache = {**cache, "key": cache["key"] + "-${{ github.sha }}" }
         # Toolchain and setup steps keep the gate's exact form, since the CLI setup hook must; only the build itself is skipped on a hit.
         missing = "${{ steps.lookup.outputs.cache-hit != 'true' }}"
         return {"if": "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && " + condition + " }}", **extra, "permissions": {"contents": "read"},
