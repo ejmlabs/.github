@@ -50,7 +50,9 @@ before Wrangler runs when:
 - the config names another Cloudflare account or declares a Wrangler `build` command, its
   `assets.directory` is outside the site's declared output, or its `main` is not committed source;
 - `env.staging` lacks its own Worker name and routes. Without them, `--env staging` would deploy
-  to the production custom domain.
+  to the production custom domain. Staging must also set `workers_dev: false`, and every staging
+  route must name a subdomain of the production host, so no staging build answers on a public host
+  before production is approved.
 
 Wrangler runs from the lockfile in `deploy/` of `ejmlabs/.github` at the pin, never from the
 repository's own `wrangler` dependency. Read the version from the banner in the deploy log. It
@@ -145,8 +147,11 @@ or changes environments, secrets or tokens.
 ## Staging names
 
 Staging serves `staging.<production host>`, for example `staging.ejmlabs.com` and
-`staging.ui.ejmlabs.com`. Its Worker is by convention the production Worker's name plus
-`-staging`. Cloudflare issues the custom domain's certificate, deeper subdomains included. Pick a
+`staging.ui.ejmlabs.com`. Anything else is refused: the deploy check requires `workers_dev: false`
+and staging routes under the production host, so a staging Worker can never be found on a public
+host before a maintainer approves production. Its Worker is by convention the production Worker's
+name plus `-staging`. Cloudflare issues the custom domain's certificate, deeper subdomains
+included. Pick a
 hostname that has no DNS record yet: an existing record makes Wrangler prompt, and CI cannot
 answer. Staging is public and serves the latest main.
 

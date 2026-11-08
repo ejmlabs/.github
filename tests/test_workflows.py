@@ -321,7 +321,9 @@ class WorkflowSecurityTests(unittest.TestCase):
                 self.assertEqual(save["with"].keys(), {"path", "key"})
                 for step in (probe, save):
                     self.assertEqual(step["with"]["path"].replace(*as_gate), restore["with"]["path"])
-                    self.assertEqual(step["with"]["key"].replace(*as_gate), restore["with"]["key"])
+                    # Saved keys carry the exact main commit the build ran, so the gate's prefix match never restores
+                    # a cache an unusual commit saved under a lockfile many commits share.
+                    self.assertEqual(step["with"]["key"].replace(*as_gate), restore["with"]["key"] + "-${{ github.sha }}")
                 # Saved only by a build that passed and found no cache: a saved key is never replaced.
                 self.assertEqual(save["if"], miss)
                 self.assertEqual(job["steps"].index(save), len(job["steps"]) - 1)

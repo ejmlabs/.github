@@ -56,9 +56,13 @@ label for self-approve under `enforce_admins`, arm auto-merge, and let the PR
 merge once every required status passes. Strict statuses still hold it until
 it is up to date with main.
 
-Default workflow tokens are read-only. Allow only full-SHA actions from
-`actions/*`, `astral-sh/setup-uv`, `ejmlabs/.github` and
-`github/codeql-action/*` for member code scanning. Enable bot review
+Default workflow tokens are read-only. The actions allowlist pins each
+standard action by name to a 40-hex commit pattern (`actions/checkout`,
+`actions/setup-node`, `actions/upload-artifact`, `actions/download-artifact`,
+`actions/cache/restore`, `actions/cache/save`, `actions/attest-build-provenance`,
+`astral-sh/setup-uv`, `ejmlabs/.github` and its subpaths, and the three
+`github/codeql-action` steps for member code scanning). A pattern with `@*`
+would also allow a tag or branch, so none is used: only a full commit is accepted. Enable bot review
 recording so an explicit human self-approve can be represented as a native
 review via the `gate:approve` label. Fork PR workflows get no secrets or write
 tokens. Re-enabling any model review needs the security review's sign-off first.
@@ -107,10 +111,13 @@ Comments such as `/ready` or `/approve` do nothing. Draft PRs spend nothing.
 | Fork PR | Nobody | Notice only, no API write |
 | A gate label added by a non-maintainer | Nobody | Label removed, run fails |
 
-- Every action binds to the event's head SHA. If the live PR head differs, or the PR is closed, a
-  draft or not based on main, the run prints a notice and writes nothing (a gate label is still
-  removed). A newer event handles the new head. A new commit needs a new admission: the push for a
-  maintainer's PR, a new Ready or `gate:approve` for any other.
+- Every action binds to the event's head SHA, and its admission binds to the event's base SHA,
+  so a commit merged into main after the Ready or `gate:approve` was created is never folded into
+  the approved change: the checks run against the base the maintainer saw. A gate label event names
+  no base and uses the live main its approval was bound to. If the live PR head differs, or the PR
+  is closed, a draft or not based on main, the run prints a notice and writes nothing (a gate
+  label is still removed). A newer event handles the new head. A new commit needs a new admission:
+  the push for a maintainer's PR, a new Ready or `gate:approve` for any other.
 - Stop. `gate:revoke` and conversion to draft fail both statuses, cancel this workflow's other
   queued and in-progress runs for that head, dismiss bot approvals (even when cancelling fails),
   wait until those runs have completed, then fail both statuses again as the last write. The wait
@@ -314,9 +321,11 @@ Rust profiles (`ejm-cli`, `ejm-harness`, `ejm-ide`, `ejm-ui`) adopt the cache by
 `cache.yml` caller. On each push to main it runs `warm-cache.yml` with `contents: read` and no
 secrets.
 
-- Key. `gate-<job>-<OS>-rust1.99.1-<hash of the Cargo.lock beside the target directory>`, where job
-  is `quality` or `registry`. A gate job restores the exact key, or else the newest entry with the
-  prefix before the hash. It never saves, and setup-uv's cache is off in gate jobs. A miss costs a
+- Key. `gate-<job>-<OS>-rust1.99.1-<hash of the Cargo.lock beside the target directory>-<the main
+  commit the build ran>`, where job is `quality` or `registry`. A gate job restores the exact key,
+  or else the newest entry with the prefix before the hash, so the cache of one main commit serves
+  a build of another only when they share a lockfile, and never an entry an unusual commit saved
+  under that lockfile. It never saves, and setup-uv's cache is off in gate jobs. A miss costs a
   cold build. Extraction stamps every file with the current time, so Cargo rebuilds every local
   crate and reuses only dependency artifacts.
 - PR scope. GitHub scopes the cache of a pull request run to that PR's merge ref, so PR code can
@@ -350,7 +359,9 @@ and requires the artifact's Wrangler config to be byte-identical to the reviewed
 `ejm-ide`, the whole `distribution` directory, which holds its Worker). `account_id` must match,
 `assets.directory` must stay inside the declared output paths, and a Worker `main` must be
 committed source. A Wrangler `build` command is refused, and staging needs its own Worker name and
-routes, because `--env staging` otherwise inherits the production custom domain. Wrangler runs
+routes, because `--env staging` otherwise inherits the production custom domain. Staging must set
+`workers_dev: false` and every staging route must name a subdomain of the production host, so a
+staging build never answers on a public host before production is approved. Wrangler runs
 from the lockfile in `deploy/` with a minimal environment that holds no GitHub token. A separate
 step first reads the environment and fails closed unless it has exactly one deployment branch
 policy, `main`, in staging and production alike, and unless `production` also has at least one

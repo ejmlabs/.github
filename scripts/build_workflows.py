@@ -453,7 +453,10 @@ def warm_workflow() -> dict[str, Any]:
                run("Match the gate's exported source layout", "rm -rf product/.git ejm-harness/.git ejm-ui/.git\n")]
 
     def job(name: str, steps: list[dict[str, Any]], extra: dict[str, Any]) -> dict[str, Any]:
+        # Only a build of this exact main commit saves an entry, so the gate never restores a cache an unusual commit
+        # saved under a lockfile many commits share.
         condition, cache = rust_cache(name, profile)
+        cache = {**cache, "key": cache["key"] + "-${{ github.sha }}" }
         # Toolchain and setup steps keep the gate's exact form, since the CLI setup hook must; only the build itself is skipped on a hit.
         missing = "${{ steps.lookup.outputs.cache-hit != 'true' }}"
         return {"if": "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && " + condition + " }}", **extra, "permissions": {"contents": "read"},

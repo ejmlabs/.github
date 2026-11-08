@@ -19,11 +19,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import deploy
 
 PRODUCTION: dict[str, Any] = {"name": "ejmlabs-cli", "routes": [{"pattern": "cli.ejmlabs.com", "custom_domain": True}], "assets": {"directory": "./dist"}}
-STAGING: dict[str, Any] = {"name": "ejmlabs-cli-staging", "routes": [{"pattern": "staging.cli.ejmlabs.com", "custom_domain": True}], "assets": {"directory": "./dist"}}
+STAGING: dict[str, Any] = {"name": "ejmlabs-cli-staging", "workers_dev": False, "routes": [{"pattern": "staging.cli.ejmlabs.com", "custom_domain": True}], "assets": {"directory": "./dist"}}
 CONFIG = json.dumps({**PRODUCTION, "env": {"staging": STAGING}}, indent=2) + "\n"
 # The agents site's shape: one custom-domain host per environment, the routes the Access check verifies.
 AGENTS: dict[str, Any] = {"name": "agents", "routes": [{"pattern": "agents.ejmlabs.com", "custom_domain": True}], "assets": {"directory": "./dist"}}
-AGENTS_STAGING: dict[str, Any] = {"name": "agents-staging", "routes": [{"pattern": "staging.agents.ejmlabs.com", "custom_domain": True}], "assets": {"directory": "./dist"}}
+AGENTS_STAGING: dict[str, Any] = {"name": "agents-staging", "workers_dev": False, "routes": [{"pattern": "staging.agents.ejmlabs.com", "custom_domain": True}], "assets": {"directory": "./dist"}}
 AGENTS_CONFIG = json.dumps({**AGENTS, "env": {"staging": AGENTS_STAGING}}, indent=2) + "\n"
 # The ejmlabs studio's site/wrangler.jsonc as committed in ejmlabs/ejmlabs at 0289c47: a third `preview` environment beside staging.
 STUDIO = """{
@@ -268,6 +268,24 @@ class StudioConfigTests(unittest.TestCase):
                 self.paths(with_preview(assets={"directory": directory}))
         with self.assertRaisesRegex(ValueError, "committed source"):
             self.paths(with_preview(main="worker.js"))
+
+    def test_staging_cannot_answer_on_a_host_before_production_is_approved(self) -> None:
+        generic = {**PRODUCTION, "env": {"staging": STAGING}}
+        good = ("staging.cli.ejmlabs.com", "https://staging.cli.ejmlabs.com/*", "*.staging.cli.ejmlabs.com/*")
+        bad = ("cli.ejmlabs.com/*", "https://cli.ejmlabs.com/*", "*://cli.ejmlabs.com/*", "staging.other.example/*",
+               "ejmlabs.com/*", "*.com/*")
+        for pattern in good:
+            with self.subTest(pattern=pattern):
+                staging = {**STAGING, "routes": [{"pattern": pattern, "custom_domain": True}]}
+                self.assertEqual(deploy.check({**generic, "env": {"staging": staging}}, "staging"), ["--env", "staging"])
+        for pattern in bad:
+            with self.subTest(pattern=pattern), self.assertRaisesRegex(ValueError, "production host"):
+                staging = {**STAGING, "routes": [{"pattern": pattern, "custom_domain": True}]}
+                deploy.check({**generic, "env": {"staging": staging}}, "staging")
+        for workers_dev in (None, True):
+            with self.subTest(workers_dev=workers_dev), self.assertRaisesRegex(ValueError, "workers_dev"):
+                staging = {key: value for key, value in STAGING.items() if key != "workers_dev"}
+                deploy.check({**generic, "env": {"staging": {**staging, "workers_dev": workers_dev}}}, "staging")
 
     def test_staging_cannot_take_the_production_identity(self) -> None:
         config = deploy.site_config(STUDIO)
