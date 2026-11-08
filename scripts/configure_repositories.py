@@ -27,7 +27,13 @@ GATE_LABELS = (
     {"name": "gate:revoke", "color": "B60205", "description": "Stop the current head: fail checks, cancel runs, dismiss bot approvals"},
 )
 ALLOWED_ACTIONS: dict[str, Any] = {"github_owned_allowed": False, "verified_allowed": False,
-                   "patterns_allowed": ["actions/*@*", "astral-sh/setup-uv@*", "ejmlabs/.github/*@*", "github/codeql-action/*@*"]}
+                   # A name and a 40-hex commit, never a wildcard: a wildcard also allows a tag or a branch, which can
+                   # point at new code, so the setting would promise more than the standards check proves.
+                   "patterns_allowed": [name + "@" + "[0-9a-f]" * 40 for name in (
+                       "actions/checkout", "actions/setup-node", "actions/upload-artifact", "actions/download-artifact",
+                       "actions/cache/restore", "actions/cache/save", "actions/attest-build-provenance", "astral-sh/setup-uv",
+                       "ejmlabs/.github", "ejmlabs/.github/*", "github/codeql-action/init", "github/codeql-action/autobuild",
+                       "github/codeql-action/analyze")]}
 
 
 # Settings for runs from fork pull requests, which only private repositories expose.
@@ -435,8 +441,9 @@ def check_actions(name: str, found: Findings) -> None:
 def check_allowlist(name: str, found: Findings) -> None:
     allowed = api(f"repos/{OWNER}/{name}/actions/permissions/selected-actions")
     patterns = dig(allowed, "patterns_allowed")
-    if isinstance(patterns, list) and "github/codeql-action/*@*" not in patterns:
-        found.failures.append("actions allowlist must include github/codeql-action/*@* before enabling code-scan; add it in Settings, Actions, General")
+    codeql = [pattern for pattern in ALLOWED_ACTIONS["patterns_allowed"] if pattern.startswith("github/codeql-action/")]
+    if isinstance(patterns, list) and not all(pattern in patterns for pattern in codeql):
+        found.failures.append("actions allowlist must pin github/codeql-action/init, autobuild and analyze to a commit before enabling code-scan; add them in Settings, Actions, General")
     for key, wanted in ALLOWED_ACTIONS.items():
         found.expect_value("actions allowlist " + key, dig(allowed, key), wanted)
 

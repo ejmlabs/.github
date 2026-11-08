@@ -121,7 +121,46 @@ def check(config: dict[str, Any], environment: str) -> list[str]:
         raise ValueError("Staging needs env.staging with its own routes")
     if staging.get("name") in (None, config.get("name")):
         raise ValueError("Staging needs its own Worker name")
+    # A staging Worker must not answer on a host anyone could find before production is approved: no workers.dev
+    # host, and only routes under the production host.
+    if staging.get("workers_dev") is not False:
+        raise ValueError("Staging must set workers_dev: false")
+    production = production_hosts(config)
+    for route in staging.get("routes") or []:
+        if not valid_route(route, production):
+            raise ValueError("Staging routes must name a subdomain of the production host")
     return ["--env", "staging"]
+
+
+def route_host(route: Any) -> str | None:  # noqa: ANN401 - a route is untyped until checked here
+    """The host of a Wrangler route such as example.com/* or https://staging.example.com/*, without its wildcards.
+
+    A custom domain is written without a scheme, and Wrangler accepts it that way.
+    """
+    pattern = route.get("pattern") if isinstance(route, dict) else route
+    if not isinstance(pattern, str) or not pattern:
+        return None
+    return (pattern.partition("://")[2] if "://" in pattern else pattern).partition("/")[0].lstrip("*.").lower() or None
+
+
+def production_hosts(config: dict[str, Any]) -> list[str]:
+    """Every host the production Worker answers on: its custom domain and the routes on the top-level config."""
+    hosts = [host for host in (route_host(route) for route in config.get("routes") or []) if host]
+    for env in environments(config):
+        domain = env.get("custom_domain")
+        if isinstance(domain, str) and domain:
+            hosts.append(domain.lower())
+    return hosts
+
+
+def valid_route(route: Any, production: list[str]) -> bool:  # noqa: ANN401 - a route is untyped until checked here
+    """True when the route names a strict subdomain of a production host and no production host itself.
+
+    A host that one production route uses must stay refused even when another production route would make it look
+    like a subdomain, as api.example.com does beside example.com.
+    """
+    host = route_host(route)
+    return host is not None and host not in production and any(host.endswith("." + known) for known in production)
 
 
 def inside(path: str, parent: str) -> bool:

@@ -72,6 +72,12 @@ class Server:
         self.cancelled: list[int] = []
         self.faults: list[dict[str, Any]] = []
         self.hooks: list[dict[str, Any]] = []
+        self.comments: list[dict[str, Any]] = []
+        # Commits live main contains, for the compare endpoint. BASE is the base every event carries; when the tests
+        # have not said what main contains, the endpoint reports it as contained.
+        self.ancestors: list[str] = []
+        self.ancestry_set = False
+        self.compares: list[str] = []
 
     def fail(self, method: str, prefix: str, failure: int | OSError, times: int = 1000, effect: Callable[[], object] | None = None,
              *, after_write: bool = False, context: str | None = None) -> None:
@@ -162,6 +168,21 @@ class Server:
                 self.writes.append("label:" + urllib.parse.unquote(name))
                 self.pr["labels"] = [label for label in self.pr["labels"] if label["name"] != urllib.parse.unquote(name)]
                 return 200, []
+            case "GET", ["issues", "1", "comments"]:
+                return 200, self.page(copy.deepcopy(self.comments), params)
+            case "POST", ["issues", "1", "comments"]:
+                assert body is not None
+                self.writes.append("comment:" + body["body"].partition(" ")[0])
+                comment = {"id": len(self.comments) + 1, "body": body["body"], "user": {"login": "github-actions[bot]"}}
+                self.comments.append(comment)
+                return 201, copy.deepcopy(comment)
+            case "GET", ["compare", spec]:
+                self.compares.append(spec)
+                # A...B, where B is live main. B is ahead when it contains A, which it does for an event that came first.
+                first, _, second = spec.partition("...")
+                contained = first in self.ancestors or (first == BASE and not self.ancestry_set)
+                status = "identical" if first == second else ("ahead" if contained else "diverged")
+                return 200, {"status": status}
             case "GET", ["pulls", "1", "reviews"]:
                 return 200, self.page(self.reviews, params)
             case "POST", ["pulls", "1", "reviews"]:
@@ -493,6 +514,73 @@ class AdmissionTests(GateCase):
         with self.as_run(RUN, "2"), mock.patch.dict(os.environ, {"GITHUB_TRIGGERING_ACTOR": USER["login"]}):
             self.admit(self.event("opened"))
         self.assertEqual(self.states(), {"Quality": "pending", "Repository standards": "pending"})
+
+
+class BaseBindingTests(GateCase):
+    """The admitted base is the one the deciding event saw, never a later tip of main."""
+
+    LATER = "d" * 40
+
+    def test_a_ready_event_admits_the_base_it_saw_and_not_a_newer_main(self) -> None:
+        self.server.pr["base"]["sha"] = self.LATER  # a commit merged into main after the Ready event was created
+        event = self.event("ready_for_review")
+        event["pull_request"]["base"]["sha"] = BASE
+        out = self.admit_as(500, event)
+        self.assertEqual(out["base"], BASE)
+        self.assertEqual(self.server.compares, [f"{BASE}...{self.LATER}"])
+
+    def test_the_compare_asks_the_repository_path_the_client_builds(self) -> None:
+        # The client prefixes the repository, so a path that repeated it would answer 404 on every real call.
+        self.server.pr["base"]["sha"] = self.LATER
+        event = self.event("ready_for_review")
+        event["pull_request"]["base"]["sha"] = BASE
+        self.admit_as(500, event)
+        self.assertIn(("GET", f"/compare/{BASE}...{self.LATER}"), self.server.calls)
+
+    def test_a_gate_approve_label_admits_the_base_its_approval_was_bound_to(self) -> None:
+        event = self.labeled(APPROVE_LABEL)
+        self.server.pr["base"]["sha"] = self.LATER
+        self.assertEqual(self.admit_as(500, event)["base"], self.LATER)
+
+    def test_an_event_base_main_no_longer_contains_admits_nothing(self) -> None:
+        self.server.ancestry_set = True  # main was rewritten and has never had the event's base
+        self.server.ancestors.append(self.LATER)
+        self.server.pr["base"]["sha"] = self.LATER
+        event = self.event("ready_for_review")
+        event["pull_request"]["base"]["sha"] = OLD  # a base main never had: the histories have diverged
+        with self.assertRaisesRegex(ValueError, "no longer contains"):
+            self.admit_as(500, event)
+        self.assertEqual(self.server.latest(), {})
+
+    def test_an_event_base_this_run_cannot_see_is_refused_when_main_changes(self) -> None:
+        self.server.ancestry_set = True  # like GitHub, the fake can place the base without knowing what contains it
+        self.server.pr["base"]["sha"] = self.LATER
+        event = self.event("ready_for_review")
+        event["pull_request"]["base"]["sha"] = BASE  # not in main's history here: a 404 answers "not an ancestor"
+        with self.assertRaisesRegex(ValueError, "no longer contains"):
+            self.admit_as(500, event)
+        self.assertEqual(self.server.latest(), {})
+
+    def test_a_base_this_account_cannot_read_admits_nothing(self) -> None:
+        self.server.pr["base"]["sha"] = self.LATER
+        event = self.event("ready_for_review")
+        event["pull_request"]["base"]["sha"] = BASE
+        self.server.fail("GET", "/compare/", 404)
+        out = self.admit_as(500, event)
+        self.assertEqual(out["base"], self.LATER)
+
+
+class ForkIdentityTests(GateCase):
+    def test_a_repository_whose_name_matches_but_id_does_not_is_a_fork(self) -> None:
+        for pr in ({**self.server.pr, "head": {**self.server.pr["head"], "repo": {"full_name": REPO, "id": 2}},
+                    "base": {**self.server.pr["base"], "repo": {"full_name": REPO, "id": 1}}},
+                   {**self.server.pr, "head": {**self.server.pr["head"], "repo": {"full_name": "other/" + REPO.split("/")[1], "id": 2}},
+                    "base": {**self.server.pr["base"], "repo": {"full_name": REPO, "id": 1}}}):
+            with self.subTest(pr=pr["head"]["repo"]):
+                self.assertFalse(governance.same_repository(pr))
+        same = {**self.server.pr, "head": {**self.server.pr["head"], "repo": {"full_name": REPO, "id": 1}},
+                "base": {**self.server.pr["base"], "repo": {"full_name": REPO, "id": 1}}}
+        self.assertTrue(governance.same_repository(same))
 
 
 class StopTests(GateCase):

@@ -47,8 +47,12 @@ def human(user: dict[str, Any], permission: str) -> bool:
 
 
 def same_repository(pr: dict[str, Any]) -> bool:
-    head_repo = pr["head"].get("repo") or {}
-    return bool(head_repo.get("full_name") == pr["base"]["repo"]["full_name"])
+    """True only for a branch in this repository itself. The ID is checked when given, so a name that matches but a
+    repository that does not can never pass as internal."""
+    head_repo, base_repo = pr["head"].get("repo") or {}, pr["base"]["repo"]
+    if head_repo.get("full_name") != base_repo["full_name"]:
+        return False
+    return base_repo.get("id") is None or head_repo.get("id") is None or head_repo.get("id") == base_repo.get("id")
 
 
 def current_head(pr: dict[str, Any], sha: str) -> bool:
@@ -383,7 +387,7 @@ def other_run_is_live(api: GitHub, found: dict[str, dict[str, Any]]) -> bool:
     return False
 
 
-def admit_head(api: GitHub, number: int, sha: str, live: dict[str, Any]) -> None:
+def admit_head(api: GitHub, number: int, sha: str, live: dict[str, Any], base: str | None) -> None:
     if stopped(check_history(api, sha), api.run_url):
         notice("A maintainer stopped this run for this head; mark the PR Ready or add gate:approve to admit it again")
         return
@@ -399,7 +403,9 @@ def admit_head(api: GitHub, number: int, sha: str, live: dict[str, Any]) -> None
         return
     for context in REQUIRED_CONTEXTS:
         api.status(sha, context, "pending", "Admitted checks queued")
-    outputs(run="true", pr=number, head=sha, base=checked_sha(live["base"]["sha"]), profile=api.repo.split("/")[1])
+    # The base is the one this event decided on, so a commit merged into main after the event is never folded into the
+    # approved change; a label event that names no base falls back to the live main it read.
+    outputs(run="true", pr=number, head=sha, base=checked_sha(base or live["base"]["sha"]), profile=api.repo.split("/")[1])
 
 
 def require_live_head(api: GitHub, number: int, sha: str) -> dict[str, Any]:
@@ -419,7 +425,7 @@ def rerun_allowed(api: GitHub) -> bool:
     return bool(actor) and is_maintainer(api, api.request("https://api.github.com/users/" + actor))
 
 
-def approve_head(api: GitHub, number: int, sha: str, live: dict[str, Any], sender: dict[str, Any]) -> None:
+def approve_head(api: GitHub, number: int, sha: str, live: dict[str, Any], sender: dict[str, Any], base: str | None) -> None:
     if revoked(live):
         notice(REVOKE_PENDING)
         return
@@ -428,7 +434,7 @@ def approve_head(api: GitHub, number: int, sha: str, live: dict[str, Any], sende
         "commit_id": sha, "event": "APPROVE",
         "body": f"Maintainer self-approve by @{sender['login']} via label `{APPROVE_LABEL}` for `{sha}`. Required checks still apply.",
     })
-    admit_head(api, number, sha, live)
+    admit_head(api, number, sha, live, base)
 
 
 def handle_label(api: GitHub, event: dict[str, Any], number: int, sha: str) -> None:
@@ -450,7 +456,7 @@ def handle_label(api: GitHub, event: dict[str, Any], number: int, sha: str) -> N
     elif superseded(api, sha):
         notice(SUPERSEDED)
     elif approve:
-        approve_head(api, number, sha, live, sender)
+        approve_head(api, number, sha, live, sender, None)
     else:
         stop(api, number, sha, "Revoked by a current human maintainer")
     if not approve:
@@ -474,7 +480,38 @@ def handle_admission(api: GitHub, event: dict[str, Any], number: int, sha: str) 
     elif superseded(api, sha):
         notice(SUPERSEDED)
     else:
-        admit_head(api, number, sha, live)
+        admit_head(api, number, sha, live, event_base(api, event, live))
+
+
+def event_base(api: GitHub, event: dict[str, Any], live: dict[str, Any]) -> str | None:
+    """The base commit this event decided on, when the event names one that the live main still contains.
+
+    An event with no base, such as a label, and a base this account cannot read the commit for return None, and the
+    caller uses the live main. A base the live main no longer contains means main was rewritten, which this refuses.
+    """
+    pull = event.get("pull_request") or {}
+    named = (pull.get("base") or {}).get("sha")
+    if named is None:
+        return None
+    named = checked_sha(named)
+    current = checked_sha(live["base"]["sha"])
+    if named == current:
+        return named
+    # The client's root already names the repository, so this path must be repository-relative.
+    path = f"/compare/{named}...{current}"
+    try:
+        comparison = api.request(path)
+    except urllib.error.HTTPError as error:
+        if error.code != 404:
+            raise
+        # A base this account cannot read is left where the approval landed: main is protected, so its live tip is a
+        # reviewed commit.
+        return None
+    # The live main is first, so "ahead" means it still contains the event's base; a diverged history breaks the
+    # promise a base gives.
+    if comparison.get("status") not in ("ahead", "identical"):
+        raise ValueError("Main no longer contains the base commit this event decided on")
+    return named
 
 
 def admit(api: GitHub, event: dict[str, Any]) -> None:
